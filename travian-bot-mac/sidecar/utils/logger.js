@@ -43,13 +43,8 @@ function timestamp() {
 }
 
 function consoleMethod(level) {
-  switch (level) {
-    case 'ERROR': return console.error;
-    case 'WARN':  return console.warn;
-    case 'DEBUG': return console.debug;
-    case 'INFO':
-    default:      return console.log;
-  }
+  // ALL log output goes to stderr — stdout is reserved for JSON-RPC IPC
+  return console.error;
 }
 
 // ── Core logging ────────────────────────────────────────────────────
@@ -114,7 +109,7 @@ function getLogs(level = null, count = null) {
 
 function clear() {
   logs = [];
-  console.log('[TravianBot] Logs cleared');
+  console.error('[TravianBot] Logs cleared');
 }
 
 /**

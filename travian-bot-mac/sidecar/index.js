@@ -10,6 +10,14 @@
  */
 const readline = require('readline');
 
+// ── CRITICAL: Redirect all console output to stderr ─────────────────
+// stdout is RESERVED for JSON-RPC IPC with Tauri.
+// Any console.log/debug going to stdout would corrupt the protocol.
+const _origLog = console.log;
+const _origDebug = console.debug;
+console.log   = console.error;
+console.debug = console.error;
+
 // ── Load all modules into global scope ───────────────────────────────
 require('./core/load-modules');
 
