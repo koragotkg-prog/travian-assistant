@@ -1,0 +1,511 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Travian Assistant Settings</title>
+  <style>
+    /* ---- Dark Theme ---- */
+    :root {
+      --bg:        #1a1a2e;
+      --bg-card:   #16213e;
+      --bg-input:  #0f3460;
+      --accent:    #e94560;
+      --accent2:   #0f3460;
+      --text:      #e0e0e0;
+      --text-muted:#8892a4;
+      --border:    #2a3a5c;
+      --success:   #2ecc71;
+      --danger:    #e74c3c;
+      --warning:   #f39c12;
+      --radius:    6px;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      padding: 24px 32px;
+      min-width: 520px;
+      max-width: 700px;
+      margin: 0 auto;
+      line-height: 1.5;
+    }
+
+    h1 {
+      font-size: 22px;
+      margin-bottom: 6px;
+      color: var(--accent);
+    }
+
+    .subtitle {
+      color: var(--text-muted);
+      font-size: 13px;
+      margin-bottom: 24px;
+    }
+
+    section {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 18px 20px;
+      margin-bottom: 18px;
+    }
+
+    section h2 {
+      font-size: 15px;
+      color: var(--accent);
+      margin-bottom: 14px;
+      padding-bottom: 6px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .field {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 12px;
+    }
+    .field:last-child { margin-bottom: 0; }
+
+    .field label {
+      font-size: 13px;
+      color: var(--text);
+      flex: 1;
+    }
+
+    .field input[type="number"] {
+      width: 110px;
+      padding: 6px 10px;
+      background: var(--bg-input);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      font-size: 13px;
+      text-align: right;
+    }
+    .field input[type="number"]:focus {
+      outline: none;
+      border-color: var(--accent);
+    }
+
+    .field-check {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+    .field-check:last-child { margin-bottom: 0; }
+
+    .field-check input[type="checkbox"] {
+      width: 16px;
+      height: 16px;
+      accent-color: var(--accent);
+      cursor: pointer;
+    }
+
+    .field-check label {
+      font-size: 13px;
+      color: var(--text);
+      cursor: pointer;
+    }
+
+    /* Buttons */
+    .btn-row {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-top: 6px;
+    }
+
+    button {
+      padding: 8px 18px;
+      border: none;
+      border-radius: var(--radius);
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.15s;
+    }
+    button:hover { opacity: 0.85; }
+    button:active { opacity: 0.7; }
+
+    .btn-primary {
+      background: var(--accent);
+      color: #fff;
+    }
+
+    .btn-secondary {
+      background: var(--accent2);
+      color: var(--text);
+      border: 1px solid var(--border);
+    }
+
+    .btn-danger {
+      background: var(--danger);
+      color: #fff;
+    }
+
+    .btn-save {
+      display: block;
+      width: 100%;
+      padding: 12px;
+      font-size: 15px;
+      background: var(--accent);
+      color: #fff;
+      margin-top: 12px;
+    }
+
+    /* Status message */
+    #statusMsg {
+      margin-top: 14px;
+      padding: 10px 14px;
+      border-radius: var(--radius);
+      font-size: 13px;
+      display: none;
+    }
+    #statusMsg.success {
+      display: block;
+      background: rgba(46, 204, 113, 0.15);
+      color: var(--success);
+      border: 1px solid rgba(46, 204, 113, 0.3);
+    }
+    #statusMsg.error {
+      display: block;
+      background: rgba(231, 76, 60, 0.15);
+      color: var(--danger);
+      border: 1px solid rgba(231, 76, 60, 0.3);
+    }
+
+    /* Hint text */
+    .hint {
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-top: 2px;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>Travian Assistant &mdash; Advanced Settings</h1>
+  <p class="subtitle">Configure timing, safety limits, and manage your bot data.</p>
+
+  <!-- ================================================================ -->
+  <!-- Timing & Delays -->
+  <!-- ================================================================ -->
+  <section>
+    <h2>Timing &amp; Delays</h2>
+
+    <div class="field">
+      <label for="delayMin">Minimum Action Delay (ms)</label>
+      <input type="number" id="delayMin" min="500" max="30000" step="100" value="2000">
+    </div>
+    <div class="field">
+      <label for="delayMax">Maximum Action Delay (ms)</label>
+      <input type="number" id="delayMax" min="1000" max="60000" step="100" value="8000">
+    </div>
+    <div class="field">
+      <label for="idleMin">Idle Minimum (ms)</label>
+      <input type="number" id="idleMin" min="5000" max="300000" step="1000" value="30000">
+    </div>
+    <div class="field">
+      <label for="idleMax">Idle Maximum (ms)</label>
+      <input type="number" id="idleMax" min="10000" max="600000" step="1000" value="120000">
+    </div>
+
+    <p class="hint">Delays are randomized between min and max to appear more human-like.</p>
+  </section>
+
+  <!-- ================================================================ -->
+  <!-- Safety -->
+  <!-- ================================================================ -->
+  <section>
+    <h2>Safety</h2>
+
+    <div class="field">
+      <label for="maxActions">Max Actions Per Hour</label>
+      <input type="number" id="maxActions" min="1" max="300" step="1" value="60">
+    </div>
+    <div class="field">
+      <label for="maxRetries">Max Retries Before Stop</label>
+      <input type="number" id="maxRetries" min="1" max="20" step="1" value="3">
+    </div>
+
+    <div class="field-check">
+      <input type="checkbox" id="captchaStop" checked>
+      <label for="captchaStop">Auto-stop when captcha is detected</label>
+    </div>
+    <div class="field-check">
+      <input type="checkbox" id="errorStop" checked>
+      <label for="errorStop">Emergency stop on repeated errors</label>
+    </div>
+  </section>
+
+  <!-- ================================================================ -->
+  <!-- Data Management -->
+  <!-- ================================================================ -->
+  <section>
+    <h2>Data Management</h2>
+    <div class="btn-row">
+      <button class="btn-secondary" id="btnExport">Export Config</button>
+      <button class="btn-secondary" id="btnImport">Import Config</button>
+      <input type="file" id="fileImport" accept=".json" hidden>
+      <button class="btn-danger" id="btnReset">Reset to Defaults</button>
+    </div>
+    <p class="hint" style="margin-top:10px">
+      Export saves all settings as a JSON file. Import replaces current settings with the uploaded file.
+    </p>
+  </section>
+
+  <!-- ================================================================ -->
+  <!-- Status & Save -->
+  <!-- ================================================================ -->
+  <div id="statusMsg"></div>
+  <button class="btn-save" id="btnSave">Save Settings</button>
+
+  <!-- ================================================================ -->
+  <!-- Inline Script -->
+  <!-- ================================================================ -->
+  <script>
+    (function () {
+      'use strict';
+
+      // ----- Default Config -----
+      const DEFAULTS = {
+        delayMin: 2000,
+        delayMax: 8000,
+        idleMin: 30000,
+        idleMax: 120000,
+        maxActionsPerHour: 60,
+        captchaAutoStop: true,
+        errorAutoStop: true,
+        maxRetries: 3,
+        autoBuild: true,
+        autoAdventure: true,
+        autoFarm: false,
+        autoTrade: false,
+        notificationsEnabled: true,
+        darkMode: true
+      };
+
+      // ----- DOM refs -----
+      const $delayMin     = document.getElementById('delayMin');
+      const $delayMax     = document.getElementById('delayMax');
+      const $idleMin      = document.getElementById('idleMin');
+      const $idleMax      = document.getElementById('idleMax');
+      const $maxActions    = document.getElementById('maxActions');
+      const $maxRetries    = document.getElementById('maxRetries');
+      const $captchaStop   = document.getElementById('captchaStop');
+      const $errorStop     = document.getElementById('errorStop');
+      const $btnSave       = document.getElementById('btnSave');
+      const $btnExport     = document.getElementById('btnExport');
+      const $btnImport     = document.getElementById('btnImport');
+      const $fileImport    = document.getElementById('fileImport');
+      const $btnReset      = document.getElementById('btnReset');
+      const $statusMsg     = document.getElementById('statusMsg');
+
+      // ----- Status helpers -----
+      let statusTimer = null;
+
+      function showStatus(text, type) {
+        $statusMsg.textContent = text;
+        $statusMsg.className = type; // 'success' or 'error'
+        if (statusTimer) clearTimeout(statusTimer);
+        statusTimer = setTimeout(() => {
+          $statusMsg.className = '';
+          $statusMsg.style.display = 'none';
+        }, 4000);
+      }
+
+      // ----- Populate form from config -----
+      function populateForm(cfg) {
+        $delayMin.value    = cfg.delayMin    ?? DEFAULTS.delayMin;
+        $delayMax.value    = cfg.delayMax    ?? DEFAULTS.delayMax;
+        $idleMin.value     = cfg.idleMin     ?? DEFAULTS.idleMin;
+        $idleMax.value     = cfg.idleMax     ?? DEFAULTS.idleMax;
+        $maxActions.value  = cfg.maxActionsPerHour ?? DEFAULTS.maxActionsPerHour;
+        $maxRetries.value  = cfg.maxRetries  ?? DEFAULTS.maxRetries;
+        $captchaStop.checked = cfg.captchaAutoStop ?? DEFAULTS.captchaAutoStop;
+        $errorStop.checked   = cfg.errorAutoStop   ?? DEFAULTS.errorAutoStop;
+      }
+
+      // ----- Read form into config object -----
+      function readForm() {
+        return {
+          delayMin:          parseInt($delayMin.value, 10)   || DEFAULTS.delayMin,
+          delayMax:          parseInt($delayMax.value, 10)   || DEFAULTS.delayMax,
+          idleMin:           parseInt($idleMin.value, 10)    || DEFAULTS.idleMin,
+          idleMax:           parseInt($idleMax.value, 10)    || DEFAULTS.idleMax,
+          maxActionsPerHour: parseInt($maxActions.value, 10) || DEFAULTS.maxActionsPerHour,
+          maxRetries:        parseInt($maxRetries.value, 10) || DEFAULTS.maxRetries,
+          captchaAutoStop:   $captchaStop.checked,
+          errorAutoStop:     $errorStop.checked
+        };
+      }
+
+      // ----- Validation -----
+      function validate(cfg) {
+        if (cfg.delayMin >= cfg.delayMax) {
+          return 'Min action delay must be less than max action delay.';
+        }
+        if (cfg.idleMin >= cfg.idleMax) {
+          return 'Idle minimum must be less than idle maximum.';
+        }
+        if (cfg.delayMin < 500) {
+          return 'Minimum action delay cannot be less than 500ms (safety limit).';
+        }
+        if (cfg.maxActionsPerHour < 1 || cfg.maxActionsPerHour > 300) {
+          return 'Max actions per hour must be between 1 and 300.';
+        }
+        if (cfg.maxRetries < 1 || cfg.maxRetries > 20) {
+          return 'Max retries must be between 1 and 20.';
+        }
+        return null;
+      }
+
+      // ----- Load from storage -----
+      function loadConfig() {
+        chrome.storage.local.get('botConfig', (result) => {
+          const cfg = result.botConfig || DEFAULTS;
+          populateForm(cfg);
+        });
+      }
+
+      // ----- Save to storage & notify background -----
+      function saveConfig() {
+        const formData = readForm();
+        const error = validate(formData);
+        if (error) {
+          showStatus(error, 'error');
+          return;
+        }
+
+        // Merge with existing config to preserve fields not on this page
+        chrome.storage.local.get('botConfig', (result) => {
+          const existing = result.botConfig || {};
+          const merged = Object.assign({}, DEFAULTS, existing, formData);
+
+          chrome.storage.local.set({ botConfig: merged }, () => {
+            if (chrome.runtime.lastError) {
+              showStatus('Failed to save: ' + chrome.runtime.lastError.message, 'error');
+              return;
+            }
+
+            // Notify background service worker
+            chrome.runtime.sendMessage(
+              { type: 'SAVE_CONFIG', data: merged },
+              (resp) => {
+                // Background might not be running — that's OK
+                if (chrome.runtime.lastError) {
+                  // Ignore — config is saved in storage regardless
+                }
+              }
+            );
+
+            showStatus('Settings saved successfully.', 'success');
+          });
+        });
+      }
+
+      // ----- Export -----
+      function exportConfig() {
+        chrome.storage.local.get('botConfig', (result) => {
+          const cfg = result.botConfig || DEFAULTS;
+          const json = JSON.stringify(cfg, null, 2);
+          const blob = new Blob([json], { type: 'application/json' });
+          const url  = URL.createObjectURL(blob);
+
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = 'travian-bot-config.json';
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+
+          showStatus('Config exported.', 'success');
+        });
+      }
+
+      // ----- Import -----
+      function importConfig(file) {
+        const reader = new FileReader();
+        reader.onload = function (e) {
+          try {
+            const cfg = JSON.parse(e.target.result);
+            if (typeof cfg !== 'object' || cfg === null || Array.isArray(cfg)) {
+              throw new Error('Invalid config format');
+            }
+            // Merge with defaults to fill missing keys
+            const merged = Object.assign({}, DEFAULTS, cfg);
+
+            chrome.storage.local.set({ botConfig: merged }, () => {
+              if (chrome.runtime.lastError) {
+                showStatus('Import failed: ' + chrome.runtime.lastError.message, 'error');
+                return;
+              }
+              populateForm(merged);
+
+              chrome.runtime.sendMessage(
+                { type: 'SAVE_CONFIG', data: merged },
+                () => { /* ignore errors */ }
+              );
+
+              showStatus('Config imported and applied.', 'success');
+            });
+          } catch (err) {
+            showStatus('Import failed: ' + err.message, 'error');
+          }
+        };
+        reader.onerror = function () {
+          showStatus('Failed to read file.', 'error');
+        };
+        reader.readAsText(file);
+      }
+
+      // ----- Reset to Defaults -----
+      function resetToDefaults() {
+        if (!confirm('Reset all settings to defaults? This cannot be undone.')) {
+          return;
+        }
+
+        chrome.storage.local.set({ botConfig: DEFAULTS }, () => {
+          if (chrome.runtime.lastError) {
+            showStatus('Reset failed: ' + chrome.runtime.lastError.message, 'error');
+            return;
+          }
+          populateForm(DEFAULTS);
+
+          chrome.runtime.sendMessage(
+            { type: 'SAVE_CONFIG', data: DEFAULTS },
+            () => { /* ignore errors */ }
+          );
+
+          showStatus('Settings reset to defaults.', 'success');
+        });
+      }
+
+      // ----- Wire up events -----
+      $btnSave.addEventListener('click', saveConfig);
+      $btnExport.addEventListener('click', exportConfig);
+
+      $btnImport.addEventListener('click', () => {
+        $fileImport.value = ''; // Reset so same file can be re-selected
+        $fileImport.click();
+      });
+      $fileImport.addEventListener('change', (e) => {
+        if (e.target.files && e.target.files[0]) {
+          importConfig(e.target.files[0]);
+        }
+      });
+
+      $btnReset.addEventListener('click', resetToDefaults);
+
+      // ----- Initialize -----
+      loadConfig();
+    })();
+  </script>
+</body>
+</html>

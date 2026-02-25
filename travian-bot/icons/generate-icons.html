@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html>
+<head><title>Icon Generator</title></head>
+<body>
+<h3>Right-click each canvas below → "Save image as" → save as icon16.png, icon48.png, icon128.png</h3>
+<p>Save them in the <code>icons/</code> folder of the extension.</p>
+<canvas id="c16" width="16" height="16"></canvas>
+<canvas id="c48" width="48" height="48"></canvas>
+<canvas id="c128" width="128" height="128"></canvas>
+<script>
+function drawIcon(canvas) {
+  const ctx = canvas.getContext('2d');
+  const s = canvas.width;
+  // Background
+  ctx.fillStyle = '#1a1a2e';
+  ctx.fillRect(0, 0, s, s);
+  // Border
+  ctx.strokeStyle = '#00d4ff';
+  ctx.lineWidth = Math.max(1, s * 0.06);
+  ctx.strokeRect(s*0.08, s*0.08, s*0.84, s*0.84);
+  // "T" letter
+  ctx.fillStyle = '#00d4ff';
+  ctx.font = `bold ${s * 0.55}px Arial`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('T', s/2, s/2 + s*0.03);
+  // Small bot dot
+  ctx.fillStyle = '#00ff88';
+  ctx.beginPath();
+  ctx.arc(s * 0.78, s * 0.22, s * 0.08, 0, Math.PI * 2);
+  ctx.fill();
+}
+drawIcon(document.getElementById('c16'));
+drawIcon(document.getElementById('c48'));
+drawIcon(document.getElementById('c128'));
+</script>
+</body>
+</html>

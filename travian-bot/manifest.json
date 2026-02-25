@@ -1,0 +1,54 @@
+{
+  "manifest_version": 3,
+  "name": "Travian Assistant (Private)",
+  "version": "1.0.0",
+  "description": "Private Travian gameplay automation assistant",
+  "permissions": [
+    "storage",
+    "alarms",
+    "tabs",
+    "scripting",
+    "notifications"
+  ],
+  "host_permissions": [
+    "*://*.travian.com/*",
+    "*://*.travian.co.uk/*",
+    "*://*.travian.de/*",
+    "*://*.travian.us/*",
+    "*://*.travelian.net/*",
+    "*://*.kingdoms.com/*"
+  ],
+  "background": {
+    "service_worker": "background/service-worker.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "*://*.travian.com/*",
+        "*://*.travian.co.uk/*",
+        "*://*.travian.de/*",
+        "*://*.travian.us/*",
+        "*://*.travelian.net/*",
+        "*://*.kingdoms.com/*"
+      ],
+      "js": [
+        "utils/delay.js",
+        "utils/logger.js",
+        "utils/storage.js",
+        "content/domScanner.js",
+        "content/actionExecutor.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "popup/index.html",
+    "default_title": "Travian Assistant"
+  },
+  "options_page": "options/options.html",
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}

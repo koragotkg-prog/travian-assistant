@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+  <!-- ===== FIXED HEADER ===== -->
+  <header>
+    <div class="header-brand">
+      <span class="header-icon">⚡</span>
+      <h1>TRAVIAN BOT</h1>
+    </div>
+    <div class="header-status">
+      <span class="status-dot" id="statusDot"></span>
+      <span id="statusText">Stopped</span>
+    </div>
+  </header>
+
+  <!-- Server Selector -->
+  <div class="server-bar">
+    <span class="server-label">Server:</span>
+    <select id="serverSelect"><option value="">No Server</option></select>
+  </div>
+
+  <!-- Village Selector (compact, inside header area) -->
+  <div class="village-bar">
+    <select id="villageSelect"><option value="">-- Select Village --</option></select>
+  </div>
+
+  <!-- ===== TAB BAR ===== -->
+  <nav class="tab-bar">
+    <button class="tab-btn active" data-tab="dash" id="tabDash">
+      <span class="tab-icon">🎮</span><span class="tab-label">Dash</span>
+    </button>
+    <button class="tab-btn" data-tab="config" id="tabConfig">
+      <span class="tab-icon">⚙️</span><span class="tab-label">Config</span>
+    </button>
+    <button class="tab-btn" data-tab="ai" id="tabAI">
+      <span class="tab-icon">🧠</span><span class="tab-label">AI</span>
+    </button>
+    <button class="tab-btn" data-tab="logs" id="tabLogs">
+      <span class="tab-icon">📋</span><span class="tab-label">Logs</span>
+    </button>
+  </nav>
+
+  <!-- ===== TAB CONTENT AREA (scrollable) ===== -->
+  <main class="tab-content">
+
+    <!-- ===== TAB: DASHBOARD ===== -->
+    <div class="tab-panel active" id="panelDash">
+
+      <!-- Stats Cards (2x2) -->
+      <section id="statsBar" class="stats-grid">
+        <div class="stat-card">
+          <span class="stat-icon">⚡</span>
+          <span class="stat-value" id="statCompleted">0</span>
+          <span class="stat-label">Completed</span>
+        </div>
+        <div class="stat-card stat-card--danger">
+          <span class="stat-icon">✕</span>
+          <span class="stat-value" id="statFailed">0</span>
+          <span class="stat-label">Failed</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-icon">⏱</span>
+          <span class="stat-value" id="statUptime">--</span>
+          <span class="stat-label">Uptime</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-icon">📊</span>
+          <span class="stat-value" id="statRate">0</span>
+          <span class="stat-label">Actions/hr</span>
+        </div>
+      </section>
+
+      <!-- Info Strip: Next Action + Farm Stats -->
+      <div class="info-strip" id="infoStrip">
+        <span class="info-strip-item"><span class="info-strip-icon">⏳</span> Next: <span id="nextActionTimer">--</span></span>
+        <span class="info-strip-item"><span class="info-strip-icon">⚔</span> Raids: <span id="farmRaidStats">0</span></span>
+      </div>
+
+      <!-- Resource Overview -->
+      <section id="resourceSection" class="card">
+        <h3 class="section-title">Resources</h3>
+        <div class="resource-bars" id="resourceBars">
+          <div class="resource-row" data-res="wood">
+            <span class="res-label">Wood</span>
+            <div class="res-bar-track"><div class="res-bar-fill res-fill-wood" id="resBarWood"></div></div>
+            <span class="res-value" id="resValWood">--</span>
+            <span class="res-prod" id="resProdWood"></span>
+          </div>
+          <div class="resource-row" data-res="clay">
+            <span class="res-label">Clay</span>
+            <div class="res-bar-track"><div class="res-bar-fill res-fill-clay" id="resBarClay"></div></div>
+            <span class="res-value" id="resValClay">--</span>
+            <span class="res-prod" id="resProdClay"></span>
+          </div>
+          <div class="resource-row" data-res="iron">
+            <span class="res-label">Iron</span>
+            <div class="res-bar-track"><div class="res-bar-fill res-fill-iron" id="resBarIron"></div></div>
+            <span class="res-value" id="resValIron">--</span>
+            <span class="res-prod" id="resProdIron"></span>
+          </div>
+          <div class="resource-row" data-res="crop">
+            <span class="res-label">Crop</span>
+            <div class="res-bar-track"><div class="res-bar-fill res-fill-crop" id="resBarCrop"></div></div>
+            <span class="res-value" id="resValCrop">--</span>
+            <span class="res-prod" id="resProdCrop"></span>
+          </div>
+        </div>
+      </section>
+
+      <!-- Build Queue -->
+      <section id="buildQueueSection" class="card">
+        <h3 class="section-title">Build Queue</h3>
+        <div id="buildQueueDisplay" class="build-queue-list">
+          <span class="text-muted-italic">No active construction</span>
+        </div>
+      </section>
+
+      <!-- Troop Summary -->
+      <section id="troopSummary" class="card">
+        <h3 class="section-title">Troops</h3>
+        <div id="troopDisplay" class="troop-grid">
+          <span class="text-muted-italic">No troop data</span>
+        </div>
+      </section>
+
+      <!-- Current Task -->
+      <section id="currentTask" class="card">
+        <h3 class="section-title">Current Task</h3>
+        <div id="taskInfo" class="task-display">Idle</div>
+        <div class="progress-bar-track" id="taskProgressTrack">
+          <div class="progress-bar-fill" id="taskProgressFill"></div>
+        </div>
+      </section>
+
+      <!-- Feature Toggles (compact pills) -->
+      <section id="features" class="card">
+        <h3 class="section-title">Features</h3>
+        <div class="toggle-grid">
+          <label class="toggle-pill"><input type="checkbox" id="togResourceUpgrade" checked><span>Resources</span></label>
+          <label class="toggle-pill"><input type="checkbox" id="togBuildingUpgrade" checked><span>Buildings</span></label>
+          <label class="toggle-pill"><input type="checkbox" id="togTroopTraining"><span>Troops</span></label>
+          <label class="toggle-pill"><input type="checkbox" id="togFarming" checked><span>Farming</span></label>
+          <label class="toggle-pill"><input type="checkbox" id="togHeroAdventure" checked><span>Adventure</span></label>
+        </div>
+      </section>
+
+      <!-- Task Queue -->
+      <section id="queueSection" class="card">
+        <div class="section-header">
+          <h3 class="section-title">Task Queue <span id="queueCount" class="badge">(0)</span></h3>
+          <button id="btnClearQueue" class="btn-icon btn-danger-subtle" title="Clear Queue">🗑</button>
+        </div>
+        <div id="taskQueueList" class="queue-list"></div>
+      </section>
+
+    </div>
+
+    <!-- ===== TAB: CONFIG ===== -->
+    <div class="tab-panel" id="panelConfig">
+
+      <!-- Upgrade Targets -->
+      <section id="upgradeSection" class="card">
+        <div class="section-header">
+          <h3 class="section-title">Upgrade Targets</h3>
+          <button id="btnScanBuildings" class="btn-small btn-glow">Scan</button>
+        </div>
+        <div id="upgradeList" class="upgrade-list">
+          <div class="upgrade-empty">Click "Scan" while on a Travian page to load buildings.</div>
+        </div>
+      </section>
+
+      <!-- Troop Training -->
+      <section id="troopSection" class="card">
+        <h3 class="section-title">Troop Training</h3>
+        <div class="form-group">
+          <label class="form-label">Troop Type</label>
+          <select id="troopType">
+            <option value="">-- Select --</option>
+            <option value="t1">Legionnaire/Phalanx/Clubswinger</option>
+            <option value="t2">Praetorian/Swordsman/Spearfighter</option>
+            <option value="t3">Imperian/Pathfinder/Axefighter</option>
+            <option value="t4">Scout</option>
+            <option value="t5">Cavalry</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <div class="form-group form-group--half">
+            <label class="form-label">Batch Size</label>
+            <input type="number" id="troopBatch" value="5" min="1" max="100">
+          </div>
+          <div class="form-group form-group--half">
+            <label class="form-label">Min Resources</label>
+            <input type="number" id="troopMinRes" value="1000" min="0" step="100">
+          </div>
+        </div>
+      </section>
+
+      <!-- Farming Configuration -->
+      <section id="farmSection" class="card">
+        <h3 class="section-title">Farming</h3>
+        <div class="form-row">
+          <div class="form-group form-group--half">
+            <label class="form-label">Interval (sec)</label>
+            <input type="number" id="farmInterval" value="300" min="60" max="3600">
+          </div>
+          <div class="form-group form-group--half">
+            <label class="form-label">Min Troops</label>
+            <input type="number" id="farmMinTroops" value="10" min="1">
+          </div>
+        </div>
+        <label class="toggle-pill toggle-pill--wide"><input type="checkbox" id="togUseFarmList" checked><span>Use Rally Point Farm Lists</span></label>
+        <div id="farmListInfo" class="info-text">
+          Bot will navigate to Rally Point → Farm List tab and click Start on all lists.
+        </div>
+        <div id="farmTargets" class="farm-targets-section">
+          <h4 class="section-subtitle">Manual Targets <span class="text-muted">(used when Farm Lists disabled)</span></h4>
+          <div id="farmTargetList"></div>
+          <div class="farm-add">
+            <input type="number" id="farmX" placeholder="X" class="input-sm">
+            <input type="number" id="farmY" placeholder="Y" class="input-sm">
+            <input type="text" id="farmName" placeholder="Name" class="input-sm input-name">
+            <button id="btnAddFarm" class="btn-small btn-glow">Add</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Timing & Safety -->
+      <section id="delaySection" class="card">
+        <h3 class="section-title">Timing & Safety</h3>
+        <div class="form-row">
+          <div class="form-group form-group--third">
+            <label class="form-label">Min Delay (ms)</label>
+            <input type="number" id="delayMin" value="2000" min="500" step="500">
+          </div>
+          <div class="form-group form-group--third">
+            <label class="form-label">Max Delay (ms)</label>
+            <input type="number" id="delayMax" value="8000" min="1000" step="500">
+          </div>
+          <div class="form-group form-group--third">
+            <label class="form-label">Max Act/hr</label>
+            <input type="number" id="maxActions" value="60" min="10" max="200">
+          </div>
+        </div>
+      </section>
+
+      <!-- Hero Adventure -->
+      <section id="heroSection" class="card">
+        <h3 class="section-title">Hero Adventure</h3>
+        <div class="form-group">
+          <label class="form-label">Min Health (%)</label>
+          <input type="number" id="heroMinHealth" value="30" min="0" max="100">
+        </div>
+      </section>
+
+      <!-- Save Button -->
+      <section id="saveSection" class="save-section">
+        <button id="btnSaveAll" class="btn-primary btn-glow-primary">💾 Save All Settings</button>
+      </section>
+
+    </div>
+
+    <!-- ===== TAB: AI STRATEGY ===== -->
+    <div class="tab-panel" id="panelAI">
+      <section id="strategySection" class="card">
+        <div class="section-header">
+          <h3 class="section-title">AI Strategy</h3>
+          <button id="btnRefreshStrategy" class="btn-small btn-glow">Refresh</button>
+        </div>
+        <div id="strategyDashboard" class="strategy-dashboard">
+          <div class="strategy-placeholder">Bot not running — start bot to see AI analysis.</div>
+        </div>
+      </section>
+    </div>
+
+    <!-- ===== TAB: LOGS ===== -->
+    <div class="tab-panel" id="panelLogs">
+      <section id="logsSection" class="card">
+        <div class="section-header">
+          <h3 class="section-title">Activity Log</h3>
+          <button id="btnClearLogs" class="btn-icon btn-danger-subtle" title="Clear Logs">🗑</button>
+        </div>
+        <div class="log-filters">
+          <select id="logLevel">
+            <option value="all">All Levels</option>
+            <option value="INFO">Info</option>
+            <option value="WARN">Warnings</option>
+            <option value="ERROR">Errors</option>
+          </select>
+        </div>
+        <div id="logViewer" class="log-area"></div>
+      </section>
+    </div>
+
+  </main>
+
+  <!-- ===== FIXED CONTROL BAR ===== -->
+  <footer class="control-bar">
+    <button id="btnStart" class="ctrl-btn ctrl-btn--start">▶ Start</button>
+    <button id="btnPause" class="ctrl-btn ctrl-btn--pause" disabled>⏸ Pause</button>
+    <button id="btnStop" class="ctrl-btn ctrl-btn--stop" disabled>⏹ Stop</button>
+    <button id="btnEmergency" class="ctrl-btn ctrl-btn--emergency" title="Emergency Stop">⚠</button>
+  </footer>
+
+  <script src="popup.js"></script>
+</body>
+</html>
