@@ -982,13 +982,24 @@ class BotEngine {
    */
   async _tryClaimHeroResources(failedTask) {
     try {
-      console.log('[BotEngine] Attempting to claim hero inventory resources...');
+      // Pre-check: hero must be at home (not on adventure or dead)
+      const heroStatus = this.gameState?.hero;
+      if (heroStatus && (heroStatus.isAway || heroStatus.isDead)) {
+        TravianLogger.log('INFO', '[BotEngine] Hero not available for resource claim — skipping');
+        return false;
+      }
+
+      TravianLogger.log('INFO', '[BotEngine] Attempting to claim hero inventory resources...');
 
       // Calculate deficit: what resources are we short of?
+      // Must know the exact deficit BEFORE navigating — if we can't calculate it,
+      // skip entirely to avoid the dialog default (fills warehouse to max capacity).
       const deficit = this._calcResourceDeficit(failedTask);
-      if (deficit) {
-        console.log('[BotEngine] Resource deficit:', JSON.stringify(deficit));
+      if (!deficit) {
+        TravianLogger.log('WARN', '[BotEngine] Cannot calculate resource deficit — skipping hero claim to avoid waste');
+        return false;
       }
+      TravianLogger.log('DEBUG', '[BotEngine] Resource deficit: ' + JSON.stringify(deficit));
 
       // Step 1: Navigate to hero page (causes page reload)
       await this.sendToContentScript({
@@ -998,7 +1009,7 @@ class BotEngine {
       // Wait for hero page content script to be ready
       var heroReady = await this._waitForContentScript(10000);
       if (!heroReady) {
-        console.warn('[BotEngine] Hero page did not load in time');
+        TravianLogger.log('WARN', '[BotEngine] Hero page did not load in time');
         return false;
       }
 
@@ -1010,7 +1021,7 @@ class BotEngine {
       // Wait for inventory page content script to be ready
       var invReady = await this._waitForContentScript(10000);
       if (!invReady) {
-        console.warn('[BotEngine] Hero inventory page did not load in time');
+        TravianLogger.log('WARN', '[BotEngine] Hero inventory page did not load in time');
         return false;
       }
 
@@ -1020,15 +1031,23 @@ class BotEngine {
       });
 
       if (!scanResult || !scanResult.success || !scanResult.data) {
-        console.log('[BotEngine] No hero inventory data');
+        TravianLogger.log('WARN', '[BotEngine] No hero inventory data');
         return false;
       }
 
-      const items = scanResult.data.items || [];
+      // Robust data extraction: scanResult.data may contain items directly
+      // or nested under scanResult.data.data (double-wrapped response)
+      const rawData = scanResult.data || {};
+      const items = rawData.items || (rawData.data && rawData.data.items) || [];
+      if (items.length === 0) {
+        TravianLogger.log('WARN', '[BotEngine] Hero inventory scan returned no items');
+        return false;
+      }
+
       const usableResources = items.filter(item => item.isResource && item.hasUseButton);
 
       if (usableResources.length === 0) {
-        console.log('[BotEngine] No claimable resource items in hero inventory');
+        TravianLogger.log('INFO', '[BotEngine] No claimable resource items in hero inventory');
         return false;
       }
 
@@ -1054,23 +1073,22 @@ class BotEngine {
         }
         if (!resType) continue;
 
-        // Determine how much to transfer (in resource amount, NOT item count)
-        let transferAmount = null;
-        if (deficit && deficit[resType] !== undefined) {
-          if (deficit[resType] <= 0) {
-            console.log(`[BotEngine] Skipping ${resType} — not short`);
-            continue; // don't need this resource type
-          }
-          // Pass the raw resource deficit — dialog input is resource amount
-          transferAmount = Math.ceil(deficit[resType]);
-        }
-        // Cap at available amount (don't try to transfer more than hero has)
-        const available = item.count || 0;
-        if (transferAmount && available > 0) {
-          transferAmount = Math.min(transferAmount, available);
+        // Calculate exact amount needed for THIS resource type
+        const needed = deficit[resType] || 0;
+        if (needed <= 0) {
+          TravianLogger.log('DEBUG', `[BotEngine] Skipping ${resType} — not short`);
+          continue; // don't need this resource type
         }
 
-        console.log(`[BotEngine] Claiming ${resType}: deficit=${deficit ? deficit[resType] : '?'}, transferAmount=${transferAmount || 'unknown'}, heroHas=${available}`);
+        // Cap at available amount (don't try to transfer more than hero has)
+        const available = parseInt(item.count) || 0;
+        const transferAmount = Math.min(Math.ceil(needed), available);
+        if (transferAmount <= 0) {
+          TravianLogger.log('DEBUG', `[BotEngine] Skipping ${resType} — hero has none available`);
+          continue;
+        }
+
+        TravianLogger.log('INFO', `[BotEngine] Claiming ${transferAmount} ${resType} from hero (deficit=${Math.ceil(needed)}, heroHas=${available})`);
 
         const useResult = await this.sendToContentScript({
           type: 'EXECUTE', action: 'useHeroItem',
@@ -1078,19 +1096,21 @@ class BotEngine {
         });
 
         if (useResult && useResult.success) {
-          console.log(`[BotEngine] ${resType} claimed (${transferAmount || '?'} resources)!`);
+          TravianLogger.log('INFO', `[BotEngine] ${resType} claimed (${transferAmount} resources)`);
           claimed = true;
+        } else {
+          TravianLogger.log('WARN', `[BotEngine] Failed to claim ${resType} from hero`);
         }
 
         await this._randomDelay();
       }
 
       if (claimed) {
-        console.log('[BotEngine] Hero resource(s) claimed successfully!');
+        TravianLogger.log('INFO', '[BotEngine] Hero resource(s) claimed successfully');
       }
       return claimed;
     } catch (err) {
-      console.warn('[BotEngine] Hero resource claim failed:', err.message);
+      TravianLogger.log('WARN', '[BotEngine] Hero resource claim failed: ' + err.message);
       return false;
     }
   }
