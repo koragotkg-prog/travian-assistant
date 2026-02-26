@@ -851,9 +851,12 @@ chrome.tabs.onUpdated.addListener(function (tabId, changeInfo, tab) {
 
   var inst = manager.getOrCreate(serverKey);
 
-  // Block tab reassignment during active task execution
-  if (inst.tabId && inst.tabId !== tabId && inst.engine._executionLocked) {
-    logger.warn('Tab reassignment BLOCKED for ' + serverKey + ' (tab ' + inst.tabId + ' → ' + tabId + ') — execution in progress');
+  // FIX 3: Block tab reassignment whenever the bot is running — not just during execution.
+  // The old guard only checked _executionLocked (true during a single task). Between tasks,
+  // the flag is false and a second tab opening the same server would steal the instance,
+  // causing the bot to send commands to the wrong tab on the next cycle.
+  if (inst.tabId && inst.tabId !== tabId && inst.engine.running) {
+    logger.warn('Tab reassignment BLOCKED for ' + serverKey + ' (tab ' + inst.tabId + ' → ' + tabId + ') — bot is running');
     return;
   }
 

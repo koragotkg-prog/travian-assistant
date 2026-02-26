@@ -130,30 +130,35 @@ class BotEngine {
     return true;
   }
 
-  // Backward-compatible property accessors
+  // FIX 5: Read-only property accessors — derived from state machine.
+  // Previously, these were writable setters that could mutate _botState directly,
+  // bypassing _transition() validation. Any external code doing `engine.running = false`
+  // would silently corrupt the FSM (skip EMERGENCY → STOPPED, lose audit trail).
+  // Now: getters derive from FSM state, setters warn + redirect through proper methods.
   get running() { return this._running; }
   set running(v) {
-    this._running = v;
-    // Sync state machine if external code sets boolean directly
+    console.warn('[BotEngine][SM] Direct set of .running is deprecated — use start()/stop() instead');
     if (!v && this._botState !== BOT_STATES.STOPPED && this._botState !== BOT_STATES.EMERGENCY) {
-      this._botState = BOT_STATES.STOPPED;
+      this._transition(BOT_STATES.STOPPED, 'legacy .running=false');
     }
   }
 
   get paused() { return this._paused; }
   set paused(v) {
-    this._paused = v;
-    if (v && this._botState !== BOT_STATES.PAUSED && this._botState !== BOT_STATES.EMERGENCY) {
-      this._botState = BOT_STATES.PAUSED;
-    } else if (!v && this._botState === BOT_STATES.PAUSED) {
-      this._botState = BOT_STATES.IDLE;
+    console.warn('[BotEngine][SM] Direct set of .paused is deprecated — use pause()/resume() instead');
+    if (v) {
+      this._transition(BOT_STATES.PAUSED, 'legacy .paused=true');
+    } else if (this._botState === BOT_STATES.PAUSED) {
+      this._transition(BOT_STATES.IDLE, 'legacy .paused=false');
     }
   }
 
   get emergencyStopped() { return this._emergencyStopped; }
   set emergencyStopped(v) {
-    this._emergencyStopped = v;
-    if (v) this._botState = BOT_STATES.EMERGENCY;
+    console.warn('[BotEngine][SM] Direct set of .emergencyStopped is deprecated — use emergencyStop() instead');
+    if (v) {
+      this._transition(BOT_STATES.EMERGENCY, 'legacy .emergencyStopped=true');
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -187,7 +192,10 @@ class BotEngine {
     this.actionsThisHour = 0;
     this.hourResetTime = Date.now();
 
-    // Restore persistent state (e.g., lastFarmTime) from chrome.storage
+    // FIX 2: Restore persistent state (lastFarmTime, task queue, stats) from chrome.storage.
+    // The service worker can be killed at any time. Without this, all pending tasks,
+    // farm timing, and action counters are lost on restart — causing the bot to
+    // re-evaluate everything from scratch and miss scheduled tasks.
     try {
       if (typeof chrome !== 'undefined' && chrome.storage && typeof self.TravianStorage !== 'undefined') {
         const savedState = this.serverKey
@@ -196,6 +204,37 @@ class BotEngine {
         if (savedState) {
           this._lastFarmTime = savedState.lastFarmTime || 0;
           console.log('[BotEngine] Restored lastFarmTime: ' + this._lastFarmTime);
+
+          // Restore task queue: re-add pending tasks that survived the worker death
+          if (savedState.taskQueue && Array.isArray(savedState.taskQueue) && savedState.taskQueue.length > 0) {
+            let restoredCount = 0;
+            for (const task of savedState.taskQueue) {
+              // Only restore tasks that were pending or running (running gets reset to pending)
+              if (task.status === 'pending' || task.status === 'running') {
+                this.taskQueue.add(
+                  task.type,
+                  task.params || {},
+                  task.priority || 5,
+                  task.villageId || null,
+                  task.scheduledFor || null
+                );
+                restoredCount++;
+              }
+            }
+            if (restoredCount > 0) {
+              console.log('[BotEngine] Restored ' + restoredCount + ' pending tasks from saved state');
+            }
+          }
+
+          // Restore action counter to maintain rate limiting across restarts
+          if (savedState.actionsThisHour != null && savedState.hourResetTime) {
+            const elapsed = Date.now() - savedState.hourResetTime;
+            if (elapsed < 3600000) { // less than 1 hour ago
+              this.actionsThisHour = savedState.actionsThisHour;
+              this.hourResetTime = savedState.hourResetTime;
+              console.log('[BotEngine] Restored rate limit: ' + this.actionsThisHour + ' actions this hour');
+            }
+          }
         }
       }
     } catch (err) {
@@ -399,9 +438,17 @@ class BotEngine {
       });
 
       if (!scanResponse || !scanResponse.success) {
-        this._slog('WARN', 'Failed to get game state scan', { duration_ms: Date.now() - _cycleStart });
+        // FIX 4: Count scan failures in circuit breaker. Previously, scan timeouts
+        // (the most common failure in throttled background tabs) were silently swallowed.
+        // The bot would retry forever without ever tripping the circuit breaker,
+        // burning CPU cycles and rate-limit quota on a dead tab.
+        this._consecutiveFailures++;
+        this._slog('WARN', 'Failed to get game state scan (failures: ' + this._consecutiveFailures + '/' + this._circuitBreakerThreshold + ')', { duration_ms: Date.now() - _cycleStart });
         return;
       }
+
+      // Scan succeeded — reset circuit breaker
+      this._consecutiveFailures = 0;
 
       this.gameState = scanResponse.data;
 
@@ -897,12 +944,26 @@ class BotEngine {
     }
 
     return new Promise((resolve, reject) => {
+      // FIX 1: "settled" flag prevents ghost actions from the timeout/callback race.
+      // When the timeout fires first, we reject — but chrome.tabs.sendMessage callback
+      // can still arrive later. Without this flag, both resolve AND reject would fire,
+      // or the late callback would trigger side-effects on an already-abandoned promise.
+      let settled = false;
+
       const timeoutId = setTimeout(() => {
+        if (settled) return;
+        settled = true;
         reject(new Error(`Content script message timed out after ${this._messageTimeout}ms`));
       }, this._messageTimeout);
 
       try {
         chrome.tabs.sendMessage(this.activeTabId, message, (response) => {
+          if (settled) {
+            // Ghost callback — timeout already fired. Log and discard.
+            console.warn('[BotEngine] Ghost callback after timeout for:', message.type || message.action);
+            return;
+          }
+          settled = true;
           clearTimeout(timeoutId);
 
           if (chrome.runtime.lastError) {
@@ -913,6 +974,8 @@ class BotEngine {
           resolve(response);
         });
       } catch (err) {
+        if (settled) return;
+        settled = true;
         clearTimeout(timeoutId);
         reject(err);
       }
