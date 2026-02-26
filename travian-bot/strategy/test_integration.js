@@ -190,5 +190,110 @@ if (intel) {
   console.log('ResourceIntel NOT integrated — skipping pressure tests');
 }
 
+// =========================================================================
+// Phase 2: Build cost drain, crop safety, farm loot integration
+// =========================================================================
+console.log('');
+console.log('=== Phase 2: Build Cost Drain ===');
+
+if (intel) {
+  // Test forecast with pending build costs
+  var drainState = JSON.parse(JSON.stringify(gameState));
+  drainState.resources = { wood: 3000, clay: 3000, iron: 3000, crop: 3000 };
+  drainState.resourceCapacity = { warehouse: 6000, granary: 6000 };
+  drainState.constructionQueue = {
+    count: 1,
+    maxCount: 2,
+    items: [
+      { remainingMs: 1800000, cost: { wood: 500, clay: 400, iron: 300, crop: 200 } }
+    ]
+  };
+
+  var snapshot = intel.buildSnapshot(drainState);
+  var pendingCosts = engine._extractPendingCosts(drainState);
+  console.log('Pending costs extracted:', pendingCosts.length, 'item(s)');
+  if (pendingCosts.length > 0) {
+    console.log('  Cost:', JSON.stringify(pendingCosts[0]));
+  }
+
+  var fc = intel.forecast(snapshot, 7200000, { pendingCosts: pendingCosts });
+  console.log('Forecast with drain:');
+  console.log('  Wood: ' + fc.wood.projected + ' (without drain would be ~' +
+    (3000 + 180 * 2) + ')');
+  console.log('  Drain applied:', JSON.stringify(fc.pendingDrain));
+}
+
+console.log('');
+console.log('=== Phase 2: Crop Safety ===');
+
+if (intel) {
+  // Scenario: Healthy crop (no troops)
+  var healthyState = JSON.parse(JSON.stringify(gameState));
+  healthyState.troops = {};
+  var snap1 = intel.buildSnapshot(healthyState);
+  var safety1 = intel.cropSafety(snap1, 0);
+  console.log('No troops: level=' + safety1.level + ' netCrop=' + safety1.netCrop +
+    ' safeToTrain=' + safety1.safeToTrain);
+
+  // Scenario: Heavy troops draining crop
+  var heavyTroopState = JSON.parse(JSON.stringify(gameState));
+  heavyTroopState.troops = { phalanx: 200, swordsman: 50 };
+  var snap2 = intel.buildSnapshot(heavyTroopState);
+  var troopUpkeep = engine._estimateTroopUpkeep(heavyTroopState);
+  var safety2 = intel.cropSafety(snap2, troopUpkeep);
+  console.log('Heavy troops (upkeep=' + troopUpkeep + '): level=' + safety2.level +
+    ' netCrop=' + safety2.netCrop + ' safeToTrain=' + safety2.safeToTrain);
+
+  // Scenario: Evaluate with crop danger (should block training)
+  var cropDangerState = JSON.parse(JSON.stringify(gameState));
+  cropDangerState.resources = { wood: 2800, clay: 3100, iron: 1500, crop: 50 };
+  cropDangerState.production = { wood: 180, clay: 195, iron: 115, crop: 10 };
+  cropDangerState.troops = { phalanx: 500 }; // Very heavy upkeep
+  cropDangerState.resourceCapacity = { warehouse: 6000, granary: 6000 };
+
+  var dangerConfig = JSON.parse(JSON.stringify(config));
+  dangerConfig.autoTroopTraining = true;
+
+  var tasks3 = engine.evaluate(cropDangerState, dangerConfig, taskQueue);
+  var hasTroopTask = tasks3.some(function(t) { return t.type === 'train_troops'; });
+  console.log('Crop danger + troop training: hasTroopTask=' + hasTroopTask +
+    ' (should be false — blocked by crop safety)');
+}
+
+console.log('');
+console.log('=== Phase 2: Farm Loot Prediction ===');
+
+if (intel) {
+  // Record farm runs via DecisionEngine API
+  engine.recordFarmResult('list_1', { wood: 500, clay: 400, iron: 300, crop: 200 });
+
+  // Simulate passage of time for second run
+  var origDate = Date.now;
+  Date.now = function() { return origDate() + 1800000; };
+  engine.recordFarmResult('list_1', { wood: 600, clay: 450, iron: 350, crop: 250 });
+  Date.now = origDate;
+
+  var farmPreds = intel.getAllFarmPredictions();
+  console.log('Farm predictions: ' + farmPreds.farms.length + ' farm(s)');
+  if (farmPreds.farms.length > 0) {
+    console.log('  Income/hr:', JSON.stringify(farmPreds.incomePerHr));
+    console.log('  Farm 1: ' + farmPreds.farms[0].totalPerHr + '/hr (runs: ' +
+      farmPreds.farms[0].runs + ')');
+  }
+
+  // Test state persistence
+  var savedState = engine.getResourceIntelState();
+  console.log('State saved: ' + (savedState ? 'yes (v' + savedState.version + ')' : 'no'));
+
+  // Create fresh engine and restore
+  var engine2 = new self.TravianDecisionEngine();
+  engine2.loadResourceIntelState(savedState);
+  if (engine2.resourceIntel) {
+    var restored = engine2.resourceIntel.predictFarmIncome('list_1');
+    console.log('State restored: farm prediction ' +
+      (restored ? 'available (runs=' + restored.runs + ')' : 'NOT available'));
+  }
+}
+
 console.log('');
 console.log('=== Integration Test Complete ===');

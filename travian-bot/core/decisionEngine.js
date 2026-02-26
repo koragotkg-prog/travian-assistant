@@ -181,10 +181,28 @@ class DecisionEngine {
 
     // 4.7. Resource pressure analysis (informs upgrade decisions)
     let resourcePressure = null;
+    let cropSafetyReport = null;
     if (this.resourceIntel) {
       try {
         const snapshot = this.resourceIntel.buildSnapshot(gameState);
         if (snapshot) {
+          // Build pending cost drain from construction queue
+          const pendingCosts = this._extractPendingCosts(gameState);
+
+          // Get farm income prediction (if farm history available)
+          let farmIncomePerHr = null;
+          try {
+            const farmPreds = this.resourceIntel.getAllFarmPredictions();
+            if (farmPreds && farmPreds.farms.length > 0) {
+              farmIncomePerHr = farmPreds.incomePerHr;
+            }
+          } catch (_) {}
+
+          // Enhanced forecast with build drain and farm income
+          const forecastOpts = {};
+          if (pendingCosts.length > 0) forecastOpts.pendingCosts = pendingCosts;
+          if (farmIncomePerHr) forecastOpts.farmIncomePerHr = farmIncomePerHr;
+
           resourcePressure = this.resourceIntel.pressure(snapshot);
           if (resourcePressure && resourcePressure.overall >= 30) {
             TravianLogger.log('INFO', '[ResourceIntel] Pressure: ' + resourcePressure.overall +
@@ -192,6 +210,17 @@ class DecisionEngine {
               (resourcePressure.firstOverflowMs != null
                 ? ' — overflow in ' + Math.round(resourcePressure.firstOverflowMs / 60000) + 'min'
                 : ''));
+          }
+
+          // Crop safety check (for troop training gate)
+          const troopUpkeep = this._estimateTroopUpkeep(gameState);
+          cropSafetyReport = this.resourceIntel.cropSafety(snapshot, troopUpkeep);
+          if (cropSafetyReport && cropSafetyReport.level !== 'safe') {
+            TravianLogger.log('WARN', '[ResourceIntel] Crop safety: ' + cropSafetyReport.level +
+              ' (net: ' + cropSafetyReport.netCrop + '/hr' +
+              (cropSafetyReport.hoursToStarvation != null
+                ? ', starvation in ' + cropSafetyReport.hoursToStarvation + 'h'
+                : '') + ')');
           }
         }
       } catch (err) {
@@ -210,11 +239,21 @@ class DecisionEngine {
       }
     }
 
-    // 6. Troop training
+    // 6. Troop training (gated by crop safety)
     if ((config.autoTrainTroops || config.autoTroopTraining) && !this.isCoolingDown('train_troops')) {
-      const troopTask = this.evaluateTroopTraining(gameState, config);
-      if (troopTask && !taskQueue.hasTaskOfType('train_troops', troopTask.villageId)) {
-        newTasks.push(troopTask);
+      // Crop safety gate: skip training when crop sustainability is at risk
+      let cropSafe = true;
+      if (cropSafetyReport && !cropSafetyReport.safeToTrain) {
+        cropSafe = false;
+        TravianLogger.log('INFO', '[ResourceIntel] Troop training blocked — crop ' +
+          cropSafetyReport.level + ' (net: ' + cropSafetyReport.netCrop + '/hr)');
+      }
+
+      if (cropSafe) {
+        const troopTask = this.evaluateTroopTraining(gameState, config);
+        if (troopTask && !taskQueue.hasTaskOfType('train_troops', troopTask.villageId)) {
+          newTasks.push(troopTask);
+        }
       }
     }
 
@@ -628,6 +667,51 @@ class DecisionEngine {
     return this.currentPhase;
   }
 
+  /**
+   * Record a completed farm run for loot prediction.
+   * Called by BotEngine when farm task results come back.
+   *
+   * @param {string} farmId - Farm list identifier
+   * @param {object} loot - Resources looted: {wood, clay, iron, crop}
+   * @param {boolean} [success=true] - Whether the raid was successful
+   */
+  recordFarmResult(farmId, loot, success) {
+    if (this.resourceIntel) {
+      try {
+        this.resourceIntel.recordFarmRun(farmId, loot, success);
+      } catch (err) {
+        console.warn('[DecisionEngine] Failed to record farm result:', err.message);
+      }
+    }
+  }
+
+  /**
+   * Get ResourceIntel state for persistence (farm history etc).
+   * Called by BotEngine before service worker shutdown.
+   */
+  getResourceIntelState() {
+    if (this.resourceIntel) {
+      try {
+        return this.resourceIntel.getState();
+      } catch (_) {}
+    }
+    return null;
+  }
+
+  /**
+   * Restore ResourceIntel state from persisted data.
+   * Called by BotEngine on startup.
+   */
+  loadResourceIntelState(state) {
+    if (this.resourceIntel && state) {
+      try {
+        this.resourceIntel.loadState(state);
+      } catch (err) {
+        console.warn('[DecisionEngine] Failed to load ResourceIntel state:', err.message);
+      }
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // Cooldown management
   // ---------------------------------------------------------------------------
@@ -796,6 +880,78 @@ class DecisionEngine {
   // ---------------------------------------------------------------------------
   // Internal helpers
   // ---------------------------------------------------------------------------
+
+  /**
+   * Extract pending build costs from construction queue for forecast drain.
+   * Maps queue items to {wood,clay,iron,crop,completionMs} format.
+   * @private
+   */
+  _extractPendingCosts(gameState) {
+    var costs = [];
+    var queue = gameState.constructionQueue;
+    if (!queue || !queue.items || !queue.items.length) return costs;
+
+    for (var i = 0; i < queue.items.length; i++) {
+      var item = queue.items[i];
+      // Extract remaining time in ms
+      var remainMs = 0;
+      if (typeof item.remainingMs === 'number') {
+        remainMs = item.remainingMs;
+      } else if (typeof item.remainingSec === 'number') {
+        remainMs = item.remainingSec * 1000;
+      }
+      // Extract resource costs if available on the queue item
+      if (item.cost && typeof item.cost === 'object') {
+        costs.push({
+          wood: item.cost.wood || 0,
+          clay: item.cost.clay || 0,
+          iron: item.cost.iron || 0,
+          crop: item.cost.crop || 0,
+          completionMs: remainMs
+        });
+      }
+    }
+    return costs;
+  }
+
+  /**
+   * Estimate total troop crop upkeep from game state.
+   * Falls back to simple count × 1 if detailed troop data unavailable.
+   * @private
+   */
+  _estimateTroopUpkeep(gameState) {
+    var totalUpkeep = 0;
+    var troops = gameState.troops;
+    if (!troops || typeof troops !== 'object') return 0;
+
+    // If we have GameData, use actual upkeep values
+    var GD = null;
+    try {
+      if (typeof self !== 'undefined' && self.TravianGameData) GD = self.TravianGameData;
+    } catch (_) {}
+
+    for (var unitKey in troops) {
+      var count = troops[unitKey] || 0;
+      if (count <= 0) continue;
+
+      // Try to look up upkeep from GameData
+      var upkeepPerUnit = 1; // default: 1 crop/hr per unit
+      if (GD && GD.TROOPS) {
+        // Check all tribes for this unit key
+        var tribes = ['roman', 'teuton', 'gaul'];
+        for (var t = 0; t < tribes.length; t++) {
+          var tribeData = GD.TROOPS[tribes[t]];
+          if (tribeData && tribeData[unitKey]) {
+            upkeepPerUnit = tribeData[unitKey].upkeep || 1;
+            break;
+          }
+        }
+      }
+
+      totalUpkeep += count * upkeepPerUnit;
+    }
+    return totalUpkeep;
+  }
 
   /** Check if a slot is currently being upgraded */
   _isSlotUpgrading(state, slot, type) {

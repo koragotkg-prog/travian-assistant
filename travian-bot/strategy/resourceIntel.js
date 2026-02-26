@@ -138,23 +138,45 @@
   };
 
   // -------------------------------------------------------------------------
-  // forecast — Deterministic linear projection
+  // forecast — Deterministic linear projection with build cost drain
   // -------------------------------------------------------------------------
 
   /**
    * Project resource levels forward in time.
    *
+   * Phase 2 enhancement: supports pendingCosts to model resource drain
+   * when queued builds complete. Each pending cost has a completionMs
+   * (ms from now) and resource costs that are subtracted at that time.
+   *
    * @param {object} snapshot - From buildSnapshot()
    * @param {number} [horizonMs=7200000] - Forecast horizon in ms (default 2h)
+   * @param {object} [options] - Optional settings
+   * @param {Array}  [options.pendingCosts] - Queued build costs: [{wood,clay,iron,crop,completionMs}]
+   * @param {object} [options.farmIncomePerHr] - Predicted farm income: {wood,clay,iron,crop}
    * @returns {object|null} Forecast per resource or null on bad input
    */
-  ResourceIntel.prototype.forecast = function (snapshot, horizonMs) {
+  ResourceIntel.prototype.forecast = function (snapshot, horizonMs, options) {
     if (!snapshot || !snapshot.resources || !snapshot.capacity || !snapshot.production) {
       return null;
     }
 
     if (typeof horizonMs !== 'number' || horizonMs < 0) {
       horizonMs = 7200000; // default 2 hours
+    }
+
+    var opts = options || {};
+    var pendingCosts = opts.pendingCosts || [];
+    var farmIncome = opts.farmIncomePerHr || null;
+
+    // Pre-compute total pending drain per resource within horizon
+    var pendingDrain = { wood: 0, clay: 0, iron: 0, crop: 0 };
+    for (var p = 0; p < pendingCosts.length; p++) {
+      var pc = pendingCosts[p];
+      if (pc && typeof pc.completionMs === 'number' && pc.completionMs <= horizonMs) {
+        for (var pk = 0; pk < RESOURCE_KEYS.length; pk++) {
+          pendingDrain[RESOURCE_KEYS[pk]] += (pc[RESOURCE_KEYS[pk]] || 0);
+        }
+      }
     }
 
     var result = {};
@@ -164,9 +186,15 @@
       var r = RESOURCE_KEYS[i];
       var current = snapshot.resources[r] || 0;
       var prodPerHr = snapshot.production[r] || 0;
+
+      // Add predicted farm income to effective production
+      if (farmIncome && typeof farmIncome[r] === 'number') {
+        prodPerHr += farmIncome[r];
+      }
+
       var cap = this._getCapForResource(r, snapshot.capacity);
 
-      // Projected value at horizon
+      // Projected value at horizon (before pending drain)
       var projected;
       if (prodPerHr > 0) {
         projected = Math.min(cap, current + prodPerHr * horizonMs / 3600000);
@@ -175,14 +203,17 @@
         projected = Math.min(projected, cap);
       }
 
-      // Time to full
+      // Subtract pending build costs from projection
+      projected = Math.max(0, projected - pendingDrain[r]);
+      projected = Math.min(projected, cap);
+
+      // Time to full (without drain — conservative overflow estimate)
       var msToFull = null;
       if (current >= cap) {
         msToFull = 0;
       } else if (prodPerHr > 0) {
         msToFull = (cap - current) / (prodPerHr / 3600000);
       }
-      // If prodPerHr <= 0 and current < cap: msToFull stays null
 
       // Overflow detection
       var overflow = projected >= cap && prodPerHr > 0;
@@ -208,6 +239,7 @@
 
     result.horizonMs = horizonMs;
     result.firstOverflowMs = firstOverflowMs !== null ? Math.round(firstOverflowMs) : null;
+    result.pendingDrain = pendingDrain;
 
     return result;
   };
@@ -391,6 +423,265 @@
 
     return candidates;
   };
+
+  // -------------------------------------------------------------------------
+  // cropSafety — Crop sustainability check
+  // -------------------------------------------------------------------------
+
+  /**
+   * Check crop sustainability: can the village sustain its troops?
+   *
+   * Crop is unique — troops consume it. A village can starve when
+   * net crop (production - upkeep) goes negative. This method flags
+   * danger early so the bot can avoid training more troops or
+   * prioritize crop field upgrades.
+   *
+   * @param {object} snapshot - From buildSnapshot()
+   * @param {number} [troopUpkeep=0] - Total troop crop consumption per hour
+   * @returns {object|null} Crop safety report or null on bad input
+   */
+  ResourceIntel.prototype.cropSafety = function (snapshot, troopUpkeep) {
+    if (!snapshot || !snapshot.resources || !snapshot.production) {
+      return null;
+    }
+
+    var cropProd = snapshot.production.crop || 0;
+    var upkeep = typeof troopUpkeep === 'number' ? troopUpkeep : 0;
+    var netCrop = cropProd - upkeep;
+    var currentCrop = snapshot.resources.crop || 0;
+    var cap = snapshot.capacity ? (snapshot.capacity.granary || 800) : 800;
+
+    // Hours until starvation (crop reaches 0 with negative net)
+    var hoursToStarvation = null;
+    if (netCrop < 0 && currentCrop > 0) {
+      hoursToStarvation = currentCrop / Math.abs(netCrop);
+      hoursToStarvation = Math.round(hoursToStarvation * 100) / 100;
+    } else if (netCrop < 0 && currentCrop <= 0) {
+      hoursToStarvation = 0;
+    }
+
+    // Fill ratio for crop
+    var fillRatio = cap > 0 ? currentCrop / cap : 0;
+    fillRatio = Math.min(1, Math.max(0, fillRatio));
+
+    // Determine safety level
+    var level;
+    if (netCrop < 0) {
+      level = hoursToStarvation !== null && hoursToStarvation < 2 ? 'danger' : 'warning';
+    } else if (netCrop < 5) {
+      // Very low margin (< 5/hr net) — warn
+      level = 'warning';
+    } else {
+      level = 'safe';
+    }
+
+    // Should the bot train more troops?
+    // Safe to train when: net crop > 5/hr AND crop isn't critically low
+    var safeToTrain = netCrop > 5 && fillRatio > 0.1;
+
+    // Recommended action
+    var action = null;
+    if (level === 'danger') {
+      action = 'upgrade_crop';
+    } else if (level === 'warning' && netCrop < 0) {
+      action = 'upgrade_crop';
+    } else if (level === 'warning') {
+      action = 'monitor';
+    }
+
+    return {
+      netCrop: Math.round(netCrop * 10) / 10,
+      cropProduction: cropProd,
+      troopUpkeep: upkeep,
+      currentCrop: currentCrop,
+      fillRatio: Math.round(fillRatio * 1000) / 1000,
+      hoursToStarvation: hoursToStarvation,
+      safeToTrain: safeToTrain,
+      level: level,
+      action: action
+    };
+  };
+
+  // -------------------------------------------------------------------------
+  // Farm Loot Prediction — EMA-based farm income estimation
+  // -------------------------------------------------------------------------
+
+  /**
+   * Record a completed farm run for EMA tracking.
+   *
+   * Tracks per-farm-list loot history using an Exponential Moving Average.
+   * Smooths out raid-to-raid variance to predict reliable income.
+   *
+   * @param {string} farmId - Farm list ID or name
+   * @param {object} loot - Resources gained: {wood, clay, iron, crop}
+   * @param {boolean} [success=true] - Whether the raid succeeded
+   */
+  ResourceIntel.prototype.recordFarmRun = function (farmId, loot, success) {
+    if (!farmId) return;
+
+    if (!this._farmHistory) this._farmHistory = {};
+
+    var now = Date.now();
+    var isSuccess = success !== false;
+    var totalLoot = 0;
+
+    if (isSuccess && loot) {
+      for (var i = 0; i < RESOURCE_KEYS.length; i++) {
+        totalLoot += (loot[RESOURCE_KEYS[i]] || 0);
+      }
+    }
+
+    var entry = this._farmHistory[farmId];
+    if (!entry) {
+      entry = {
+        emaLoot: { wood: 0, clay: 0, iron: 0, crop: 0 },
+        emaTotal: 0,
+        runs: 0,
+        successes: 0,
+        lastRunTs: now,
+        avgIntervalMs: 0,
+        alpha: FARM_EMA_ALPHA
+      };
+      this._farmHistory[farmId] = entry;
+    }
+
+    // Update run interval EMA
+    if (entry.lastRunTs > 0 && entry.runs > 0) {
+      var interval = now - entry.lastRunTs;
+      if (entry.avgIntervalMs === 0) {
+        entry.avgIntervalMs = interval;
+      } else {
+        entry.avgIntervalMs = entry.alpha * interval + (1 - entry.alpha) * entry.avgIntervalMs;
+      }
+    }
+
+    entry.runs++;
+    if (isSuccess) entry.successes++;
+    entry.lastRunTs = now;
+
+    // Update per-resource EMA (only on success)
+    if (isSuccess && loot) {
+      for (var j = 0; j < RESOURCE_KEYS.length; j++) {
+        var rk = RESOURCE_KEYS[j];
+        var val = loot[rk] || 0;
+        if (entry.runs <= 1) {
+          entry.emaLoot[rk] = val;
+        } else {
+          entry.emaLoot[rk] = entry.alpha * val + (1 - entry.alpha) * entry.emaLoot[rk];
+        }
+      }
+      if (entry.runs <= 1) {
+        entry.emaTotal = totalLoot;
+      } else {
+        entry.emaTotal = entry.alpha * totalLoot + (1 - entry.alpha) * entry.emaTotal;
+      }
+    }
+  };
+
+  /**
+   * Predict farm income per hour for a specific farm.
+   *
+   * Formula: expected_loot_per_hour = avg_loot_per_run × runs_per_hour × success_rate
+   *
+   * @param {string} farmId - Farm list ID or name
+   * @returns {object|null} Prediction or null if insufficient data
+   */
+  ResourceIntel.prototype.predictFarmIncome = function (farmId) {
+    if (!this._farmHistory || !this._farmHistory[farmId]) return null;
+
+    var entry = this._farmHistory[farmId];
+    if (entry.runs < 2 || entry.avgIntervalMs <= 0) return null;
+
+    var successRate = entry.runs > 0 ? entry.successes / entry.runs : 0;
+    var runsPerHour = 3600000 / entry.avgIntervalMs;
+
+    var incomePerHr = {};
+    var totalPerHr = 0;
+    for (var i = 0; i < RESOURCE_KEYS.length; i++) {
+      var rk = RESOURCE_KEYS[i];
+      var rate = entry.emaLoot[rk] * runsPerHour * successRate;
+      incomePerHr[rk] = Math.round(rate * 10) / 10;
+      totalPerHr += rate;
+    }
+
+    return {
+      farmId: farmId,
+      incomePerHr: incomePerHr,
+      totalPerHr: Math.round(totalPerHr * 10) / 10,
+      successRate: Math.round(successRate * 1000) / 1000,
+      runsPerHour: Math.round(runsPerHour * 100) / 100,
+      avgLootPerRun: Math.round(entry.emaTotal),
+      runs: entry.runs,
+      lastRunTs: entry.lastRunTs
+    };
+  };
+
+  /**
+   * Get aggregate farm income prediction across all tracked farms.
+   *
+   * @returns {object} Combined income: {wood,clay,iron,crop} per hour + farms array
+   */
+  ResourceIntel.prototype.getAllFarmPredictions = function () {
+    var combined = { wood: 0, clay: 0, iron: 0, crop: 0 };
+    var farms = [];
+
+    if (!this._farmHistory) return { incomePerHr: combined, farms: farms };
+
+    for (var farmId in this._farmHistory) {
+      var pred = this.predictFarmIncome(farmId);
+      if (pred) {
+        farms.push(pred);
+        for (var i = 0; i < RESOURCE_KEYS.length; i++) {
+          var rk = RESOURCE_KEYS[i];
+          combined[rk] += pred.incomePerHr[rk];
+        }
+      }
+    }
+
+    return {
+      incomePerHr: {
+        wood: Math.round(combined.wood * 10) / 10,
+        clay: Math.round(combined.clay * 10) / 10,
+        iron: Math.round(combined.iron * 10) / 10,
+        crop: Math.round(combined.crop * 10) / 10
+      },
+      farms: farms
+    };
+  };
+
+  // -------------------------------------------------------------------------
+  // State persistence — Serialize/restore for chrome.storage
+  // -------------------------------------------------------------------------
+
+  /**
+   * Export internal state for persistence (e.g., to chrome.storage).
+   * Includes farm history for EMA continuity across service worker restarts.
+   *
+   * @returns {object} Serializable state object
+   */
+  ResourceIntel.prototype.getState = function () {
+    return {
+      farmHistory: this._farmHistory || {},
+      version: 2
+    };
+  };
+
+  /**
+   * Restore internal state from persisted data.
+   *
+   * @param {object} state - Previously exported state from getState()
+   */
+  ResourceIntel.prototype.loadState = function (state) {
+    if (!state || typeof state !== 'object') return;
+    if (state.farmHistory && typeof state.farmHistory === 'object') {
+      this._farmHistory = state.farmHistory;
+    }
+  };
+
+  // -------------------------------------------------------------------------
+  // Constants
+  // -------------------------------------------------------------------------
+  var FARM_EMA_ALPHA = 0.3; // EMA smoothing factor (0.3 = responsive to recent, 0.7 weight to history)
 
   // Export
   if (typeof module !== 'undefined' && module.exports) module.exports = ResourceIntel;

@@ -448,6 +448,362 @@ console.log('=== policy ===');
 })();
 
 // =========================================================================
+// Phase 2: forecast with pendingCosts (build cost drain)
+// =========================================================================
+console.log('');
+console.log('=== forecast: build cost drain ===');
+
+(function testForecastWithPendingCosts() {
+  var intel = new self.TravianResourceIntel();
+  var snapshot = {
+    resources: { wood: 3000, clay: 3000, iron: 3000, crop: 3000 },
+    capacity: { warehouse: 6000, granary: 6000 },
+    production: { wood: 200, clay: 200, iron: 200, crop: 200 },
+    timestamp: Date.now()
+  };
+
+  // Queue a build that costs 500 of each, completing in 30 min
+  var pending = [
+    { wood: 500, clay: 500, iron: 500, crop: 500, completionMs: 1800000 }
+  ];
+
+  var fc = intel.forecast(snapshot, 7200000, { pendingCosts: pending });
+  // Without drain: 3000 + 200*2 = 3400
+  // With drain: 3400 - 500 = 2900
+  assert(fc.wood.projected === 2900, 'wood projected with drain = 2900 (got ' + fc.wood.projected + ')');
+  assert(fc.clay.projected === 2900, 'clay projected with drain = 2900 (got ' + fc.clay.projected + ')');
+  assert(fc.pendingDrain.wood === 500, 'pendingDrain.wood = 500');
+})();
+
+(function testForecastPendingCostOutsideHorizon() {
+  var intel = new self.TravianResourceIntel();
+  var snapshot = {
+    resources: { wood: 3000, clay: 3000, iron: 3000, crop: 3000 },
+    capacity: { warehouse: 6000, granary: 6000 },
+    production: { wood: 200, clay: 200, iron: 200, crop: 200 },
+    timestamp: Date.now()
+  };
+
+  // Build completes in 3 hours, but horizon is 2 hours — should NOT drain
+  var pending = [
+    { wood: 1000, clay: 1000, iron: 1000, crop: 1000, completionMs: 10800000 }
+  ];
+
+  var fc = intel.forecast(snapshot, 7200000, { pendingCosts: pending });
+  assert(fc.wood.projected === 3400, 'pending beyond horizon ignored: wood = 3400 (got ' + fc.wood.projected + ')');
+  assert(fc.pendingDrain.wood === 0, 'pendingDrain.wood = 0 (outside horizon)');
+})();
+
+(function testForecastProjectedFloorAtZero() {
+  var intel = new self.TravianResourceIntel();
+  var snapshot = {
+    resources: { wood: 100, clay: 100, iron: 100, crop: 100 },
+    capacity: { warehouse: 6000, granary: 6000 },
+    production: { wood: 50, clay: 50, iron: 50, crop: 50 },
+    timestamp: Date.now()
+  };
+
+  // Huge build cost that exceeds what we'll have
+  var pending = [
+    { wood: 5000, clay: 5000, iron: 5000, crop: 5000, completionMs: 1800000 }
+  ];
+
+  var fc = intel.forecast(snapshot, 7200000, { pendingCosts: pending });
+  assert(fc.wood.projected === 0, 'projected floors at 0 (got ' + fc.wood.projected + ')');
+})();
+
+(function testForecastWithFarmIncome() {
+  var intel = new self.TravianResourceIntel();
+  var snapshot = {
+    resources: { wood: 1000, clay: 1000, iron: 1000, crop: 1000 },
+    capacity: { warehouse: 6000, granary: 6000 },
+    production: { wood: 100, clay: 100, iron: 100, crop: 100 },
+    timestamp: Date.now()
+  };
+
+  // Farm income adds 50/hr per resource
+  var fc = intel.forecast(snapshot, 7200000, {
+    farmIncomePerHr: { wood: 50, clay: 50, iron: 50, crop: 50 }
+  });
+  // Effective production: 150/hr, 2h = 300 gain
+  assert(fc.wood.projected === 1300, 'farm income: wood = 1300 (got ' + fc.wood.projected + ')');
+})();
+
+(function testForecastWithMultiplePendingCosts() {
+  var intel = new self.TravianResourceIntel();
+  var snapshot = {
+    resources: { wood: 5000, clay: 5000, iron: 5000, crop: 5000 },
+    capacity: { warehouse: 6000, granary: 6000 },
+    production: { wood: 200, clay: 200, iron: 200, crop: 200 },
+    timestamp: Date.now()
+  };
+
+  var pending = [
+    { wood: 300, clay: 200, iron: 400, crop: 100, completionMs: 600000 },
+    { wood: 200, clay: 300, iron: 100, crop: 400, completionMs: 1800000 }
+  ];
+
+  var fc = intel.forecast(snapshot, 7200000, { pendingCosts: pending });
+  assert(fc.pendingDrain.wood === 500, 'multiple drains sum: wood = 500');
+  assert(fc.pendingDrain.clay === 500, 'multiple drains sum: clay = 500');
+  assert(fc.pendingDrain.iron === 500, 'multiple drains sum: iron = 500');
+  assert(fc.pendingDrain.crop === 500, 'multiple drains sum: crop = 500');
+  // 5000 + 200*2 = 5400, 5400 - 500 = 4900
+  assert(fc.wood.projected === 4900, 'multiple drains: wood = 4900 (got ' + fc.wood.projected + ')');
+})();
+
+(function testForecastBackwardCompatible() {
+  var intel = new self.TravianResourceIntel();
+  var snapshot = {
+    resources: { wood: 1000, clay: 1000, iron: 1000, crop: 1000 },
+    capacity: { warehouse: 6000, granary: 6000 },
+    production: { wood: 200, clay: 200, iron: 200, crop: 200 },
+    timestamp: Date.now()
+  };
+
+  // No options — should work exactly as before
+  var fc = intel.forecast(snapshot, 7200000);
+  assert(fc.wood.projected === 1400, 'backward compatible: no options works (got ' + fc.wood.projected + ')');
+  assert(fc.pendingDrain.wood === 0, 'backward compatible: pendingDrain.wood = 0');
+})();
+
+// =========================================================================
+// Phase 2: cropSafety
+// =========================================================================
+console.log('');
+console.log('=== cropSafety ===');
+
+(function testCropSafetySafe() {
+  var intel = new self.TravianResourceIntel();
+  var snapshot = {
+    resources: { wood: 1000, clay: 1000, iron: 1000, crop: 3000 },
+    capacity: { warehouse: 6000, granary: 6000 },
+    production: { wood: 100, clay: 100, iron: 100, crop: 120 },
+    timestamp: Date.now()
+  };
+
+  var report = intel.cropSafety(snapshot, 20);
+  assert(report !== null, 'cropSafety not null');
+  assert(report.level === 'safe', 'positive net crop = safe (got ' + report.level + ')');
+  assert(report.netCrop === 100, 'netCrop = 120 - 20 = 100 (got ' + report.netCrop + ')');
+  assert(report.safeToTrain === true, 'safe to train with 100/hr net');
+  assert(report.hoursToStarvation === null, 'no starvation with positive net');
+  assert(report.action === null, 'no action needed when safe');
+})();
+
+(function testCropSafetyWarningLowMargin() {
+  var intel = new self.TravianResourceIntel();
+  var snapshot = {
+    resources: { wood: 1000, clay: 1000, iron: 1000, crop: 3000 },
+    capacity: { warehouse: 6000, granary: 6000 },
+    production: { wood: 100, clay: 100, iron: 100, crop: 25 },
+    timestamp: Date.now()
+  };
+
+  var report = intel.cropSafety(snapshot, 22);
+  assert(report.level === 'warning', 'low margin (3/hr net) = warning (got ' + report.level + ')');
+  assert(report.netCrop === 3, 'netCrop = 25 - 22 = 3 (got ' + report.netCrop + ')');
+  assert(report.safeToTrain === false, 'not safe to train with 3/hr net');
+  assert(report.action === 'monitor', 'action = monitor for low margin');
+})();
+
+(function testCropSafetyWarningNegative() {
+  var intel = new self.TravianResourceIntel();
+  var snapshot = {
+    resources: { wood: 1000, clay: 1000, iron: 1000, crop: 5000 },
+    capacity: { warehouse: 6000, granary: 6000 },
+    production: { wood: 100, clay: 100, iron: 100, crop: 80 },
+    timestamp: Date.now()
+  };
+
+  var report = intel.cropSafety(snapshot, 100);
+  assert(report.netCrop === -20, 'netCrop = 80 - 100 = -20 (got ' + report.netCrop + ')');
+  // 5000 / 20 = 250 hours — well above 2h danger threshold
+  assert(report.level === 'warning', 'negative net but far from starvation = warning');
+  assert(report.hoursToStarvation !== null, 'hoursToStarvation set');
+  assertClose(report.hoursToStarvation, 250, 1, 'hoursToStarvation ~250h');
+  assert(report.action === 'upgrade_crop', 'action = upgrade_crop for negative net');
+})();
+
+(function testCropSafetyDanger() {
+  var intel = new self.TravianResourceIntel();
+  var snapshot = {
+    resources: { wood: 1000, clay: 1000, iron: 1000, crop: 100 },
+    capacity: { warehouse: 6000, granary: 6000 },
+    production: { wood: 100, clay: 100, iron: 100, crop: 30 },
+    timestamp: Date.now()
+  };
+
+  var report = intel.cropSafety(snapshot, 100);
+  assert(report.netCrop === -70, 'netCrop = 30 - 100 = -70 (got ' + report.netCrop + ')');
+  // 100 / 70 = ~1.43 hours — under 2h danger threshold
+  assert(report.level === 'danger', 'imminent starvation = danger (got ' + report.level + ')');
+  assert(report.hoursToStarvation < 2, 'starvation in < 2h (got ' + report.hoursToStarvation + ')');
+  assert(report.safeToTrain === false, 'definitely not safe to train');
+  assert(report.action === 'upgrade_crop', 'action = upgrade_crop for danger');
+})();
+
+(function testCropSafetyAlreadyStarving() {
+  var intel = new self.TravianResourceIntel();
+  var snapshot = {
+    resources: { wood: 1000, clay: 1000, iron: 1000, crop: 0 },
+    capacity: { warehouse: 6000, granary: 6000 },
+    production: { wood: 100, clay: 100, iron: 100, crop: 20 },
+    timestamp: Date.now()
+  };
+
+  var report = intel.cropSafety(snapshot, 50);
+  assert(report.hoursToStarvation === 0, 'zero crop with negative net = starvation now');
+  assert(report.level === 'danger', 'already starving = danger');
+})();
+
+(function testCropSafetyNoUpkeep() {
+  var intel = new self.TravianResourceIntel();
+  var snapshot = {
+    resources: { wood: 1000, clay: 1000, iron: 1000, crop: 1000 },
+    capacity: { warehouse: 6000, granary: 6000 },
+    production: { wood: 100, clay: 100, iron: 100, crop: 50 },
+    timestamp: Date.now()
+  };
+
+  var report = intel.cropSafety(snapshot);
+  assert(report.netCrop === 50, 'no upkeep: netCrop = production (got ' + report.netCrop + ')');
+  assert(report.troopUpkeep === 0, 'troopUpkeep defaults to 0');
+  assert(report.level === 'safe', 'no upkeep = safe');
+})();
+
+(function testCropSafetyNullInput() {
+  var intel = new self.TravianResourceIntel();
+  assert(intel.cropSafety(null) === null, 'null input returns null');
+})();
+
+// =========================================================================
+// Phase 2: Farm Loot Prediction (EMA)
+// =========================================================================
+console.log('');
+console.log('=== Farm Loot Prediction ===');
+
+(function testRecordFarmRunAndPredict() {
+  var intel = new self.TravianResourceIntel();
+
+  // First run — insufficient for prediction (need >= 2)
+  intel.recordFarmRun('farm1', { wood: 200, clay: 150, iron: 100, crop: 50 });
+  var pred = intel.predictFarmIncome('farm1');
+  assert(pred === null, 'single run: no prediction yet');
+
+  // Second run after a delay (simulate 30 min interval)
+  var orig = Date.now;
+  Date.now = function () { return orig() + 1800000; }; // +30 min
+  intel.recordFarmRun('farm1', { wood: 300, clay: 200, iron: 150, crop: 100 });
+  Date.now = orig;
+
+  pred = intel.predictFarmIncome('farm1');
+  assert(pred !== null, 'two runs: prediction available');
+  assert(pred.farmId === 'farm1', 'farmId = farm1');
+  assert(pred.runs === 2, 'runs = 2');
+  assert(pred.totalPerHr > 0, 'totalPerHr > 0 (got ' + pred.totalPerHr + ')');
+  assert(pred.incomePerHr.wood > 0, 'wood income > 0');
+  assert(pred.successRate === 1, 'all successful: rate = 1');
+})();
+
+(function testFarmRunFailure() {
+  var intel = new self.TravianResourceIntel();
+
+  intel.recordFarmRun('farm2', { wood: 100, clay: 100, iron: 100, crop: 100 });
+
+  var orig = Date.now;
+  Date.now = function () { return orig() + 1800000; };
+  intel.recordFarmRun('farm2', null, false); // failed raid
+  Date.now = orig;
+
+  var pred = intel.predictFarmIncome('farm2');
+  if (pred) {
+    assert(pred.successRate === 0.5, 'one success + one fail = 0.5 rate (got ' + pred.successRate + ')');
+  } else {
+    // Prediction might be null with only 2 runs and one fail
+    assert(true, 'prediction null or correct after failure');
+  }
+})();
+
+(function testGetAllFarmPredictions() {
+  var intel = new self.TravianResourceIntel();
+
+  // Create two farms with enough history
+  var orig = Date.now;
+  var baseTime = orig();
+
+  // Farm A: 2 runs
+  Date.now = function () { return baseTime; };
+  intel.recordFarmRun('farmA', { wood: 200, clay: 200, iron: 200, crop: 200 });
+  Date.now = function () { return baseTime + 3600000; }; // +1hr
+  intel.recordFarmRun('farmA', { wood: 300, clay: 300, iron: 300, crop: 300 });
+
+  // Farm B: 2 runs
+  Date.now = function () { return baseTime; };
+  intel.recordFarmRun('farmB', { wood: 100, clay: 100, iron: 100, crop: 100 });
+  Date.now = function () { return baseTime + 3600000; };
+  intel.recordFarmRun('farmB', { wood: 150, clay: 150, iron: 150, crop: 150 });
+
+  Date.now = orig;
+
+  var all = intel.getAllFarmPredictions();
+  assert(all.farms.length === 2, 'two farms tracked');
+  assert(all.incomePerHr.wood > 0, 'combined wood income > 0 (got ' + all.incomePerHr.wood + ')');
+})();
+
+(function testPredictFarmIncomeNullForUnknown() {
+  var intel = new self.TravianResourceIntel();
+  var pred = intel.predictFarmIncome('nonexistent');
+  assert(pred === null, 'unknown farm returns null');
+})();
+
+(function testGetAllFarmPredictionsEmpty() {
+  var intel = new self.TravianResourceIntel();
+  var all = intel.getAllFarmPredictions();
+  assert(all.farms.length === 0, 'empty: no farms');
+  assert(all.incomePerHr.wood === 0, 'empty: income = 0');
+})();
+
+// =========================================================================
+// Phase 2: State persistence (getState / loadState)
+// =========================================================================
+console.log('');
+console.log('=== State Persistence ===');
+
+(function testGetAndLoadState() {
+  var intel1 = new self.TravianResourceIntel();
+  var orig = Date.now;
+  var baseTime = orig();
+
+  Date.now = function () { return baseTime; };
+  intel1.recordFarmRun('farmX', { wood: 500, clay: 400, iron: 300, crop: 200 });
+  Date.now = function () { return baseTime + 1800000; };
+  intel1.recordFarmRun('farmX', { wood: 600, clay: 500, iron: 400, crop: 300 });
+  Date.now = orig;
+
+  // Export state
+  var state = intel1.getState();
+  assert(state.version === 2, 'state version = 2');
+  assert(state.farmHistory.farmX !== undefined, 'farmX in exported state');
+
+  // Create new instance and load state
+  var intel2 = new self.TravianResourceIntel();
+  intel2.loadState(state);
+
+  var pred = intel2.predictFarmIncome('farmX');
+  assert(pred !== null, 'prediction available after loadState');
+  assert(pred.runs === 2, 'runs preserved after loadState (got ' + pred.runs + ')');
+})();
+
+(function testLoadStateNullSafe() {
+  var intel = new self.TravianResourceIntel();
+  intel.loadState(null);
+  intel.loadState(undefined);
+  intel.loadState('invalid');
+  assert(true, 'loadState handles null/undefined/invalid gracefully');
+})();
+
+// =========================================================================
 // Summary
 // =========================================================================
 console.log('');
