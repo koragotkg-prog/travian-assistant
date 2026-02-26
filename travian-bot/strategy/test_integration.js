@@ -3,6 +3,8 @@
  */
 global.self = global;
 global.chrome = { storage: { local: { get: function(){}, set: function(){} } } };
+// TravianLogger stub for DecisionEngine's resource pressure logging
+global.TravianLogger = { log: function(level, msg) { console.log('[' + level + '] ' + msg); } };
 
 // Load in service-worker importScripts order
 // In Node.js, module.exports takes priority over self assignment,
@@ -11,6 +13,7 @@ self.TravianGameData = require('./gameData.js');
 self.TravianBuildOptimizer = require('./buildOptimizer.js');
 self.TravianMilitaryPlanner = require('./militaryPlanner.js');
 self.TravianStrategyEngine = require('./strategyEngine.js');
+self.TravianResourceIntel = require('./resourceIntel.js');
 // decisionEngine.js assigns to self directly (no module.exports)
 require('../core/decisionEngine.js');
 
@@ -19,6 +22,7 @@ console.log('GameData:', typeof self.TravianGameData === 'object' ? 'OK' : 'FAIL
 console.log('BuildOptimizer:', typeof self.TravianBuildOptimizer === 'function' ? 'OK' : 'FAIL');
 console.log('MilitaryPlanner:', typeof self.TravianMilitaryPlanner === 'function' ? 'OK' : 'FAIL');
 console.log('StrategyEngine:', typeof self.TravianStrategyEngine === 'function' ? 'OK' : 'FAIL');
+console.log('ResourceIntel:', typeof self.TravianResourceIntel === 'function' ? 'OK' : 'FAIL');
 console.log('DecisionEngine:', typeof self.TravianDecisionEngine === 'function' ? 'OK' : 'FAIL');
 
 var engine = new self.TravianDecisionEngine();
@@ -27,6 +31,7 @@ console.log('=== Integration Check ===');
 console.log('Strategy engine:', engine.strategyEngine ? 'INTEGRATED' : 'NOT FOUND');
 console.log('Build optimizer:', engine.buildOptimizer ? 'INTEGRATED' : 'NOT FOUND');
 console.log('Military planner:', engine.militaryPlanner ? 'INTEGRATED' : 'NOT FOUND');
+console.log('Resource intel:', engine.resourceIntel ? 'INTEGRATED' : 'NOT FOUND');
 
 // Simulate real game state from Asia 4
 var gameState = {
@@ -115,3 +120,75 @@ console.log('');
 console.log('=== Comparison: Old vs New ===');
 console.log('OLD: Would pick lowest-level field (iron Lv.4)');
 console.log('NEW: Picks by ROI score — see actual task above');
+
+// =========================================================================
+// Resource Intelligence integration tests
+// =========================================================================
+console.log('');
+console.log('=== Resource Intelligence: Pressure Analysis ===');
+
+var intel = engine.resourceIntel;
+if (intel) {
+  // Scenario 1: Normal state (low pressure)
+  var snapshot1 = intel.buildSnapshot(gameState);
+  var pressure1 = intel.pressure(snapshot1);
+  console.log('Normal state pressure:', pressure1.overall, '(' + pressure1.level + ')');
+  console.log('  Per-resource:', JSON.stringify(pressure1.perResource));
+  console.log('  Overflow risk:', JSON.stringify(pressure1.overflowRisk));
+
+  // Scenario 2: Near-full state (high pressure)
+  var highFillState = JSON.parse(JSON.stringify(gameState));
+  // Warehouse capacity at Lv.7 is ~16800; fill to 90%
+  highFillState.resources = { wood: 15000, clay: 14500, iron: 16000, crop: 14000 };
+  highFillState.resourceCapacity = { warehouse: 16800, granary: 16800 };
+
+  var snapshot2 = intel.buildSnapshot(highFillState);
+  var pressure2 = intel.pressure(snapshot2);
+  console.log('');
+  console.log('Near-full state pressure:', pressure2.overall, '(' + pressure2.level + ')');
+  console.log('  Per-resource:', JSON.stringify(pressure2.perResource));
+  console.log('  Overflow risk:', JSON.stringify(pressure2.overflowRisk));
+  console.log('  First overflow:', pressure2.firstOverflowMs != null
+    ? Math.round(pressure2.firstOverflowMs / 60000) + ' min'
+    : 'none');
+
+  // Scenario 3: Pressure-driven re-ranking
+  console.log('');
+  console.log('=== Resource Intelligence: Pressure Re-ranking ===');
+  var villageState = {
+    resourceFields: gameState.resourceFields || [],
+    buildings: gameState.buildings || [],
+    resources: highFillState.resources,
+    production: gameState.production,
+    storage: { warehouse: 7, granary: 7 },
+  };
+  var ranked = engine.buildOptimizer.rankUpgrades(villageState, engine.currentPhase, 10);
+  console.log('Before policy (ROI order):');
+  ranked.slice(0, 5).forEach(function(c, i) {
+    console.log('  #' + (i + 1) + ' ' + c.buildingKey + ' slot ' + c.slot +
+      ' (score: ' + c.score + ', affordable: ' + c.affordable + ')');
+  });
+
+  var reranked = intel.policy(pressure2, ranked);
+  console.log('');
+  console.log('After policy (pressure-adjusted, pressure=' + pressure2.overall + '):');
+  reranked.slice(0, 5).forEach(function(c, i) {
+    console.log('  #' + (i + 1) + ' ' + c.buildingKey + ' slot ' + c.slot +
+      ' (adjusted: ' + (c._adjustedScore || c.score) + ', affordable: ' + c.affordable + ')');
+  });
+
+  // Scenario 4: Full evaluate() with high pressure
+  console.log('');
+  console.log('=== Resource Intelligence: Full Cycle with High Pressure ===');
+  var tasks2 = engine.evaluate(highFillState, config, taskQueue);
+  console.log('Tasks generated under pressure:', tasks2.length);
+  tasks2.forEach(function(t) {
+    console.log('  [' + t.type + '] priority=' + t.priority +
+      ' params=' + JSON.stringify(t.params));
+  });
+} else {
+  console.log('ResourceIntel NOT integrated — skipping pressure tests');
+}
+
+console.log('');
+console.log('=== Integration Test Complete ===');
