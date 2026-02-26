@@ -724,6 +724,53 @@
       }
     },
 
+    /**
+     * Train traps at the Trapper building (Gaul, gid=36).
+     * Must already be on the trapper building page.
+     *
+     * @param {number} count - Number of traps to train
+     * @returns {Promise<{success: boolean, reason?: string, message?: string}>}
+     */
+    trainTraps: async function (count) {
+      try {
+        Logger.log('trainTraps: training', count, 'traps');
+
+        var input = await awaitSelector('input[name="t1"]', 3000);
+        if (!input) {
+          return { success: false, reason: 'button_not_found', message: 'Trap training input not found' };
+        }
+
+        if (input.disabled || input.max === '0') {
+          return { success: false, reason: 'queue_full', message: 'Cannot train traps (building upgrading?)' };
+        }
+
+        var filled = await fillInput('input[name="t1"]', String(count));
+        if (!filled) {
+          return { success: false, reason: 'button_not_found', message: 'Failed to fill trap training input' };
+        }
+
+        await humanDelay(300, 600);
+
+        var trainSelectors = [
+          '.textButtonV1.green',
+          'button[type="submit"].green',
+          '.section1 button.green',
+          'form button.green'
+        ];
+
+        var clicked = await clickElement(trainSelectors);
+        if (!clicked) {
+          return { success: false, reason: 'button_not_found', message: 'Train button not found' };
+        }
+
+        Logger.log('trainTraps: submitted training for', count, 'traps');
+        return { success: true };
+      } catch (e) {
+        Logger.error('trainTraps error:', e);
+        return { success: false, reason: 'button_not_found', message: e.message };
+      }
+    },
+
     // -----------------------------------------------------------------------
     // Farming / Rally Point
     // -----------------------------------------------------------------------
@@ -1604,6 +1651,10 @@
 
             case 'trainTroops':
               actionResult = await TravianExecutor.trainTroops(params.troopType, params.count);
+              break;
+
+            case 'trainTraps':
+              actionResult = await TravianExecutor.trainTraps(params.count);
               break;
 
             case 'clickFarmListTab':

@@ -36,6 +36,9 @@
         actions.push(...this._scoreHeroAdventure(gameState, config));
       }
 
+      // Trapper and Wall scoring
+      actions.push(...this._scoreTrapperAndWall(gameState, config));
+
       // Quest bonus: boost actions that align with quest goals
       if (gameState.quests) {
         this._applyQuestBonuses(actions, gameState.quests);
@@ -207,6 +210,41 @@
         score: 25, // adventures are high value (XP + items)
         reason: `Hero adventure available (health: ${hero.health}%)`
       });
+
+      return actions;
+    }
+
+    _scoreTrapperAndWall(state, config) {
+      const actions = [];
+      const trapper = state.trapperInfo;
+
+      // Trap training
+      if (trapper && trapper.canTrain && trapper.maxTrain > 0) {
+        const deficit = trapper.maxTraps - trapper.currentTraps;
+        if (deficit > 0) {
+          const threatLevel = state.defenseReports?.recentAttacks > 0 ? 2.0 : 1.0;
+          const score = (deficit / trapper.maxTraps) * 15 * threatLevel;
+          actions.push({
+            type: 'build_traps',
+            params: { count: Math.min(deficit, trapper.maxTrain, 10) },
+            score,
+            reason: `Train traps (${trapper.currentTraps}/${trapper.maxTraps})`
+          });
+        }
+      }
+
+      // Wall upgrade — scored as normal building but with defense boost
+      const buildings = state.buildings || [];
+      const wall = buildings.find(b => [31, 33, 36].includes(b.id || b.gid));
+      if (wall && !wall.upgrading && wall.level < 20) {
+        const score = 8 + (state.defenseReports?.recentAttacks > 0 ? 10 : 0);
+        actions.push({
+          type: 'upgrade_building',
+          params: { slot: wall.slot, gid: wall.id || wall.gid, level: wall.level },
+          score,
+          reason: `Wall lv${wall.level}→${wall.level + 1}`
+        });
+      }
 
       return actions;
     }

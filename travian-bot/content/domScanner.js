@@ -1179,6 +1179,46 @@
     },
 
     // -------------------------------------------------------------------------
+    // Trapper (Gaul building, gid=36)
+    // -------------------------------------------------------------------------
+
+    /**
+     * Read trapper info from the trapper building page (gid=36).
+     * Returns current trap count, max traps, and training availability.
+     * Only works when on the trapper building page.
+     *
+     * @returns {Object|null} Trapper info or null if not on trapper page
+     */
+    getTrapperInfo: function () {
+      try {
+        // Only works on trapper building page (gid=36)
+        if (window.location.href.indexOf('gid=36') === -1) return null;
+
+        // Read trap counts from the description area
+        var descEl = trySelectors(['#build .description', '#build .buildingDetails']);
+        var descText = descEl ? descEl.textContent : '';
+        var currentMatch = descText.match(/(\d+)\s*อัน.*?ขณะนี้/);
+        var maxMatch = descText.match(/สูงสุด.*?(\d+)\s*อัน/);
+
+        // Check training form
+        var trainInput = qs('input[name="t1"]');
+        var canTrain = trainInput ? !trainInput.disabled : false;
+        var maxTrain = trainInput ? (parseInt(trainInput.max || '0', 10) || 0) : 0;
+
+        return {
+          currentTraps: currentMatch ? parseInt(currentMatch[1], 10) : 0,
+          maxTraps: maxMatch ? parseInt(maxMatch[1], 10) : 0,
+          canTrain: canTrain,
+          maxTrain: maxTrain,
+          isUpgrading: maxTrain === 0 && canTrain === false
+        };
+      } catch (e) {
+        console.warn('[TravianScanner] getTrapperInfo error:', e);
+        return null;
+      }
+    },
+
+    // -------------------------------------------------------------------------
     // Full State
     // -------------------------------------------------------------------------
 
@@ -1310,6 +1350,9 @@
       if (state.page === 'tasks' || window.location.pathname.indexOf('/tasks') !== -1) {
         try { state.quests = this.scanQuests(); } catch (e) { console.warn('[TravianScanner] getFullState - scanQuests error:', e); }
       }
+
+      // Trapper info (only on trapper building page gid=36)
+      try { state.trapperInfo = this.getTrapperInfo(); } catch (e) { console.warn('[TravianScanner] getFullState - getTrapperInfo error:', e); }
 
       return state;
     }
