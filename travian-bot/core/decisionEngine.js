@@ -34,6 +34,7 @@ class DecisionEngine {
     this.buildOptimizer = null;
     this.militaryPlanner = null;
     this.actionScorer = null;
+    this.resourceIntel = null;
 
     try {
       if (typeof self !== 'undefined') {
@@ -41,6 +42,10 @@ class DecisionEngine {
         if (self.TravianBuildOptimizer) this.buildOptimizer = new self.TravianBuildOptimizer();
         if (self.TravianMilitaryPlanner) this.militaryPlanner = new self.TravianMilitaryPlanner();
         if (self.TravianActionScorer) this.actionScorer = new self.TravianActionScorer();
+        if (self.TravianResourceIntel) this.resourceIntel = new self.TravianResourceIntel();
+      }
+      if (this.resourceIntel) {
+        console.log('[DecisionEngine] Resource Intelligence integrated — pressure-aware decisions enabled');
       }
       if (this.actionScorer) {
         console.log('[DecisionEngine] ActionScorer integrated — hybrid AI scoring enabled');
@@ -174,12 +179,32 @@ class DecisionEngine {
       }
     }
 
+    // 4.7. Resource pressure analysis (informs upgrade decisions)
+    let resourcePressure = null;
+    if (this.resourceIntel) {
+      try {
+        const snapshot = this.resourceIntel.buildSnapshot(gameState);
+        if (snapshot) {
+          resourcePressure = this.resourceIntel.pressure(snapshot);
+          if (resourcePressure && resourcePressure.overall >= 30) {
+            TravianLogger.log('INFO', '[ResourceIntel] Pressure: ' + resourcePressure.overall +
+              ' (' + resourcePressure.level + ')' +
+              (resourcePressure.firstOverflowMs != null
+                ? ' — overflow in ' + Math.round(resourcePressure.firstOverflowMs / 60000) + 'min'
+                : ''));
+          }
+        }
+      } catch (err) {
+        console.warn('[DecisionEngine] Resource pressure analysis failed:', err.message);
+      }
+    }
+
     // 5. Upgrade decisions (resources + buildings)
     const autoRes = config.autoUpgradeResources || config.autoResourceUpgrade;
     const autoBld = config.autoUpgradeBuildings || config.autoBuildingUpgrade;
     if ((autoRes || autoBld) && !buildQueueFull &&
         !this.isCoolingDown('upgrade_resource') && !this.isCoolingDown('upgrade_building')) {
-      const upgradeTask = this.evaluateUpgrades(gameState, config, autoRes, autoBld);
+      const upgradeTask = this.evaluateUpgrades(gameState, config, autoRes, autoBld, resourcePressure);
       if (upgradeTask && !taskQueue.hasTaskOfType(upgradeTask.type, upgradeTask.villageId)) {
         newTasks.push(upgradeTask);
       }
@@ -241,13 +266,13 @@ class DecisionEngine {
    *  2. Strategy engine ROI ranking (if available)
    *  3. Fallback: lowest-level field/building up to level 10
    */
-  evaluateUpgrades(state, config, autoRes, autoBld) {
+  evaluateUpgrades(state, config, autoRes, autoBld, resourcePressure) {
     const targets = config.upgradeTargets || {};
     const hasTargets = Object.keys(targets).length > 0;
 
     // --- Strategy-engine path: use ROI ranking ---
     if (this.buildOptimizer) {
-      return this._strategyUpgrade(state, config, autoRes, autoBld, targets, hasTargets);
+      return this._strategyUpgrade(state, config, autoRes, autoBld, targets, hasTargets, resourcePressure);
     }
 
     // --- Fallback path: simple lowest-level logic ---
@@ -258,7 +283,7 @@ class DecisionEngine {
    * Strategy-engine upgrade: rank all upgrades by ROI/utility, then filter by
    * user config (upgradeTargets) and pick the best affordable one.
    */
-  _strategyUpgrade(state, config, autoRes, autoBld, targets, hasTargets) {
+  _strategyUpgrade(state, config, autoRes, autoBld, targets, hasTargets, resourcePressure) {
     const villageState = {
       resourceFields: state.resourceFields || [],
       buildings: state.buildings || [],
@@ -268,7 +293,14 @@ class DecisionEngine {
     };
 
     // Get ROI-ranked candidates from build optimizer
-    const ranked = this.buildOptimizer.rankUpgrades(villageState, this.currentPhase, 20);
+    let ranked = this.buildOptimizer.rankUpgrades(villageState, this.currentPhase, 20);
+
+    // Apply resource pressure re-ranking when pressure >= 30
+    if (this.resourceIntel && resourcePressure && resourcePressure.overall >= 30) {
+      ranked = this.resourceIntel.policy(resourcePressure, ranked);
+      TravianLogger.log('DEBUG', '[ResourceIntel] Re-ranked ' + ranked.length +
+        ' candidates by pressure relief (pressure=' + resourcePressure.overall + ')');
+    }
 
     for (const candidate of ranked) {
       // Filter by feature toggles
