@@ -528,8 +528,8 @@ class BotEngine {
               troops: task.params.troops || {}
             }
           });
-          // Update last farm time
-          this.gameState.lastFarmTime = Date.now();
+          // Update last farm time (persistent, not on gameState which gets overwritten)
+          this._lastFarmTime = Date.now();
           break;
 
         case 'switch_village':
@@ -931,7 +931,8 @@ class BotEngine {
       case 'build_traps':
         return 120000;    // 2 minutes cooldown after trap building
       case 'send_farm':
-        return 300000;    // 5 minutes cooldown after farm send
+      case 'send_attack':
+        return 300000;    // 5 minutes cooldown after farm/attack send
       case 'send_hero_adventure':
         return 180000;    // 3 minutes cooldown after hero adventure
       default:

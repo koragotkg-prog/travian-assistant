@@ -152,9 +152,9 @@
       const troopType = config.troopType || 't1';
       const trainCount = config.trainCount || 5;
 
-      // Crop awareness: don't train if free crop is very low
-      const freeCrop = state.freeCrop || 0;
-      const cropPenalty = freeCrop < 10 ? 0.3 : freeCrop < 50 ? 0.7 : 1.0;
+      // Crop awareness: don't train if free crop is very low (skip penalty if data unavailable)
+      const freeCrop = state.freeCrop;
+      const cropPenalty = (freeCrop == null) ? 1.0 : freeCrop < 10 ? 0.3 : freeCrop < 50 ? 0.7 : 1.0;
 
       const score = 8 * cropPenalty;
 
@@ -219,7 +219,7 @@
       const trapper = state.trapperInfo;
 
       // Trap training
-      if (trapper && trapper.canTrain && trapper.maxTrain > 0 && config.autoTrapTraining !== false) {
+      if (trapper && trapper.canTrain && trapper.maxTrain > 0 && config.autoTrapTraining === true) {
         const deficit = trapper.maxTraps - trapper.currentTraps;
         if (deficit > 0) {
           const threatLevel = state.defenseReports?.recentAttacks > 0 ? 2.0 : 1.0;
