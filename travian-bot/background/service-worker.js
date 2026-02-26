@@ -909,7 +909,30 @@ chrome.alarms.onAlarm.addListener(async function (alarm) {
 
     logger.debug('Heartbeat for ' + inst.serverKey);
 
-    if (inst.engine.running && !inst.engine.paused) {
+    // SAF-2 FIX: Auto-restart bot after service worker death.
+    // When SW restarts, engine.running is false but savedState.wasRunning is true.
+    // The old code just exited here — bot was permanently dead until user clicked Start.
+    if (!inst.engine.running) {
+      var savedState = await self.TravianStorage.getServerState(inst.serverKey);
+      if (savedState && savedState.wasRunning && inst.tabId) {
+        try {
+          await chrome.tabs.get(inst.tabId);
+          logger.info('Auto-restarting bot for ' + inst.serverKey + ' after SW restart');
+          notify('Auto-Restart', 'Bot resuming on ' + inst.serverKey);
+          await inst.engine.start(inst.tabId);
+        } catch (_) {
+          // Tab gone — clear zombie alarm
+          logger.warn('Tab gone for ' + inst.serverKey + ' — clearing zombie alarm');
+          chrome.alarms.clear(alarm.name);
+        }
+      } else if (!savedState || !savedState.wasRunning) {
+        // Not supposed to run — clear zombie alarm
+        chrome.alarms.clear(alarm.name);
+      }
+      return;
+    }
+
+    if (!inst.engine.paused) {
       // Verify tab still exists
       if (inst.tabId) {
         try {

@@ -246,7 +246,14 @@ function updateStatus(status) {
     stopped: 'Stopped',
     paused: 'Paused',
   };
-  dom.statusText.textContent = stateLabels[state] || state;
+  // SAF-5 FIX: Show emergency reason when stopped due to emergency
+  if (state === 'stopped' && status.emergencyReason) {
+    dom.statusText.textContent = 'Emergency: ' + status.emergencyReason;
+    dom.statusText.title = status.emergencyReason; // full text on hover
+  } else {
+    dom.statusText.textContent = stateLabels[state] || state;
+    dom.statusText.title = '';
+  }
 
   // Update button states based on current bot state
   switch (state) {
@@ -1375,6 +1382,7 @@ function refreshStatus() {
 
         updateStatus({
           state: state,
+          emergencyReason: s.emergencyReason || null, // SAF-5 FIX
           stats: {
             completed: s.stats ? s.stats.tasksCompleted : 0,
             failed: s.stats ? s.stats.tasksFailed : 0,
@@ -1626,6 +1634,8 @@ function bindEvents() {
     sendMessage({ type: 'START_BOT' })
       .then((response) => {
         if (response) updateStatus(response);
+        // SAF-5 FIX: Clear emergency reason on fresh start
+        chrome.storage.local.remove('bot_emergency_stop');
       })
       .catch(console.warn);
   });
@@ -1912,6 +1922,25 @@ document.addEventListener('DOMContentLoaded', () => {
     loadConfig();
     bindEvents();
     refreshStatus();
+
+    // SAF-5 FIX: Read emergency stop reason from storage as fallback
+    // (in case service worker died and in-memory reason is lost)
+    chrome.storage.local.get(['bot_emergency_stop'], function (result) {
+      var es = result && result.bot_emergency_stop;
+      if (es && es.reason) {
+        // Only show if bot is currently stopped (not running)
+        var dot = dom.statusDot;
+        if (dot && dot.className.indexOf('running') === -1) {
+          var age = Date.now() - (es.timestamp || 0);
+          // Only show if emergency was recent (< 1 hour)
+          if (age < 3600000) {
+            dom.statusText.textContent = 'Emergency: ' + es.reason;
+            dom.statusText.title = es.reason + ' (' + new Date(es.timestamp).toLocaleTimeString() + ')';
+          }
+        }
+      }
+    });
+
     refreshLogs();
     refreshQueue();
     refreshStrategy();

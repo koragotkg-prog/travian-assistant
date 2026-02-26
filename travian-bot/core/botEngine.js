@@ -46,6 +46,7 @@ class BotEngine {
     this._running = false;
     this._paused = false;
     this._emergencyStopped = false;
+    this._emergencyReason = null; // SAF-5 FIX: remember WHY we emergency-stopped
 
     // Core subsystems
     this.taskQueue = new self.TravianTaskQueue();
@@ -79,11 +80,18 @@ class BotEngine {
     this.hourResetTime = Date.now();
 
     // Content script communication timeout (ms)
-    // Adapts upward when timeouts occur (Chrome throttles background tabs)
-    this._messageTimeout = 15000;
-    this._messageTimeoutBase = 15000;   // Reset target after success
-    this._messageTimeoutMax = 45000;    // Cap for throttled tabs
+    // TQ-6 FIX: Increased base from 15s to 30s. Chrome throttles background tabs
+    // with minimum 1s setTimeout — content scripts can take 20-30s under heavy throttle.
+    // At 15s the timeout would fire → reject → retry → duplicate click.
+    this._messageTimeout = 30000;
+    this._messageTimeoutBase = 30000;   // Reset target after success
+    this._messageTimeoutMax = 60000;    // Cap for throttled tabs
     this._messageTimeoutStep = 10000;   // Increase per consecutive timeout
+
+    // TQ-6 FIX: Request deduplication counter.
+    // Each EXECUTE message gets a unique requestId so the content script can
+    // detect and discard duplicate requests from timeout→retry sequences.
+    this._requestIdCounter = 0;
 
     // Mutex: prevents concurrent mainLoop execution
     this._mainLoopRunning = false;
@@ -95,6 +103,15 @@ class BotEngine {
     this._consecutiveFailures = 0;
     this._circuitBreakerThreshold = 5;
     this._circuitBreakerCooldownMs = 5 * 60 * 1000; // 5 minutes
+    this._circuitBreakerTrips = 0;      // SAF-3 FIX: trip counter for escalation
+    this._circuitBreakerMaxTrips = 3;   // SAF-3 FIX: emergency stop after N trips
+
+    // SAF-1 FIX: Not-logged-in consecutive counter.
+    // Session expiry makes loggedIn=false every cycle, but old code just skipped
+    // with return — no counter, no escalation, no notification.
+    // Bot appeared "running" but did nothing forever.
+    this._notLoggedInCount = 0;
+    this._notLoggedInMaxCount = 5; // emergency stop after 5 consecutive not-logged-in
 
     // Structured logging: cycle counter
     this._cycleCounter = 0;
@@ -370,6 +387,7 @@ class BotEngine {
   emergencyStop(reason) {
     console.error(`[BotEngine] EMERGENCY STOP: ${reason}`);
 
+    this._emergencyReason = reason; // SAF-5 FIX: store for getStatus()
     this._transition(BOT_STATES.EMERGENCY, reason);
     this.stop(); // EMERGENCY → STOPPED
 
@@ -483,9 +501,18 @@ class BotEngine {
       }
 
       if (!this.gameState.loggedIn) {
-        console.warn('[BotEngine] Not logged in, skipping cycle');
+        // SAF-1 FIX: Escalating not-logged-in detection.
+        // Old code just returned silently — session expiry created an infinite
+        // skip loop where bot appeared running but did nothing.
+        this._notLoggedInCount++;
+        this._slog('WARN', 'Not logged in (count: ' + this._notLoggedInCount + '/' + this._notLoggedInMaxCount + ')');
+        if (this._notLoggedInCount >= this._notLoggedInMaxCount) {
+          this.emergencyStop('Session expired — not logged in for ' + this._notLoggedInCount + ' consecutive cycles');
+        }
         return;
       }
+      // Reset counter on successful login
+      this._notLoggedInCount = 0;
 
       // 5. Run decision engine to produce new tasks
       const newTasks = this.decisionEngine.evaluate(
@@ -527,18 +554,31 @@ class BotEngine {
       }
 
       // 6. Circuit breaker check — pause if too many consecutive failures
+      // SAF-3 FIX: Exponential backoff + max trips → emergency stop
       if (this._consecutiveFailures >= this._circuitBreakerThreshold) {
-        console.error(`[BotEngine] Circuit breaker TRIPPED — ${this._consecutiveFailures} consecutive failures. Auto-pausing for ${this._circuitBreakerCooldownMs / 1000}s`);
-        this._transition(BOT_STATES.PAUSED, 'circuit breaker: ' + this._consecutiveFailures + ' failures');
+        this._circuitBreakerTrips++;
         this._consecutiveFailures = 0; // reset so resume doesn't immediately re-trip
+
+        // After max trips → emergency stop (don't keep oscillating)
+        if (this._circuitBreakerTrips >= this._circuitBreakerMaxTrips) {
+          this.emergencyStop(
+            'Circuit breaker: ' + this._circuitBreakerTrips + ' trips — persistent failures, stopping bot'
+          );
+          return;
+        }
+
+        // Exponential backoff: 5min → 10min → 20min
+        var cooldownMs = this._circuitBreakerCooldownMs * Math.pow(2, this._circuitBreakerTrips - 1);
+        this._slog('ERROR', 'Circuit breaker TRIPPED (trip ' + this._circuitBreakerTrips + '/' + this._circuitBreakerMaxTrips + '). Pausing for ' + (cooldownMs / 1000) + 's');
+        this._transition(BOT_STATES.PAUSED, 'circuit breaker trip ' + this._circuitBreakerTrips);
 
         // Schedule auto-resume after cooldown
         this.scheduler.scheduleOnce('circuit_breaker_resume', () => {
           if (this.running && this.paused) {
-            console.log('[BotEngine] Circuit breaker cooldown expired — auto-resuming');
+            this._slog('INFO', 'Circuit breaker cooldown expired — auto-resuming (trip ' + this._circuitBreakerTrips + ')');
             this._transition(BOT_STATES.IDLE, 'circuit breaker cooldown');
           }
-        }, this._circuitBreakerCooldownMs);
+        }, cooldownMs);
         return;
       }
 
@@ -865,6 +905,7 @@ class BotEngine {
         this.stats.lastAction = Date.now();
         this.actionsThisHour++;
         this._consecutiveFailures = 0; // Circuit breaker: reset on success
+        this._circuitBreakerTrips = 0; // SAF-3 FIX: reset trip counter on success
 
         // Set per-slot cooldown to avoid spamming the same slot
         // Other slots of the same type remain available for upgrades
@@ -960,6 +1001,13 @@ class BotEngine {
       throw new Error('No active tab ID set');
     }
 
+    // TQ-6 FIX: Stamp EXECUTE messages with a unique requestId for dedup.
+    // Content script tracks last seen requestId and ignores duplicates.
+    if (message && message.type === 'EXECUTE') {
+      this._requestIdCounter++;
+      message._requestId = this._requestIdCounter;
+    }
+
     return new Promise((resolve, reject) => {
       // FIX 1: "settled" flag prevents ghost actions from the timeout/callback race.
       // When the timeout fires first, we reject — but chrome.tabs.sendMessage callback
@@ -1051,6 +1099,7 @@ class BotEngine {
       running: this.running,
       paused: this.paused,
       emergencyStopped: this.emergencyStopped,
+      emergencyReason: this._emergencyReason, // SAF-5 FIX
       botState: this._botState,
       cycleId: this._currentCycleId,
       activeTabId: this.activeTabId,

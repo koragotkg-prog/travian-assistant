@@ -244,15 +244,26 @@
       button: 0
     };
 
-    // mousedown
+    // RND-4 FIX: Simulate mouse movement to element before clicking.
+    // Real users always move their cursor to an element before clicking.
+    // 1. mousemove — cursor approaches the element
+    element.dispatchEvent(new MouseEvent('mousemove', commonProps));
+    await delay(randomInt(15, 50));
+
+    // 2. mouseover + mouseenter — cursor enters the element boundary
+    element.dispatchEvent(new MouseEvent('mouseover', commonProps));
+    element.dispatchEvent(new MouseEvent('mouseenter', { ...commonProps, bubbles: false }));
+    await delay(randomInt(30, 120));
+
+    // 3. mousedown
     element.dispatchEvent(new MouseEvent('mousedown', commonProps));
     await delay(randomInt(30, 90));
 
-    // mouseup
+    // 4. mouseup
     element.dispatchEvent(new MouseEvent('mouseup', commonProps));
     await delay(randomInt(10, 40));
 
-    // click
+    // 5. click
     element.dispatchEvent(new MouseEvent('click', commonProps));
 
     Logger.log('Clicked element:', element.tagName, element.className || element.id || '');
@@ -1855,9 +1866,24 @@
    * @param {{ type: string, action?: string, params?: Object }} message
    * @returns {Promise<{ success: boolean, data: any, error: string|null }>}
    */
+  // TQ-6 FIX: Track last processed requestId to prevent duplicate EXECUTE actions.
+  // When Chrome throttles a background tab, the bot's timeout can fire before the
+  // content script responds. The bot retries with a NEW requestId, but the original
+  // message may still arrive as a ghost. We discard messages with stale IDs.
+  var _lastProcessedRequestId = 0;
+
   async function handleMessage(message) {
     if (!message || !message.type) {
       return { success: false, data: null, error: 'Invalid message: missing type' };
+    }
+
+    // TQ-6 FIX: Dedup EXECUTE messages by requestId
+    if (message.type === 'EXECUTE' && message._requestId) {
+      if (message._requestId <= _lastProcessedRequestId) {
+        Logger.warn('Duplicate EXECUTE ignored (requestId=' + message._requestId + ', last=' + _lastProcessedRequestId + ')');
+        return { success: false, data: null, error: 'Duplicate request ignored', reason: 'duplicate_request' };
+      }
+      _lastProcessedRequestId = message._requestId;
     }
 
     Logger.log('Received message:', message.type, message.action || '');
@@ -1871,6 +1897,15 @@
         case 'SCAN': {
           if (!window.TravianScanner) {
             return { success: false, data: null, error: 'TravianScanner not available' };
+          }
+          // DOM-4 FIX: Wait for key DOM elements before scanning.
+          // Without this, partial page loads produce empty/incomplete scan data
+          // that causes bad decisions (missing buildings, zero resources, etc.)
+          if (typeof window.TravianScanner.waitForReady === 'function') {
+            var ready = await window.TravianScanner.waitForReady(3000);
+            if (!ready) {
+              Logger.warn('DOM not ready after 3s — scanning anyway (may be partial)');
+            }
           }
           var state = window.TravianScanner.getFullState();
           return { success: true, data: state, error: null };
