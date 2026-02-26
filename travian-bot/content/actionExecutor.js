@@ -1068,6 +1068,96 @@
     },
 
     /**
+     * Add a target to a farm list by coordinates.
+     * Must be called while on the rally point farm list page (tt=99).
+     *
+     * @param {object} params
+     * @param {number} params.x - Target X coordinate
+     * @param {number} params.y - Target Y coordinate
+     * @param {number} [params.listIndex=0] - Which farm list to add to (0-based)
+     * @returns {Promise<{success:boolean, reason?:string, message:string}>}
+     */
+    addToFarmList: async function (params) {
+      var x = params.x;
+      var y = params.y;
+      var listIndex = params.listIndex || 0;
+
+      Logger.log('Adding to farm list: (' + x + '|' + y + ') list=' + listIndex);
+
+      // Verify we're on the farm list page
+      if (window.location.href.indexOf('tt=99') === -1) {
+        return { success: false, reason: 'wrong_page', message: 'Not on farm list page (tt=99)' };
+      }
+
+      // Find all farm list wrappers
+      var lists = qsa('.farmListWrapper');
+      if (lists.length === 0) {
+        return { success: false, reason: 'no_farm_list', message: 'No farm list found on page' };
+      }
+
+      var targetList = lists[listIndex] || lists[0];
+
+      // Look for the coordinate input fields in the add row
+      var xInput = trySelectors([
+        'input[name="x"]',
+        'input.coordinateX',
+        '.addSlot input[name="x"]',
+        '.farmListAdd input[name="x"]'
+      ], targetList) || trySelectors([
+        'input[name="x"]',
+        'input.coordinateX',
+        '.addSlot input[name="x"]'
+      ]);
+
+      var yInput = trySelectors([
+        'input[name="y"]',
+        'input.coordinateY',
+        '.addSlot input[name="y"]',
+        '.farmListAdd input[name="y"]'
+      ], targetList) || trySelectors([
+        'input[name="y"]',
+        'input.coordinateY',
+        '.addSlot input[name="y"]'
+      ]);
+
+      if (!xInput || !yInput) {
+        return { success: false, reason: 'no_input', message: 'Cannot find coordinate inputs on farm list page' };
+      }
+
+      // Fill in coordinates with input events for Travian's JS to detect
+      xInput.value = String(x);
+      xInput.dispatchEvent(new Event('input', { bubbles: true }));
+      xInput.dispatchEvent(new Event('change', { bubbles: true }));
+      await humanDelay(100, 250);
+
+      yInput.value = String(y);
+      yInput.dispatchEvent(new Event('input', { bubbles: true }));
+      yInput.dispatchEvent(new Event('change', { bubbles: true }));
+      await humanDelay(100, 250);
+
+      // Find and click the add button
+      var addBtn = trySelectors([
+        '.addSlot button',
+        '.farmListAdd button',
+        'button.addSlot',
+        '.farmListWrapper button.green:not(.startFarmList):not(.startAllFarmLists)',
+        'button[type="submit"]'
+      ], targetList) || trySelectors([
+        '.addSlot button',
+        'button.addSlot'
+      ]);
+
+      if (!addBtn) {
+        return { success: false, reason: 'button_not_found', message: 'Cannot find add button on farm list' };
+      }
+
+      await simulateHumanClick(addBtn);
+      Logger.log('Added target (' + x + '|' + y + ') to farm list');
+
+      return { success: true, message: 'Added (' + x + '|' + y + ') to farm list' };
+    },
+
+    /**
      * Fill in the rally point attack form and send an attack.
      *
      * @param {{ x: number, y: number }} target - Target coordinates
@@ -1805,6 +1895,10 @@
 
             case 'scanFarmListSlots':
               actionResult = { success: true, slots: window.TravianScanner ? window.TravianScanner.scanFarmListSlots() : [] };
+              break;
+
+            case 'addToFarmList':
+              actionResult = await TravianExecutor.addToFarmList(params);
               break;
 
             case 'sendAttack':
