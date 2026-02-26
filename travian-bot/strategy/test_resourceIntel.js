@@ -419,9 +419,9 @@ console.log('=== policy ===');
     assert(typeof result[i]._adjustedScore === 'number',
       result[i].buildingKey + ' has _adjustedScore set');
   }
-  // Medium pressure should boost scores above base
-  assert(result[0]._adjustedScore >= result[0].score || true,
-    'adjustedScore accounts for relief');
+  // Medium pressure should boost scores above base (relief > 0 for high-pressure resources)
+  assert(result[0]._adjustedScore >= result[0].score,
+    'adjustedScore >= base score when pressure present');
 })();
 
 (function testPolicyEmptyCandidates() {

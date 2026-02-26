@@ -318,12 +318,15 @@
    * @param {object} pressureReport - From pressure()
    * @param {Array} candidates - BuildOptimizer candidates
    * @param {object} [options] - Optional settings
-   * @returns {Array} Re-ranked candidates (same array, mutated)
+   * @returns {Array} Re-ranked candidates (new array, original untouched)
    */
   ResourceIntel.prototype.policy = function (pressureReport, candidates, options) {
     if (!pressureReport || !candidates || !candidates.length) {
-      return candidates || [];
+      return candidates ? candidates.slice() : [];
     }
+
+    // Clone to avoid mutating caller's array (consistent with BuildOptimizer.rankUpgrades)
+    candidates = candidates.slice();
 
     // Low pressure: return unchanged
     if (pressureReport.overall < 30) {
