@@ -693,9 +693,10 @@ console.log('=== Farm Loot Prediction ===');
 
   // Second run after a delay (simulate 30 min interval)
   var orig = Date.now;
-  Date.now = function () { return orig() + 1800000; }; // +30 min
-  intel.recordFarmRun('farm1', { wood: 300, clay: 200, iron: 150, crop: 100 });
-  Date.now = orig;
+  try {
+    Date.now = function () { return orig() + 1800000; }; // +30 min
+    intel.recordFarmRun('farm1', { wood: 300, clay: 200, iron: 150, crop: 100 });
+  } finally { Date.now = orig; }
 
   pred = intel.predictFarmIncome('farm1');
   assert(pred !== null, 'two runs: prediction available');
@@ -712,9 +713,10 @@ console.log('=== Farm Loot Prediction ===');
   intel.recordFarmRun('farm2', { wood: 100, clay: 100, iron: 100, crop: 100 });
 
   var orig = Date.now;
-  Date.now = function () { return orig() + 1800000; };
-  intel.recordFarmRun('farm2', null, false); // failed raid
-  Date.now = orig;
+  try {
+    Date.now = function () { return orig() + 1800000; };
+    intel.recordFarmRun('farm2', null, false); // failed raid
+  } finally { Date.now = orig; }
 
   var pred = intel.predictFarmIncome('farm2');
   if (pred) {
@@ -732,19 +734,19 @@ console.log('=== Farm Loot Prediction ===');
   var orig = Date.now;
   var baseTime = orig();
 
-  // Farm A: 2 runs
-  Date.now = function () { return baseTime; };
-  intel.recordFarmRun('farmA', { wood: 200, clay: 200, iron: 200, crop: 200 });
-  Date.now = function () { return baseTime + 3600000; }; // +1hr
-  intel.recordFarmRun('farmA', { wood: 300, clay: 300, iron: 300, crop: 300 });
+  try {
+    // Farm A: 2 runs
+    Date.now = function () { return baseTime; };
+    intel.recordFarmRun('farmA', { wood: 200, clay: 200, iron: 200, crop: 200 });
+    Date.now = function () { return baseTime + 3600000; }; // +1hr
+    intel.recordFarmRun('farmA', { wood: 300, clay: 300, iron: 300, crop: 300 });
 
-  // Farm B: 2 runs
-  Date.now = function () { return baseTime; };
-  intel.recordFarmRun('farmB', { wood: 100, clay: 100, iron: 100, crop: 100 });
-  Date.now = function () { return baseTime + 3600000; };
-  intel.recordFarmRun('farmB', { wood: 150, clay: 150, iron: 150, crop: 150 });
-
-  Date.now = orig;
+    // Farm B: 2 runs
+    Date.now = function () { return baseTime; };
+    intel.recordFarmRun('farmB', { wood: 100, clay: 100, iron: 100, crop: 100 });
+    Date.now = function () { return baseTime + 3600000; };
+    intel.recordFarmRun('farmB', { wood: 150, clay: 150, iron: 150, crop: 150 });
+  } finally { Date.now = orig; }
 
   var all = intel.getAllFarmPredictions();
   assert(all.farms.length === 2, 'two farms tracked');

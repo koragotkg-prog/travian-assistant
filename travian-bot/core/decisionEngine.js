@@ -203,7 +203,7 @@ class DecisionEngine {
           if (pendingCosts.length > 0) forecastOpts.pendingCosts = pendingCosts;
           if (farmIncomePerHr) forecastOpts.farmIncomePerHr = farmIncomePerHr;
 
-          resourcePressure = this.resourceIntel.pressure(snapshot);
+          resourcePressure = this.resourceIntel.pressure(snapshot, forecastOpts);
           if (resourcePressure && resourcePressure.overall >= 30) {
             TravianLogger.log('INFO', '[ResourceIntel] Pressure: ' + resourcePressure.overall +
               ' (' + resourcePressure.level + ')' +
@@ -213,7 +213,7 @@ class DecisionEngine {
           }
 
           // Crop safety check (for troop training gate)
-          const troopUpkeep = this._estimateTroopUpkeep(gameState);
+          const troopUpkeep = this._estimateTroopUpkeep(gameState, config);
           cropSafetyReport = this.resourceIntel.cropSafety(snapshot, troopUpkeep);
           if (cropSafetyReport && cropSafetyReport.level !== 'safe') {
             TravianLogger.log('WARN', '[ResourceIntel] Crop safety: ' + cropSafetyReport.level +
@@ -919,7 +919,7 @@ class DecisionEngine {
    * Falls back to simple count × 1 if detailed troop data unavailable.
    * @private
    */
-  _estimateTroopUpkeep(gameState) {
+  _estimateTroopUpkeep(gameState, config) {
     var totalUpkeep = 0;
     var troops = gameState.troops;
     if (!troops || typeof troops !== 'object') return 0;
@@ -930,6 +930,9 @@ class DecisionEngine {
       if (typeof self !== 'undefined' && self.TravianGameData) GD = self.TravianGameData;
     } catch (_) {}
 
+    // Prefer config.tribe for faster/accurate lookup, fall back to scanning all tribes
+    var knownTribe = (config && config.tribe) ? config.tribe : null;
+
     for (var unitKey in troops) {
       var count = troops[unitKey] || 0;
       if (count <= 0) continue;
@@ -937,13 +940,17 @@ class DecisionEngine {
       // Try to look up upkeep from GameData
       var upkeepPerUnit = 1; // default: 1 crop/hr per unit
       if (GD && GD.TROOPS) {
-        // Check all tribes for this unit key
-        var tribes = ['roman', 'teuton', 'gaul'];
-        for (var t = 0; t < tribes.length; t++) {
-          var tribeData = GD.TROOPS[tribes[t]];
-          if (tribeData && tribeData[unitKey]) {
-            upkeepPerUnit = tribeData[unitKey].upkeep || 1;
-            break;
+        // Check known tribe first, then fall back to all tribes
+        if (knownTribe && GD.TROOPS[knownTribe] && GD.TROOPS[knownTribe][unitKey]) {
+          upkeepPerUnit = GD.TROOPS[knownTribe][unitKey].upkeep || 1;
+        } else {
+          var tribes = ['roman', 'teuton', 'gaul'];
+          for (var t = 0; t < tribes.length; t++) {
+            var tribeData = GD.TROOPS[tribes[t]];
+            if (tribeData && tribeData[unitKey]) {
+              upkeepPerUnit = tribeData[unitKey].upkeep || 1;
+              break;
+            }
           }
         }
       }

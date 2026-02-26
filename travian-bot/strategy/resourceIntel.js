@@ -259,14 +259,15 @@
    * Calculate resource pressure scores.
    *
    * @param {object} snapshot - From buildSnapshot()
+   * @param {object} [options] - Passed through to forecast() (pendingCosts, farmIncomePerHr)
    * @returns {object|null} Pressure report or null on bad input
    */
-  ResourceIntel.prototype.pressure = function (snapshot) {
+  ResourceIntel.prototype.pressure = function (snapshot, options) {
     if (!snapshot || !snapshot.resources || !snapshot.capacity || !snapshot.production) {
       return null;
     }
 
-    var fc = this.forecast(snapshot);
+    var fc = this.forecast(snapshot, null, options);
     if (!fc) return null;
 
     var totalProd = 0;
@@ -351,7 +352,7 @@
    * @param {object} pressureReport - From pressure()
    * @param {Array} candidates - BuildOptimizer candidates
    * @param {object} [options] - Optional settings
-   * @returns {Array} Re-ranked candidates (new array, original untouched)
+   * @returns {Array} Re-ranked candidates (new array; candidate objects are annotated with _adjustedScore)
    */
   ResourceIntel.prototype.policy = function (pressureReport, candidates, options) {
     if (!pressureReport || !candidates || !candidates.length) {
@@ -520,7 +521,7 @@
   ResourceIntel.prototype.recordFarmRun = function (farmId, loot, success) {
     if (!farmId) return;
 
-    if (!this._farmHistory) this._farmHistory = {};
+    if (!this._farmHistory) this._farmHistory = Object.create(null);
 
     var now = Date.now();
     var isSuccess = success !== false;
@@ -675,7 +676,14 @@
   ResourceIntel.prototype.loadState = function (state) {
     if (!state || typeof state !== 'object') return;
     if (state.farmHistory && typeof state.farmHistory === 'object') {
-      this._farmHistory = state.farmHistory;
+      // Copy into prototype-free object to prevent prototype pollution
+      var safe = Object.create(null);
+      for (var key in state.farmHistory) {
+        if (Object.prototype.hasOwnProperty.call(state.farmHistory, key)) {
+          safe[key] = state.farmHistory[key];
+        }
+      }
+      this._farmHistory = safe;
     }
   };
 
