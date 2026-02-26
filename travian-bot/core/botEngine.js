@@ -247,6 +247,16 @@ class BotEngine {
             }
           }
 
+          // Restore ResourceIntel state (farm history for EMA loot prediction)
+          if (savedState.resourceIntelState && this.decisionEngine) {
+            try {
+              this.decisionEngine.loadResourceIntelState(savedState.resourceIntelState);
+              console.log('[BotEngine] Restored ResourceIntel state (farm history)');
+            } catch (riErr) {
+              console.warn('[BotEngine] Could not restore ResourceIntel state:', riErr.message);
+            }
+          }
+
           // Restore action counter to maintain rate limiting across restarts
           if (savedState.actionsThisHour != null && savedState.hourResetTime) {
             const elapsed = Date.now() - savedState.hourResetTime;
@@ -826,6 +836,30 @@ class BotEngine {
           // Update last farm time (persistent, not on gameState which gets overwritten)
           this._lastFarmTime = Date.now();
           this.stats.farmRaidsSent++;
+
+          // Record farm result for Resource Intelligence (EMA loot prediction).
+          // selectiveFarmSend returns { sent, skipped, total, results[] }.
+          // If per-farm results include loot, record each; otherwise record aggregate.
+          if (response && response.success && this.decisionEngine) {
+            try {
+              var farmResults = response.results || (response.data && response.data.results);
+              if (Array.isArray(farmResults) && farmResults.length > 0) {
+                // Per-farm loot data available
+                for (var fi = 0; fi < farmResults.length; fi++) {
+                  var fr = farmResults[fi];
+                  if (fr && fr.farmId && fr.loot) {
+                    this.decisionEngine.recordFarmResult(fr.farmId, fr.loot, fr.success !== false);
+                  }
+                }
+              } else {
+                // No per-farm data — record a generic farm run event.
+                // This tracks frequency (runs_per_hour) even without loot amounts.
+                this.decisionEngine.recordFarmResult('farm_all', { wood: 0, clay: 0, iron: 0, crop: 0 }, true);
+              }
+            } catch (farmRecordErr) {
+              console.warn('[BotEngine] Failed to record farm result:', farmRecordErr.message);
+            }
+          }
           break;
 
         case 'build_traps':
@@ -1285,6 +1319,14 @@ class BotEngine {
         wasRunning: this.running,
         savedAt: Date.now()
       };
+
+      // Persist ResourceIntel state (farm history for EMA loot prediction)
+      if (this.decisionEngine) {
+        try {
+          var riState = this.decisionEngine.getResourceIntelState();
+          if (riState) state.resourceIntelState = riState;
+        } catch (_) { /* non-critical */ }
+      }
 
       // Per-server state when serverKey is set
       if (this.serverKey && typeof self.TravianStorage !== 'undefined' && self.TravianStorage.saveServerState) {
