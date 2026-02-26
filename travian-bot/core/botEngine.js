@@ -1232,25 +1232,5 @@ class BotEngine {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Chrome Alarms listener for service worker wakeup
-// ---------------------------------------------------------------------------
-try {
-  if (typeof chrome !== 'undefined' && chrome.alarms) {
-    chrome.alarms.onAlarm.addListener((alarm) => {
-      if (alarm.name === 'botHeartbeat') {
-        // The alarm fires to keep the service worker alive.
-        // If the bot engine is running, trigger the main loop.
-        if (self._botEngineInstance && self._botEngineInstance.running && !self._botEngineInstance.paused) {
-          console.log('[BotEngine] Heartbeat alarm fired, triggering main loop');
-          self._botEngineInstance.mainLoop();
-        }
-      }
-    });
-  }
-} catch (err) {
-  // Ignore - alarms may not be available in all contexts
-}
-
 // Export for service worker context
 self.TravianBotEngine = BotEngine;
