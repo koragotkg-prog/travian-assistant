@@ -297,9 +297,13 @@ class DecisionEngine {
 
     // Apply resource pressure re-ranking when pressure >= 30
     if (this.resourceIntel && resourcePressure && resourcePressure.overall >= 30) {
-      ranked = this.resourceIntel.policy(resourcePressure, ranked);
-      TravianLogger.log('DEBUG', '[ResourceIntel] Re-ranked ' + ranked.length +
-        ' candidates by pressure relief (pressure=' + resourcePressure.overall + ')');
+      try {
+        ranked = this.resourceIntel.policy(resourcePressure, ranked);
+        TravianLogger.log('DEBUG', '[ResourceIntel] Re-ranked ' + ranked.length +
+          ' candidates by pressure relief (pressure=' + resourcePressure.overall + ')');
+      } catch (err) {
+        console.warn('[DecisionEngine] ResourceIntel policy failed:', err.message);
+      }
     }
 
     for (const candidate of ranked) {
