@@ -23,6 +23,9 @@ class DecisionEngine {
     /** @type {object|null} Cached strategy analysis (refreshed each cycle) */
     this.lastAnalysis = null;
 
+    /** @type {object|null} Last AI-scored action for popup display */
+    this.lastAIAction = null;
+
     /** @type {string} Detected game phase */
     this.currentPhase = 'early';
 
@@ -98,6 +101,7 @@ class DecisionEngine {
         // Take the top-scored action
         const best = scoredActions[0];
         TravianLogger.log('INFO', `[AI] Best action: ${best.type} (score: ${best.score.toFixed(1)}) — ${best.reason}`);
+        this.lastAIAction = { type: best.type, score: best.score, reason: best.reason };
 
         // Check if this task type is already in queue
         if (!taskQueue.hasTaskOfType(best.type, null) &&

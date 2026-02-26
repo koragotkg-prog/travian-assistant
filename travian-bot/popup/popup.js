@@ -43,7 +43,10 @@ const dom = {
   togTroopTraining: document.getElementById('togTroopTraining'),
   togFarming: document.getElementById('togFarming'),
   togHeroAdventure: document.getElementById('togHeroAdventure'),
+  togAIScoring: document.getElementById('togAIScoring'),
+  togTrapTraining: document.getElementById('togTrapTraining'),
   heroMinHealth: document.getElementById('heroMinHealth'),
+  trapBatchSize: document.getElementById('trapBatchSize'),
 
   // Upgrade targets
   btnScanBuildings: document.getElementById('btnScanBuildings'),
@@ -112,6 +115,12 @@ const dom = {
   // Dashboard: Info Strip
   nextActionTimer: document.getElementById('nextActionTimer'),
   farmRaidStats: document.getElementById('farmRaidStats'),
+  trapperStatus: document.getElementById('trapperStatus'),
+
+  // Dashboard: AI + Quest
+  taskAIReason: document.getElementById('taskAIReason'),
+  questSection: document.getElementById('questSection'),
+  questDisplay: document.getElementById('questDisplay'),
 };
 
 // ============================================================
@@ -670,6 +679,66 @@ function updateFarmStats(stats) {
   dom.farmRaidStats.textContent = stats.farmRaidsSent || 0;
 }
 
+/**
+ * Update trapper status display.
+ */
+function updateTrapperStatus(trapperInfo) {
+  if (!dom.trapperStatus) return;
+  if (!trapperInfo) {
+    dom.trapperStatus.textContent = '--';
+    return;
+  }
+  dom.trapperStatus.textContent = trapperInfo.currentTraps + '/' + trapperInfo.maxTraps;
+}
+
+/**
+ * Update quest progress display (top 3 quests).
+ */
+function updateQuestDisplay(quests) {
+  if (!dom.questSection || !dom.questDisplay) return;
+  if (!quests || quests.length === 0) {
+    dom.questSection.style.display = 'none';
+    return;
+  }
+  dom.questSection.style.display = '';
+  dom.questDisplay.innerHTML = '';
+  var showCount = Math.min(quests.length, 3);
+  for (var i = 0; i < showCount; i++) {
+    var q = quests[i];
+    var pct = q.total > 0 ? Math.round((q.progress / q.total) * 100) : 0;
+    var item = document.createElement('div');
+    item.className = 'quest-item';
+    var titleSpan = document.createElement('span');
+    titleSpan.className = 'quest-item-title';
+    titleSpan.textContent = q.title || 'Quest';
+    var progressDiv = document.createElement('div');
+    progressDiv.className = 'quest-progress';
+    var fillDiv = document.createElement('div');
+    fillDiv.className = 'quest-progress-fill';
+    fillDiv.style.width = pct + '%';
+    progressDiv.appendChild(fillDiv);
+    var pctSpan = document.createElement('span');
+    pctSpan.className = 'quest-item-pct';
+    pctSpan.textContent = pct + '%';
+    item.appendChild(titleSpan);
+    item.appendChild(progressDiv);
+    item.appendChild(pctSpan);
+    dom.questDisplay.appendChild(item);
+  }
+}
+
+/**
+ * Update AI scoring reason display below current task.
+ */
+function updateAIReason(lastAIAction) {
+  if (!dom.taskAIReason) return;
+  if (!lastAIAction) {
+    dom.taskAIReason.textContent = '';
+    return;
+  }
+  dom.taskAIReason.textContent = 'AI: ' + lastAIAction.reason + ' (score: ' + lastAIAction.score.toFixed(1) + ')';
+}
+
 // ============================================================
 // Upgrade Targets - Scan & Render
 // ============================================================
@@ -995,6 +1064,8 @@ function collectConfig() {
     autoTroopTraining: dom.togTroopTraining.checked,
     autoFarming: dom.togFarming.checked,
     autoHeroAdventure: dom.togHeroAdventure.checked,
+    useAIScoring: dom.togAIScoring ? dom.togAIScoring.checked : true,
+    autoTrapTraining: dom.togTrapTraining ? dom.togTrapTraining.checked : false,
     activeVillage: dom.villageSelect.value,
     upgradeTargets: collectUpgradeTargets(),
     scannedItems: {
@@ -1021,6 +1092,9 @@ function collectConfig() {
     },
     heroConfig: {
       minHealth: parseInt(dom.heroMinHealth.value, 10) || 30,
+    },
+    trapConfig: {
+      batchSize: parseInt(dom.trapBatchSize ? dom.trapBatchSize.value : '10', 10) || 10,
     },
     delays: {
       min: parseInt(dom.delayMin.value, 10) || 2000,
@@ -1054,6 +1128,12 @@ function populateForm(config) {
   if (config.autoHeroAdventure !== undefined) {
     dom.togHeroAdventure.checked = config.autoHeroAdventure;
   }
+    if (config.useAIScoring !== undefined && dom.togAIScoring) {
+      dom.togAIScoring.checked = config.useAIScoring;
+    }
+    if (config.autoTrapTraining !== undefined && dom.togTrapTraining) {
+      dom.togTrapTraining.checked = config.autoTrapTraining;
+    }
 
   // Village
   if (config.activeVillage) {
@@ -1088,6 +1168,11 @@ function populateForm(config) {
   if (config.heroConfig) {
     if (config.heroConfig.minHealth !== undefined) dom.heroMinHealth.value = config.heroConfig.minHealth;
   }
+
+    // Trap config
+    if (config.trapConfig && dom.trapBatchSize) {
+      if (config.trapConfig.batchSize) dom.trapBatchSize.value = config.trapConfig.batchSize;
+    }
 
   // Farm config
   if (config.farmConfig) {
@@ -1260,6 +1345,13 @@ function refreshStatus() {
         if (s.stats) {
           updateFarmStats(s.stats);
         }
+
+        // AI + Trapper + Quest status
+        if (s.gameState) {
+          updateTrapperStatus(s.gameState.trapperInfo || null);
+          updateQuestDisplay(s.gameState.quests || null);
+        }
+        updateAIReason(s.lastAIAction || null);
       }
     })
     .catch(() => {

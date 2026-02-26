@@ -219,14 +219,14 @@
       const trapper = state.trapperInfo;
 
       // Trap training
-      if (trapper && trapper.canTrain && trapper.maxTrain > 0) {
+      if (trapper && trapper.canTrain && trapper.maxTrain > 0 && config.autoTrapTraining !== false) {
         const deficit = trapper.maxTraps - trapper.currentTraps;
         if (deficit > 0) {
           const threatLevel = state.defenseReports?.recentAttacks > 0 ? 2.0 : 1.0;
           const score = (deficit / trapper.maxTraps) * 15 * threatLevel;
           actions.push({
             type: 'build_traps',
-            params: { count: Math.min(deficit, trapper.maxTrain, 10) },
+            params: { count: Math.min(deficit, trapper.maxTrain, (config.trapConfig && config.trapConfig.batchSize) || 10) },
             score,
             reason: `Train traps (${trapper.currentTraps}/${trapper.maxTraps})`
           });
