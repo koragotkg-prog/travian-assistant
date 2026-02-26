@@ -851,6 +851,12 @@ chrome.tabs.onUpdated.addListener(function (tabId, changeInfo, tab) {
 
   var inst = manager.getOrCreate(serverKey);
 
+  // Block tab reassignment during active task execution
+  if (inst.tabId && inst.tabId !== tabId && inst.engine._executionLocked) {
+    logger.warn('Tab reassignment BLOCKED for ' + serverKey + ' (tab ' + inst.tabId + ' → ' + tabId + ') — execution in progress');
+    return;
+  }
+
   // Warn if same server opens in a different tab
   if (inst.tabId && inst.tabId !== tabId) {
     logger.warn('Server ' + serverKey + ' moved from tab ' + inst.tabId + ' to ' + tabId);

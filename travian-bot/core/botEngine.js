@@ -54,6 +54,14 @@ class BotEngine {
 
     // Mutex: prevents concurrent mainLoop execution
     this._mainLoopRunning = false;
+
+    // Tab lock: prevents tab reassignment during task execution
+    this._executionLocked = false;
+
+    // Circuit breaker: consecutive failure protection
+    this._consecutiveFailures = 0;
+    this._circuitBreakerThreshold = 5;
+    this._circuitBreakerCooldownMs = 5 * 60 * 1000; // 5 minutes
   }
 
   // ---------------------------------------------------------------------------
@@ -363,7 +371,23 @@ class BotEngine {
         this._heroClaimCooldown = Date.now() + 120000; // 2 min cooldown on failure
       }
 
-      // 6. Get next task from queue
+      // 6. Circuit breaker check — pause if too many consecutive failures
+      if (this._consecutiveFailures >= this._circuitBreakerThreshold) {
+        console.error(`[BotEngine] Circuit breaker TRIPPED — ${this._consecutiveFailures} consecutive failures. Auto-pausing for ${this._circuitBreakerCooldownMs / 1000}s`);
+        this.paused = true;
+        this._consecutiveFailures = 0; // reset so resume doesn't immediately re-trip
+
+        // Schedule auto-resume after cooldown
+        this.scheduler.scheduleOnce('circuit_breaker_resume', () => {
+          if (this.running && this.paused) {
+            console.log('[BotEngine] Circuit breaker cooldown expired — auto-resuming');
+            this.paused = false;
+          }
+        }, this._circuitBreakerCooldownMs);
+        return;
+      }
+
+      // 7. Get next task from queue
       const nextTask = this.taskQueue.getNext();
       if (!nextTask) {
         // No tasks ready - adjust to idle interval
@@ -371,7 +395,7 @@ class BotEngine {
         return;
       }
 
-      // 7. Execute the task
+      // 8. Execute the task
       await this.executeTask(nextTask);
 
       // Adjust loop interval back to active pace
@@ -395,6 +419,9 @@ class BotEngine {
    */
   async executeTask(task) {
     console.log(`[BotEngine] Executing task: ${task.type} (${task.id})`);
+
+    // Lock tab reassignment during execution
+    this._executionLocked = true;
 
     try {
       let response;
@@ -644,6 +671,7 @@ class BotEngine {
         this.stats.tasksCompleted++;
         this.stats.lastAction = Date.now();
         this.actionsThisHour++;
+        this._consecutiveFailures = 0; // Circuit breaker: reset on success
 
         // Set cooldown for this action type to avoid spamming
         const cooldownMs = this._getCooldownForType(task.type);
@@ -653,6 +681,8 @@ class BotEngine {
       } else {
         const errorMsg = (response && response.error) || 'Unknown error from content script';
         const reason = (response && response.reason) || '';
+
+        this._consecutiveFailures++; // Circuit breaker: increment on failure
 
         // Smart handling: some failures should NOT retry
         if (this._isHopelessFailure(reason)) {
@@ -694,12 +724,16 @@ class BotEngine {
     } catch (err) {
       const errorMsg = err.message || 'Exception during task execution';
       this.taskQueue.markFailed(task.id, errorMsg);
+      this._consecutiveFailures++; // Circuit breaker: increment on exception
 
       if (task.retries + 1 >= task.maxRetries) {
         this.stats.tasksFailed++;
       }
 
       console.error(`[BotEngine] Exception executing task ${task.type} (${task.id}):`, err);
+    } finally {
+      // Release tab lock
+      this._executionLocked = false;
     }
 
     // Navigate back to dorf1 (resource overview) after every task
@@ -800,7 +834,9 @@ class BotEngine {
       gameState: this.gameState,
       config: this.config,
       nextActionTime: this.nextActionTime,
-      lastAIAction: this.decisionEngine ? this.decisionEngine.lastAIAction : null
+      lastAIAction: this.decisionEngine ? this.decisionEngine.lastAIAction : null,
+      executionLocked: this._executionLocked,
+      consecutiveFailures: this._consecutiveFailures
     };
   }
 

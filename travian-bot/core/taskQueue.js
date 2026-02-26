@@ -10,6 +10,9 @@ class TaskQueue {
     this.processing = false;
     this.maxRetries = 3;
     this._idCounter = 0;
+
+    // Auto-cleanup: max age for completed/failed tasks (ms)
+    this._maxTaskAgeMs = 10 * 60 * 1000; // 10 minutes
   }
 
   /**
@@ -171,6 +174,7 @@ class TaskQueue {
     if (!task) return false;
     task.status = 'completed';
     task.error = null;
+    this.cleanup(); // Auto-remove stale terminal tasks
     return true;
   }
 
@@ -191,6 +195,7 @@ class TaskQueue {
 
     if (task.retries >= task.maxRetries) {
       task.status = 'failed';
+      this.cleanup(); // Auto-remove stale terminal tasks
     } else {
       // Put back to pending for retry
       task.status = 'pending';
@@ -239,6 +244,30 @@ class TaskQueue {
     const before = this.queue.length;
     this.queue = this.queue.filter(t => t.status !== 'completed');
     return before - this.queue.length;
+  }
+
+  /**
+   * Auto-cleanup: remove completed/failed tasks older than _maxTaskAgeMs.
+   * Called automatically after markCompleted/markFailed.
+   * @returns {number} Number of tasks removed
+   */
+  cleanup() {
+    const now = Date.now();
+    const maxAge = this._maxTaskAgeMs;
+    const before = this.queue.length;
+
+    this.queue = this.queue.filter(t => {
+      if (t.status !== 'completed' && t.status !== 'failed') return true;
+      // Keep recent terminal tasks for UI display
+      const age = now - (t.createdAt || 0);
+      return age < maxAge;
+    });
+
+    const removed = before - this.queue.length;
+    if (removed > 0) {
+      TravianLogger.log('DEBUG', `[TaskQueue] Cleanup: removed ${removed} stale tasks (${this.queue.length} remain)`);
+    }
+    return removed;
   }
 
   /**
