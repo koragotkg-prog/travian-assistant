@@ -300,6 +300,19 @@ class BotEngine {
         );
       }
 
+      // 5b. Proactive hero resource claim: if resources are critically low
+      //     and hero is home with resource items, claim before executing upgrades
+      if (this._shouldProactivelyClaimHero()) {
+        TravianLogger.log('INFO', '[BotEngine] Resources critically low — attempting proactive hero claim');
+        const claimed = await this._proactiveHeroClaim();
+        if (claimed) {
+          this._heroClaimCooldown = Date.now() + 300000; // 5 min cooldown
+          return; // skip this cycle, let resources update
+        }
+        // Even if failed, set cooldown so we don't spam attempts
+        this._heroClaimCooldown = Date.now() + 120000; // 2 min cooldown on failure
+      }
+
       // 6. Get next task from queue
       const nextTask = this.taskQueue.getNext();
       if (!nextTask) {
@@ -1151,6 +1164,150 @@ class BotEngine {
       return claimed;
     } catch (err) {
       TravianLogger.log('WARN', '[BotEngine] Hero resource claim failed: ' + err.message);
+      return false;
+    }
+  }
+
+  /**
+   * Check if hero resources should be proactively claimed.
+   * Triggers when any resource is below 30% of warehouse capacity,
+   * hero is at home, and cooldown has elapsed.
+   */
+  _shouldProactivelyClaimHero() {
+    // Cooldown check
+    if (this._heroClaimCooldown && Date.now() < this._heroClaimCooldown) return false;
+
+    // Hero must be home
+    const hero = this.gameState && this.gameState.hero;
+    if (hero && (hero.isAway || hero.isDead)) return false;
+
+    const res = this.gameState && this.gameState.resources;
+    const cap = this.gameState && this.gameState.resourceCapacity;
+    if (!res || !cap) return false;
+
+    const wCap = cap.warehouse || 0;
+    const gCap = cap.granary || wCap;
+    if (wCap === 0) return false;
+
+    // Check if any resource is below 30% of capacity
+    var threshold = 0.3;
+    return (res.wood || 0) < wCap * threshold ||
+           (res.clay || 0) < wCap * threshold ||
+           (res.iron || 0) < wCap * threshold ||
+           (res.crop || 0) < gCap * threshold;
+  }
+
+  /**
+   * Proactively claim hero resources to fill low resource types.
+   * Navigates to hero inventory, scans items, and transfers resources
+   * for any type below 50% of warehouse capacity.
+   * @returns {boolean} true if any resources were claimed
+   */
+  async _proactiveHeroClaim() {
+    try {
+      const res = this.gameState.resources;
+      const cap = this.gameState.resourceCapacity;
+      const wCap = cap.warehouse || 800;
+      const gCap = cap.granary || wCap;
+      const targetFill = 0.5; // fill to 50% of capacity
+
+      // Calculate how much of each resource we need to reach targetFill
+      const deficit = {
+        wood: Math.max(0, Math.floor(wCap * targetFill) - (res.wood || 0)),
+        clay: Math.max(0, Math.floor(wCap * targetFill) - (res.clay || 0)),
+        iron: Math.max(0, Math.floor(wCap * targetFill) - (res.iron || 0)),
+        crop: Math.max(0, Math.floor(gCap * targetFill) - (res.crop || 0))
+      };
+
+      const totalDeficit = deficit.wood + deficit.clay + deficit.iron + deficit.crop;
+      if (totalDeficit <= 0) return false;
+
+      TravianLogger.log('DEBUG', '[BotEngine] Proactive hero claim deficit: ' + JSON.stringify(deficit));
+
+      // Step 1: Navigate to hero page
+      await this.sendToContentScript({
+        type: 'EXECUTE', action: 'navigateTo', params: { page: 'hero' }
+      });
+      await this._randomDelay();
+      var heroReady = await this._waitForContentScript(10000);
+      if (!heroReady) {
+        TravianLogger.log('WARN', '[BotEngine] Hero page did not load for proactive claim');
+        return false;
+      }
+
+      // Step 2: Navigate to inventory tab
+      await this.sendToContentScript({
+        type: 'EXECUTE', action: 'navigateTo', params: { page: 'heroInventory' }
+      });
+      await this._randomDelay();
+      var invReady = await this._waitForContentScript(10000);
+      if (!invReady) {
+        TravianLogger.log('WARN', '[BotEngine] Hero inventory did not load for proactive claim');
+        return false;
+      }
+
+      // Step 3: Scan inventory
+      const scanResult = await this.sendToContentScript({
+        type: 'EXECUTE', action: 'scanHeroInventory', params: {}
+      });
+      if (!scanResult || !scanResult.success || !scanResult.data) {
+        TravianLogger.log('WARN', '[BotEngine] No hero inventory data for proactive claim');
+        return false;
+      }
+      const rawData = scanResult.data || {};
+      const items = rawData.items || (rawData.data && rawData.data.items) || [];
+      const usableResources = items.filter(item => item.isResource && item.hasUseButton);
+      if (usableResources.length === 0) {
+        TravianLogger.log('INFO', '[BotEngine] No hero resource items for proactive claim');
+        return false;
+      }
+
+      // Step 4: Claim resources for each type with deficit
+      const itemClassToRes = {
+        item145: 'wood', item176: 'wood',
+        item146: 'clay', item177: 'clay',
+        item147: 'iron', item178: 'iron',
+        item148: 'crop', item179: 'crop'
+      };
+
+      let claimed = false;
+      for (const item of usableResources) {
+        let resType = null;
+        const cls = item.itemClass || '';
+        for (const [pattern, type] of Object.entries(itemClassToRes)) {
+          if (cls.indexOf(pattern) !== -1) { resType = type; break; }
+        }
+        if (!resType) continue;
+
+        const needed = deficit[resType] || 0;
+        if (needed <= 0) continue;
+
+        const available = parseInt(item.count) || 0;
+        const transferAmount = Math.min(Math.ceil(needed), available);
+        if (transferAmount <= 0) continue;
+
+        TravianLogger.log('INFO', `[BotEngine] Proactive claim: ${transferAmount} ${resType} (deficit=${needed}, heroHas=${available})`);
+
+        const useResult = await this.sendToContentScript({
+          type: 'EXECUTE', action: 'useHeroItem',
+          params: { itemIndex: item.index, amount: transferAmount }
+        });
+
+        if (useResult && useResult.success) {
+          TravianLogger.log('INFO', `[BotEngine] Proactive claim: ${resType} transferred (${transferAmount})`);
+          claimed = true;
+        } else {
+          TravianLogger.log('WARN', `[BotEngine] Proactive claim: ${resType} failed`);
+        }
+        await this._randomDelay();
+      }
+
+      if (claimed) {
+        TravianLogger.log('INFO', '[BotEngine] Proactive hero resource claim completed');
+      }
+      return claimed;
+    } catch (err) {
+      TravianLogger.log('WARN', '[BotEngine] Proactive hero claim error: ' + err.message);
       return false;
     }
   }
