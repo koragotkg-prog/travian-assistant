@@ -30,12 +30,17 @@ class DecisionEngine {
     this.strategyEngine = null;
     this.buildOptimizer = null;
     this.militaryPlanner = null;
+    this.actionScorer = null;
 
     try {
       if (typeof self !== 'undefined') {
         if (self.TravianStrategyEngine) this.strategyEngine = new self.TravianStrategyEngine();
         if (self.TravianBuildOptimizer) this.buildOptimizer = new self.TravianBuildOptimizer();
         if (self.TravianMilitaryPlanner) this.militaryPlanner = new self.TravianMilitaryPlanner();
+        if (self.TravianActionScorer) this.actionScorer = new self.TravianActionScorer();
+      }
+      if (this.actionScorer) {
+        console.log('[DecisionEngine] ActionScorer integrated — hybrid AI scoring enabled');
       }
       if (this.strategyEngine) {
         console.log('[DecisionEngine] Strategy Engine integrated');
@@ -85,11 +90,41 @@ class DecisionEngine {
       return newTasks;
     }
 
-    // 2. Construction queue check
+    // 2. If ActionScorer is available, use hybrid AI scoring
+    if (this.actionScorer && config.useAIScoring !== false) {
+      const scoredActions = this.actionScorer.scoreAll(gameState, config, taskQueue);
+
+      if (scoredActions.length > 0) {
+        // Take the top-scored action
+        const best = scoredActions[0];
+        TravianLogger.log('INFO', `[AI] Best action: ${best.type} (score: ${best.score.toFixed(1)}) — ${best.reason}`);
+
+        // Check if this task type is already in queue
+        if (!taskQueue.hasTaskOfType(best.type, null) &&
+            !taskQueue.hasTaskOfType(best.type, gameState.currentVillageId)) {
+          newTasks.push({
+            type: best.type,
+            params: best.params,
+            priority: Math.max(1, 10 - Math.floor(best.score / 5)),
+            villageId: gameState.currentVillageId || null
+          });
+        }
+
+        // Log runner-up for transparency
+        if (scoredActions.length > 1) {
+          const second = scoredActions[1];
+          TravianLogger.log('DEBUG', `[AI] Runner-up: ${second.type} (score: ${second.score.toFixed(1)}) — ${second.reason}`);
+        }
+      }
+
+      return newTasks;
+    }
+
+    // 3. Construction queue check (rule-based fallback path)
     const queue = gameState.constructionQueue || { count: 0, maxCount: 1 };
     const buildQueueFull = queue.count >= queue.maxCount;
 
-    // 3. Run strategy analysis (if available)
+    // 4. Run strategy analysis (if available)
     if (this.strategyEngine) {
       try {
         this.lastAnalysis = this.strategyEngine.analyze({
@@ -118,8 +153,8 @@ class DecisionEngine {
       }
     }
 
-    // 3.5. Cranny protection rule: cranny must be >= warehouse level
-    //      This runs BEFORE normal upgrades so it takes priority
+    // 4.5. Cranny protection rule: cranny must be >= warehouse level
+    //       This runs BEFORE normal upgrades so it takes priority
     if (!buildQueueFull && !this.isCoolingDown('upgrade_building') && !this.isCoolingDown('build_new')) {
       const crannyTask = this._evaluateCrannyRule(gameState, config, taskQueue);
       if (crannyTask) {
@@ -127,7 +162,7 @@ class DecisionEngine {
       }
     }
 
-    // 3.6. New building construction from user's empty-slot selections
+    // 4.6. New building construction from user's empty-slot selections
     if (!buildQueueFull && !this.isCoolingDown('build_new')) {
       const buildNewTask = this._evaluateNewBuilds(gameState, config, taskQueue);
       if (buildNewTask) {
@@ -135,7 +170,7 @@ class DecisionEngine {
       }
     }
 
-    // 4. Upgrade decisions (resources + buildings)
+    // 5. Upgrade decisions (resources + buildings)
     const autoRes = config.autoUpgradeResources || config.autoResourceUpgrade;
     const autoBld = config.autoUpgradeBuildings || config.autoBuildingUpgrade;
     if ((autoRes || autoBld) && !buildQueueFull &&
@@ -146,7 +181,7 @@ class DecisionEngine {
       }
     }
 
-    // 5. Troop training
+    // 6. Troop training
     if ((config.autoTrainTroops || config.autoTroopTraining) && !this.isCoolingDown('train_troops')) {
       const troopTask = this.evaluateTroopTraining(gameState, config);
       if (troopTask && !taskQueue.hasTaskOfType('train_troops', troopTask.villageId)) {
@@ -154,7 +189,7 @@ class DecisionEngine {
       }
     }
 
-    // 6. Hero adventure
+    // 7. Hero adventure
     if ((config.autoHeroAdventure) && !this.isCoolingDown('send_hero_adventure')) {
       const heroTask = this.evaluateHeroAdventure(gameState, config);
       if (heroTask && !taskQueue.hasTaskOfType('send_hero_adventure', heroTask.villageId)) {
@@ -162,7 +197,7 @@ class DecisionEngine {
       }
     }
 
-    // 7. Farming
+    // 8. Farming
     if ((config.autoFarm || config.autoFarming) && !this.isCoolingDown('send_farm')) {
       const farmTasks = this.evaluateFarming(gameState, config);
       if (farmTasks && farmTasks.length > 0) {
