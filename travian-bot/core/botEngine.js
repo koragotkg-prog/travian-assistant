@@ -79,7 +79,11 @@ class BotEngine {
     this.hourResetTime = Date.now();
 
     // Content script communication timeout (ms)
+    // Adapts upward when timeouts occur (Chrome throttles background tabs)
     this._messageTimeout = 15000;
+    this._messageTimeoutBase = 15000;   // Reset target after success
+    this._messageTimeoutMax = 45000;    // Cap for throttled tabs
+    this._messageTimeoutStep = 10000;   // Increase per consecutive timeout
 
     // Mutex: prevents concurrent mainLoop execution
     this._mainLoopRunning = false;
@@ -248,6 +252,12 @@ class BotEngine {
     this.scheduler.scheduleCycle('hourly_reset', () => {
       this.resetHourlyCounter();
     }, 3600000, 0); // Exactly every hour
+
+    // Periodic state persistence: save state every 60s as a safety net.
+    // If the service worker is killed, at most 1 minute of state is lost.
+    this.scheduler.scheduleCycle('state_persistence', () => {
+      this.saveState();
+    }, 60000, 5000); // 60s base, +/-5s jitter
 
     // Schedule the main decision/execution loop
     const loopInterval = this._getLoopInterval();
@@ -856,9 +866,10 @@ class BotEngine {
         this.actionsThisHour++;
         this._consecutiveFailures = 0; // Circuit breaker: reset on success
 
-        // Set cooldown for this action type to avoid spamming
+        // Set per-slot cooldown to avoid spamming the same slot
+        // Other slots of the same type remain available for upgrades
         const cooldownMs = this._getCooldownForType(task.type);
-        this.decisionEngine.setCooldown(task.type, cooldownMs);
+        this.decisionEngine.setCooldown(this._getCooldownKey(task), cooldownMs);
 
         this._slog('INFO', 'Task completed: ' + task.type, { taskId: task.id, duration_ms: Date.now() - _taskStart });
       } else {
@@ -874,9 +885,10 @@ class BotEngine {
           this.taskQueue.markFailed(task.id, errorMsg);
           this.stats.tasksFailed++;
 
-          // Set longer cooldown so decision engine doesn't recreate immediately
+          // Set per-slot failure cooldown so decision engine doesn't recreate
+          // immediately, but other slots of the same type can still proceed
           const failCooldown = this._getFailCooldownForReason(reason, task.type);
-          this.decisionEngine.setCooldown(task.type, failCooldown);
+          this.decisionEngine.setCooldown(this._getCooldownKey(task), failCooldown);
 
           this._slog('WARN', 'Task skipped (' + reason + '): ' + task.type, { taskId: task.id, reason, duration_ms: Date.now() - _taskStart });
 
@@ -887,7 +899,7 @@ class BotEngine {
             if (claimed) {
               // Re-queue the same task so it retries after hero item was used
               this.taskQueue.add(task.type, task.params, task.priority, task.villageId);
-              this.decisionEngine.setCooldown(task.type, 15000); // 15 sec retry
+              this.decisionEngine.setCooldown(this._getCooldownKey(task), 15000); // 15 sec retry
               console.log(`[BotEngine] Re-queued ${task.type} after hero resource claim`);
             }
           }
@@ -915,16 +927,21 @@ class BotEngine {
 
       this._slog('ERROR', 'Exception executing task ' + task.type, { taskId: task.id, error: err.message, duration_ms: Date.now() - _taskStart });
     } finally {
-      // Release tab lock and transition from EXECUTING
+      // Transition from EXECUTING state (but keep tab lock held — _returnHome needs it)
       if (this._botState === BOT_STATES.EXECUTING) {
         this._transition(BOT_STATES.COOLDOWN, 'task done');
       }
-      this._executionLocked = false;
     }
 
     // Navigate back to dorf1 (resource overview) after every task
-    // so the next scan gets fresh data and the page looks natural
-    await this._returnHome(task.type);
+    // so the next scan gets fresh data and the page looks natural.
+    // NOTE: _executionLocked is still true here — _returnHome navigates
+    // the tab, so we must prevent tab reassignment during this step.
+    try {
+      await this._returnHome(task.type);
+    } finally {
+      this._executionLocked = false;
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -950,11 +967,17 @@ class BotEngine {
       // or the late callback would trigger side-effects on an already-abandoned promise.
       let settled = false;
 
+      const currentTimeout = this._messageTimeout;
       const timeoutId = setTimeout(() => {
         if (settled) return;
         settled = true;
-        reject(new Error(`Content script message timed out after ${this._messageTimeout}ms`));
-      }, this._messageTimeout);
+        // Adaptive timeout: increase for next attempt (Chrome may be throttling)
+        if (this._messageTimeout < this._messageTimeoutMax) {
+          this._messageTimeout = Math.min(this._messageTimeout + this._messageTimeoutStep, this._messageTimeoutMax);
+          console.log(`[BotEngine] Timeout → adaptive increase to ${this._messageTimeout}ms`);
+        }
+        reject(new Error(`Content script message timed out after ${currentTimeout}ms`));
+      }, currentTimeout);
 
       try {
         chrome.tabs.sendMessage(this.activeTabId, message, (response) => {
@@ -969,6 +992,11 @@ class BotEngine {
           if (chrome.runtime.lastError) {
             reject(new Error(chrome.runtime.lastError.message));
             return;
+          }
+
+          // Adaptive timeout: reset to base after successful response
+          if (this._messageTimeout > this._messageTimeoutBase) {
+            this._messageTimeout = this._messageTimeoutBase;
           }
 
           resolve(response);
@@ -1291,6 +1319,21 @@ class BotEngine {
    * @param {string} taskType
    * @returns {number} Cooldown in milliseconds
    */
+  /**
+   * Build a per-slot cooldown key for build-type tasks.
+   * Returns 'type:slot' for build tasks (so only that slot is blocked),
+   * or just 'type' for non-build tasks.
+   * @param {object} task
+   * @returns {string}
+   */
+  _getCooldownKey(task) {
+    if (['upgrade_resource', 'upgrade_building', 'build_new'].includes(task.type)) {
+      const slotKey = task.params.fieldId || task.params.slot || '';
+      if (slotKey) return task.type + ':' + slotKey;
+    }
+    return task.type;
+  }
+
   _getCooldownForType(taskType) {
     switch (taskType) {
       case 'upgrade_resource':

@@ -13,6 +13,11 @@ class TaskQueue {
 
     // Auto-cleanup: max age for completed/failed tasks (ms)
     this._maxTaskAgeMs = 10 * 60 * 1000; // 10 minutes
+
+    // Stuck task recovery: max time a task can stay in 'running' state (ms)
+    // If a task exceeds this, it's assumed the service worker died mid-execution
+    // and the task is reset to 'pending' for retry.
+    this._maxRunningAgeMs = 2 * 60 * 1000; // 2 minutes
   }
 
   /**
@@ -101,6 +106,9 @@ class TaskQueue {
    * @returns {object|null} The next task, or null if none ready
    */
   getNext() {
+    // Recover any tasks stuck in 'running' from a previous SW death
+    this.recoverStuckTasks();
+
     const now = Date.now();
 
     // Filter for tasks that are pending and ready to run
@@ -119,6 +127,7 @@ class TaskQueue {
 
     const nextTask = readyTasks[0];
     nextTask.status = 'running';
+    nextTask._startedAt = Date.now();
     return nextTask;
   }
 
@@ -268,6 +277,39 @@ class TaskQueue {
       TravianLogger.log('DEBUG', `[TaskQueue] Cleanup: removed ${removed} stale tasks (${this.queue.length} remain)`);
     }
     return removed;
+  }
+
+  /**
+   * Recover tasks stuck in 'running' state longer than _maxRunningAgeMs.
+   * This handles the case where the service worker was killed mid-execution.
+   * Stuck tasks are reset to 'pending' with an incremented retry counter.
+   * @returns {number} Number of tasks recovered
+   */
+  recoverStuckTasks() {
+    const now = Date.now();
+    let recovered = 0;
+
+    for (const task of this.queue) {
+      if (task.status !== 'running') continue;
+
+      const runningFor = now - (task._startedAt || task.createdAt);
+      if (runningFor > this._maxRunningAgeMs) {
+        task.retries++;
+        if (task.retries >= task.maxRetries) {
+          task.status = 'failed';
+          task.error = 'Stuck in running state for ' + Math.round(runningFor / 1000) + 's (SW likely died)';
+          TravianLogger.log('WARN', `[TaskQueue] Task ${task.id} (${task.type}) permanently failed — stuck for ${Math.round(runningFor / 1000)}s, max retries reached`);
+        } else {
+          task.status = 'pending';
+          task._startedAt = null;
+          task.error = 'Recovered from stuck running state after ' + Math.round(runningFor / 1000) + 's';
+          TravianLogger.log('WARN', `[TaskQueue] Recovered stuck task ${task.id} (${task.type}) — was running for ${Math.round(runningFor / 1000)}s, retry ${task.retries}/${task.maxRetries}`);
+        }
+        recovered++;
+      }
+    }
+
+    return recovered;
   }
 
   /**

@@ -287,6 +287,9 @@ class DecisionEngine {
       const isUpgrading = this._isSlotUpgrading(state, candidate.slot, candidate.type);
       if (isUpgrading) continue;
 
+      // Skip slots with active per-slot cooldown (e.g., this slot failed recently)
+      if (this.isSlotCoolingDown(candidate.type, candidate.slot)) continue;
+
       // Skip if not affordable (let the game's green button decide, but skip obviously too expensive)
       // We don't strictly enforce affordability — the bot will click and the game handles it
       // But if strategy says not affordable, log it
@@ -342,6 +345,7 @@ class DecisionEngine {
       for (const field of state.resourceFields) {
         if (!field.id || field.id <= 0) continue;
         if (field.upgrading) continue;
+        if (this.isSlotCoolingDown('upgrade_resource', field.id)) continue;
 
         const key = String(field.id);
         const target = targets[key];
@@ -368,6 +372,7 @@ class DecisionEngine {
       for (const building of state.buildings) {
         if (!building.slot || building.slot <= 0) continue;
         if (building.upgrading) continue;
+        if (this.isSlotCoolingDown('upgrade_building', building.slot)) continue;
 
         const key = String(building.slot);
         const target = targets[key];
@@ -591,10 +596,20 @@ class DecisionEngine {
   // Cooldown management
   // ---------------------------------------------------------------------------
 
+  /**
+   * Set a cooldown for an action type or a specific slot within a type.
+   * @param {string} actionType - e.g. 'upgrade_resource' or 'upgrade_resource:3'
+   * @param {number} durationMs
+   */
   setCooldown(actionType, durationMs) {
     this.cooldowns.set(actionType, Date.now() + durationMs);
   }
 
+  /**
+   * Check if an action type (or slot-specific key) is cooling down.
+   * @param {string} actionType - e.g. 'upgrade_resource' or 'upgrade_resource:3'
+   * @returns {boolean}
+   */
   isCoolingDown(actionType) {
     const expiresAt = this.cooldowns.get(actionType);
     if (!expiresAt) return false;
@@ -603,6 +618,17 @@ class DecisionEngine {
       return false;
     }
     return true;
+  }
+
+  /**
+   * Check if a specific slot within an action type is cooling down.
+   * Uses composite key format: 'actionType:slotId'
+   * @param {string} actionType - e.g. 'upgrade_resource'
+   * @param {string|number} slotId - e.g. 3 or '22'
+   * @returns {boolean}
+   */
+  isSlotCoolingDown(actionType, slotId) {
+    return this.isCoolingDown(actionType + ':' + slotId);
   }
 
   // ---------------------------------------------------------------------------
@@ -701,6 +727,9 @@ class DecisionEngine {
         // If building level < targetLevel, let normal upgrade handle it
         continue;
       }
+
+      // Check per-slot cooldown (this specific slot may have recently failed)
+      if (this.isSlotCoolingDown('build_new', slot)) continue;
 
       // Check if we already have this task queued
       if (taskQueue.hasTaskOfType('build_new', null) ||
