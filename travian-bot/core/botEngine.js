@@ -1467,7 +1467,7 @@ class BotEngine {
 
   /**
    * Check if hero resources should be proactively claimed.
-   * Triggers when any resource is below 30% of warehouse capacity,
+   * Triggers when any resource is below 5% of warehouse capacity,
    * hero is at home, and cooldown has elapsed.
    */
   _shouldProactivelyClaimHero() {
@@ -1486,8 +1486,8 @@ class BotEngine {
     const gCap = cap.granary || wCap;
     if (wCap === 0) return false;
 
-    // Check if any resource is below 30% of capacity
-    var threshold = 0.3;
+    // Check if any resource is below 5% of capacity
+    var threshold = 0.05;
     return (res.wood || 0) < wCap * threshold ||
            (res.clay || 0) < wCap * threshold ||
            (res.iron || 0) < wCap * threshold ||
@@ -1497,7 +1497,7 @@ class BotEngine {
   /**
    * Proactively claim hero resources to fill low resource types.
    * Navigates to hero inventory, scans items, and transfers resources
-   * for any type below 50% of warehouse capacity.
+   * for any type below 25% of warehouse capacity.
    * @returns {boolean} true if any resources were claimed
    */
   async _proactiveHeroClaim() {
@@ -1506,7 +1506,7 @@ class BotEngine {
       const cap = this.gameState.resourceCapacity;
       const wCap = cap.warehouse || 800;
       const gCap = cap.granary || wCap;
-      const targetFill = 0.5; // fill to 50% of capacity
+      const targetFill = 0.25; // fill to 25% of capacity
 
       // Calculate how much of each resource we need to reach targetFill
       const deficit = {
