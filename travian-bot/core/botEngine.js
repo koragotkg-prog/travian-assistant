@@ -637,6 +637,26 @@ class BotEngine {
     const _taskStart = Date.now();
 
     try {
+      // SAF-8 FIX: Lightweight liveness check before multi-step execution.
+      // Uses GET_STATE with property:'page' (just reads URL) to confirm
+      // the content script is alive. Fails fast instead of failing mid-task.
+      try {
+        var liveness = await this.sendToContentScript({
+          type: 'GET_STATE', params: { property: 'page' }
+        });
+        if (!liveness || !liveness.success) {
+          this._slog('WARN', 'Content script liveness check failed — will retry task', { taskId: task.id });
+          this.taskQueue.markFailed(task.id, 'Content script not responsive (liveness)');
+          return;
+        }
+      } catch (liveErr) {
+        this._slog('WARN', 'Content script unreachable before execution — will retry task', {
+          taskId: task.id, error: liveErr.message
+        });
+        this.taskQueue.markFailed(task.id, 'Content script unreachable: ' + (liveErr.message || 'unknown'));
+        return;
+      }
+
       // FIX 9: Village context assertion — ensure correct village before executing
       if (task.villageId && this.gameState && this.gameState.activeVillageId &&
           task.villageId !== this.gameState.activeVillageId) {
@@ -1018,6 +1038,34 @@ class BotEngine {
       message._requestId = this._requestIdCounter;
     }
 
+    // MP-1 FIX: Retry wrapper for transient "Receiving end does not exist" errors.
+    // Content script may not be injected yet after page navigation.
+    var maxRetries = 2;
+    var lastErr = null;
+    for (var attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        return await this._sendMessageOnce(message);
+      } catch (err) {
+        lastErr = err;
+        var isConnectionError = err.message && (
+          err.message.indexOf('Receiving end does not exist') !== -1 ||
+          err.message.indexOf('Could not establish connection') !== -1
+        );
+        if (!isConnectionError || attempt >= maxRetries) throw err;
+        // Wait before retry — content script may be loading
+        var retryDelay = 1000 * (attempt + 1); // 1s, 2s
+        this._slog('WARN', 'Content script not ready, retry ' + (attempt + 1) + '/' + maxRetries + ' in ' + retryDelay + 'ms');
+        await new Promise(r => setTimeout(r, retryDelay));
+      }
+    }
+    throw lastErr;
+  }
+
+  /**
+   * Internal: send a single message to content script (no retry).
+   * Separated from sendToContentScript to support MP-1 retry wrapper.
+   */
+  async _sendMessageOnce(message) {
     return new Promise((resolve, reject) => {
       // FIX 1: "settled" flag prevents ghost actions from the timeout/callback race.
       // When the timeout fires first, we reject — but chrome.tabs.sendMessage callback
