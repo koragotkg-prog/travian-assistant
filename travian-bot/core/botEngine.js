@@ -10,10 +10,42 @@
  *   - self.TravianGameStateCollector (core/gameStateCollector.js)
  */
 
+// ---------------------------------------------------------------------------
+// Bot State Machine — valid states and transitions
+// ---------------------------------------------------------------------------
+const BOT_STATES = Object.freeze({
+  STOPPED:   'STOPPED',
+  SCANNING:  'SCANNING',
+  DECIDING:  'DECIDING',
+  EXECUTING: 'EXECUTING',
+  COOLDOWN:  'COOLDOWN',
+  IDLE:      'IDLE',
+  PAUSED:    'PAUSED',
+  EMERGENCY: 'EMERGENCY'
+});
+
+/** Valid transitions: from → [allowed targets] */
+const BOT_TRANSITIONS = Object.freeze({
+  STOPPED:   ['SCANNING', 'IDLE'],
+  SCANNING:  ['DECIDING', 'IDLE', 'PAUSED', 'EMERGENCY', 'STOPPED'],
+  DECIDING:  ['EXECUTING', 'IDLE', 'PAUSED', 'EMERGENCY', 'STOPPED'],
+  EXECUTING: ['COOLDOWN', 'IDLE', 'SCANNING', 'PAUSED', 'EMERGENCY', 'STOPPED'],
+  COOLDOWN:  ['SCANNING', 'IDLE', 'PAUSED', 'EMERGENCY', 'STOPPED'],
+  IDLE:      ['SCANNING', 'PAUSED', 'EMERGENCY', 'STOPPED'],
+  PAUSED:    ['IDLE', 'SCANNING', 'EMERGENCY', 'STOPPED'],
+  EMERGENCY: ['STOPPED']
+});
+
 class BotEngine {
   constructor() {
-    this.running = false;
-    this.paused = false;
+    // State machine: single source of truth
+    this._botState = BOT_STATES.STOPPED;
+
+    // Backward-compatible boolean flags (kept as writable for external callers)
+    // Internal code should use _transition() but external callers may still set these.
+    this._running = false;
+    this._paused = false;
+    this._emergencyStopped = false;
 
     // Core subsystems
     this.taskQueue = new self.TravianTaskQueue();
@@ -39,9 +71,6 @@ class BotEngine {
     // Next action scheduling
     this.nextActionTime = null;
 
-    // Safety
-    this.emergencyStopped = false;
-
     // Persistent farm cooldown (survives gameState overwrites)
     this._lastFarmTime = 0;
 
@@ -62,6 +91,69 @@ class BotEngine {
     this._consecutiveFailures = 0;
     this._circuitBreakerThreshold = 5;
     this._circuitBreakerCooldownMs = 5 * 60 * 1000; // 5 minutes
+
+    // Structured logging: cycle counter
+    this._cycleCounter = 0;
+    this._currentCycleId = null;
+  }
+
+  // ---------------------------------------------------------------------------
+  // State Machine
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Attempt a state transition. Logs all transitions and rejects invalid ones.
+   * @param {string} newState - Target state from BOT_STATES
+   * @param {string} [reason] - Optional reason for the transition
+   * @returns {boolean} True if transition succeeded
+   */
+  _transition(newState, reason) {
+    const oldState = this._botState;
+
+    // Same state — no-op
+    if (oldState === newState) return true;
+
+    const allowed = BOT_TRANSITIONS[oldState];
+    if (!allowed || allowed.indexOf(newState) === -1) {
+      console.warn(`[BotEngine][SM] REJECTED transition ${oldState} → ${newState}` + (reason ? ` (${reason})` : ''));
+      return false;
+    }
+
+    this._botState = newState;
+
+    // Sync backward-compatible flags
+    this._running = newState !== BOT_STATES.STOPPED && newState !== BOT_STATES.EMERGENCY;
+    this._paused = newState === BOT_STATES.PAUSED;
+    this._emergencyStopped = newState === BOT_STATES.EMERGENCY;
+
+    console.log(`[BotEngine][SM] ${oldState} → ${newState}` + (reason ? ` (${reason})` : ''));
+    return true;
+  }
+
+  // Backward-compatible property accessors
+  get running() { return this._running; }
+  set running(v) {
+    this._running = v;
+    // Sync state machine if external code sets boolean directly
+    if (!v && this._botState !== BOT_STATES.STOPPED && this._botState !== BOT_STATES.EMERGENCY) {
+      this._botState = BOT_STATES.STOPPED;
+    }
+  }
+
+  get paused() { return this._paused; }
+  set paused(v) {
+    this._paused = v;
+    if (v && this._botState !== BOT_STATES.PAUSED && this._botState !== BOT_STATES.EMERGENCY) {
+      this._botState = BOT_STATES.PAUSED;
+    } else if (!v && this._botState === BOT_STATES.PAUSED) {
+      this._botState = BOT_STATES.IDLE;
+    }
+  }
+
+  get emergencyStopped() { return this._emergencyStopped; }
+  set emergencyStopped(v) {
+    this._emergencyStopped = v;
+    if (v) this._botState = BOT_STATES.EMERGENCY;
   }
 
   // ---------------------------------------------------------------------------
@@ -75,13 +167,12 @@ class BotEngine {
    * @param {number} tabId - The Chrome tab ID running the Travian content script
    */
   async start(tabId) {
-    if (this.running) {
-      console.warn('[BotEngine] Already running');
+    if (this._botState !== BOT_STATES.STOPPED) {
+      console.warn('[BotEngine] Cannot start — current state: ' + this._botState);
       return;
     }
 
     this.activeTabId = tabId;
-    this.emergencyStopped = false;
 
     // Load configuration from storage
     await this.loadConfig();
@@ -91,8 +182,7 @@ class BotEngine {
       return;
     }
 
-    this.running = true;
-    this.paused = false;
+    this._transition(BOT_STATES.IDLE, 'started');
     this.stats.startTime = Date.now();
     this.actionsThisHour = 0;
     this.hourResetTime = Date.now();
@@ -147,8 +237,7 @@ class BotEngine {
    * Stop the bot engine. Saves state and clears all timers.
    */
   stop() {
-    this.running = false;
-    this.paused = false;
+    this._transition(BOT_STATES.STOPPED, 'stopped');
 
     // Stop scheduler (clears all timers and cycles)
     this.scheduler.stop();
@@ -174,8 +263,7 @@ class BotEngine {
    */
   pause() {
     if (!this.running) return;
-    this.paused = true;
-    console.log('[BotEngine] Paused');
+    this._transition(BOT_STATES.PAUSED, 'user paused');
   }
 
   /**
@@ -183,8 +271,7 @@ class BotEngine {
    */
   resume() {
     if (!this.running) return;
-    this.paused = false;
-    console.log('[BotEngine] Resumed');
+    this._transition(BOT_STATES.IDLE, 'user resumed');
   }
 
   /**
@@ -234,8 +321,8 @@ class BotEngine {
   emergencyStop(reason) {
     console.error(`[BotEngine] EMERGENCY STOP: ${reason}`);
 
-    this.emergencyStopped = true;
-    this.stop();
+    this._transition(BOT_STATES.EMERGENCY, reason);
+    this.stop(); // EMERGENCY → STOPPED
 
     // Persist the emergency stop reason
     try {
@@ -291,7 +378,15 @@ class BotEngine {
     }
     this._mainLoopRunning = true;
 
+    // FIX 8: Cycle tracking for structured logging
+    this._cycleCounter++;
+    this._currentCycleId = 'c' + this._cycleCounter;
+    const _cycleStart = Date.now();
+
     try {
+      // State: SCANNING
+      this._transition(BOT_STATES.SCANNING, 'cycle ' + this._currentCycleId);
+
       // 2. Check rate limits
       if (!this.checkRateLimit()) {
         console.log('[BotEngine] Rate limit reached, skipping this cycle');
@@ -304,11 +399,14 @@ class BotEngine {
       });
 
       if (!scanResponse || !scanResponse.success) {
-        console.warn('[BotEngine] Failed to get game state scan');
+        this._slog('WARN', 'Failed to get game state scan', { duration_ms: Date.now() - _cycleStart });
         return;
       }
 
       this.gameState = scanResponse.data;
+
+      // State: DECIDING (scan complete)
+      this._transition(BOT_STATES.DECIDING, 'scan complete');
 
       // Enrich gameState with cached extras
       this.gameState = this.stateCollector.enrichGameState(this.gameState);
@@ -374,14 +472,14 @@ class BotEngine {
       // 6. Circuit breaker check — pause if too many consecutive failures
       if (this._consecutiveFailures >= this._circuitBreakerThreshold) {
         console.error(`[BotEngine] Circuit breaker TRIPPED — ${this._consecutiveFailures} consecutive failures. Auto-pausing for ${this._circuitBreakerCooldownMs / 1000}s`);
-        this.paused = true;
+        this._transition(BOT_STATES.PAUSED, 'circuit breaker: ' + this._consecutiveFailures + ' failures');
         this._consecutiveFailures = 0; // reset so resume doesn't immediately re-trip
 
         // Schedule auto-resume after cooldown
         this.scheduler.scheduleOnce('circuit_breaker_resume', () => {
           if (this.running && this.paused) {
             console.log('[BotEngine] Circuit breaker cooldown expired — auto-resuming');
-            this.paused = false;
+            this._transition(BOT_STATES.IDLE, 'circuit breaker cooldown');
           }
         }, this._circuitBreakerCooldownMs);
         return;
@@ -404,7 +502,13 @@ class BotEngine {
     } catch (err) {
       console.error('[BotEngine] Error in main loop:', err);
     } finally {
+      // Return to IDLE if still in an active processing state
+      const s = this._botState;
+      if (s === BOT_STATES.SCANNING || s === BOT_STATES.DECIDING || s === BOT_STATES.COOLDOWN) {
+        this._transition(BOT_STATES.IDLE, 'cycle end');
+      }
       this._mainLoopRunning = false;
+      this._currentCycleId = null;
     }
   }
 
@@ -418,12 +522,29 @@ class BotEngine {
    * @param {object} task - The task object from the queue
    */
   async executeTask(task) {
-    console.log(`[BotEngine] Executing task: ${task.type} (${task.id})`);
+    this._slog('INFO', 'Executing task: ' + task.type, { taskId: task.id, taskPriority: task.priority });
 
     // Lock tab reassignment during execution
     this._executionLocked = true;
+    this._transition(BOT_STATES.EXECUTING, task.type + ':' + task.id);
+    const _taskStart = Date.now();
 
     try {
+      // FIX 9: Village context assertion — ensure correct village before executing
+      if (task.villageId && this.gameState && this.gameState.activeVillageId &&
+          task.villageId !== this.gameState.activeVillageId) {
+        this._slog('WARN', 'Village mismatch — auto-switching', {
+          taskId: task.id, taskVillage: task.villageId,
+          currentVillage: this.gameState.activeVillageId
+        });
+        await this.sendToContentScript({
+          type: 'EXECUTE', action: 'switchVillage',
+          params: { villageId: task.villageId }
+        });
+        await this._randomDelay();
+        await this._waitForContentScript(10000);
+      }
+
       let response;
 
       // All tasks are sent as EXECUTE messages to the content script's message handler
@@ -434,6 +555,11 @@ class BotEngine {
             type: 'EXECUTE', action: 'navigateTo', params: { page: 'dorf1' }
           });
           await this._randomDelay();
+          // FIX 9: Verify navigation to dorf1
+          if (!await this._verifyNavigation('resources')) {
+            response = { success: false, reason: 'page_mismatch', message: 'Not on dorf1 after navigation' };
+            break;
+          }
           // Step 2: Click the resource field
           await this.sendToContentScript({
             type: 'EXECUTE', action: 'clickResourceField', params: { fieldId: task.params.fieldId }
@@ -451,6 +577,11 @@ class BotEngine {
             type: 'EXECUTE', action: 'navigateTo', params: { page: 'dorf2' }
           });
           await this._randomDelay();
+          // FIX 9: Verify navigation to dorf2
+          if (!await this._verifyNavigation('village')) {
+            response = { success: false, reason: 'page_mismatch', message: 'Not on dorf2 after navigation' };
+            break;
+          }
           // Step 2: Click the building slot (use slot number, not gid)
           await this.sendToContentScript({
             type: 'EXECUTE', action: 'clickBuildingSlot', params: { slotId: task.params.slot }
@@ -583,6 +714,11 @@ class BotEngine {
             type: 'EXECUTE', action: 'navigateTo', params: { page: 'dorf2' }
           });
           await this._randomDelay();
+          // FIX 9: Verify navigation to dorf2
+          if (!await this._verifyNavigation('village')) {
+            response = { success: false, reason: 'page_mismatch', message: 'Not on dorf2 after navigation for build_new' };
+            break;
+          }
           // Click the empty building slot to open build menu
           var slotClick = await this.sendToContentScript({
             type: 'EXECUTE', action: 'clickBuildingSlot', params: { slotId: task.params.slot }
@@ -677,7 +813,7 @@ class BotEngine {
         const cooldownMs = this._getCooldownForType(task.type);
         this.decisionEngine.setCooldown(task.type, cooldownMs);
 
-        console.log(`[BotEngine] Task completed: ${task.type} (${task.id})`);
+        this._slog('INFO', 'Task completed: ' + task.type, { taskId: task.id, duration_ms: Date.now() - _taskStart });
       } else {
         const errorMsg = (response && response.error) || 'Unknown error from content script';
         const reason = (response && response.reason) || '';
@@ -695,7 +831,7 @@ class BotEngine {
           const failCooldown = this._getFailCooldownForReason(reason, task.type);
           this.decisionEngine.setCooldown(task.type, failCooldown);
 
-          console.warn(`[BotEngine] Task skipped (${reason}): ${task.type} (${task.id}): ${errorMsg}`);
+          this._slog('WARN', 'Task skipped (' + reason + '): ' + task.type, { taskId: task.id, reason, duration_ms: Date.now() - _taskStart });
 
           // Special: if insufficient resources, try claiming hero inventory
           if (reason === 'insufficient_resources' &&
@@ -714,9 +850,9 @@ class BotEngine {
 
           if (task.retries + 1 >= task.maxRetries) {
             this.stats.tasksFailed++;
-            console.error(`[BotEngine] Task permanently failed: ${task.type} (${task.id}): ${errorMsg}`);
+            this._slog('ERROR', 'Task permanently failed: ' + task.type, { taskId: task.id, error: errorMsg, duration_ms: Date.now() - _taskStart });
           } else {
-            console.warn(`[BotEngine] Task failed, will retry: ${task.type} (${task.id}): ${errorMsg}`);
+            this._slog('WARN', 'Task failed, will retry: ' + task.type, { taskId: task.id, error: errorMsg, retries: task.retries + 1 });
           }
         }
       }
@@ -730,9 +866,12 @@ class BotEngine {
         this.stats.tasksFailed++;
       }
 
-      console.error(`[BotEngine] Exception executing task ${task.type} (${task.id}):`, err);
+      this._slog('ERROR', 'Exception executing task ' + task.type, { taskId: task.id, error: err.message, duration_ms: Date.now() - _taskStart });
     } finally {
-      // Release tab lock
+      // Release tab lock and transition from EXECUTING
+      if (this._botState === BOT_STATES.EXECUTING) {
+        this._transition(BOT_STATES.COOLDOWN, 'task done');
+      }
       this._executionLocked = false;
     }
 
@@ -821,6 +960,8 @@ class BotEngine {
       running: this.running,
       paused: this.paused,
       emergencyStopped: this.emergencyStopped,
+      botState: this._botState,
+      cycleId: this._currentCycleId,
       activeTabId: this.activeTabId,
       serverKey: this.serverKey,
       stats: { ...this.stats },
@@ -921,6 +1062,53 @@ class BotEngine {
       });
     } catch (err) {
       console.error('[BotEngine] Failed to save state:', err);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Structured Logging (FIX 8)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Structured log — enriches TravianLogger entries with correlation context.
+   * @param {string} level - DEBUG/INFO/WARN/ERROR
+   * @param {string} message - Human-readable message
+   * @param {object} [meta] - Additional metadata (taskId, duration_ms, etc.)
+   */
+  _slog(level, message, meta) {
+    const entry = {
+      component: 'BotEngine',
+      cycleId: this._currentCycleId,
+      serverKey: this.serverKey,
+      state: this._botState
+    };
+    if (meta) Object.assign(entry, meta);
+    TravianLogger.log(level, message, entry);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Page State Assertion (FIX 9)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Verify the browser is on the expected page type after navigation.
+   * Sends a lightweight SCAN and compares the page type.
+   * @param {string} expectedPage - Expected value from domScanner.detectPage()
+   * @returns {Promise<boolean>} true if on correct page
+   */
+  async _verifyNavigation(expectedPage) {
+    try {
+      const resp = await this.sendToContentScript({ type: 'SCAN' });
+      if (!resp || !resp.success || !resp.data) return false;
+      const actual = resp.data.page || 'unknown';
+      if (actual === expectedPage) return true;
+      this._slog('WARN', 'Page assertion failed: expected ' + expectedPage + ', got ' + actual, {
+        expectedPage, actualPage: actual
+      });
+      return false;
+    } catch (e) {
+      this._slog('WARN', 'Page assertion error: ' + e.message);
+      return false;
     }
   }
 
@@ -1105,7 +1293,8 @@ class BotEngine {
       'insufficient_resources', // Can't afford — retrying immediately won't help
       'queue_full',         // Build queue full — must wait for current build
       'building_not_available', // Building doesn't exist for this tribe/level
-      'no_items'            // No hero items to use
+      'no_items',           // No hero items to use
+      'page_mismatch'       // FIX 9: page assertion failed — navigation problem
     ];
     return hopeless.indexOf(reason) !== -1;
   }
@@ -1129,6 +1318,8 @@ class BotEngine {
         return 120000;   // 2 min — wait for current build
       case 'building_not_available':
         return 300000;   // 5 min — might be timing issue, retry
+      case 'page_mismatch':
+        return 30000;    // 30 sec — navigation issue, retry soon
       default:
         return 60000;    // 1 min default
     }
