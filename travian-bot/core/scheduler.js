@@ -114,7 +114,7 @@ class Scheduler {
       const actualInterval = Math.max(1000, intervalMs + jitter); // Minimum 1 second
       const nextRun = Date.now() + actualInterval;
 
-      const timerId = setTimeout(() => {
+      const timerId = setTimeout(async () => {
         if (!this.running) return;
 
         // Update next run time before executing (in case callback is slow)
@@ -122,7 +122,11 @@ class Scheduler {
         if (!entry) return;
 
         try {
-          callback();
+          const result = callback();
+          // If callback returns a Promise (async), await it before scheduling next
+          if (result && typeof result.then === 'function') {
+            await result;
+          }
         } catch (err) {
           console.error(`[Scheduler] Error in cycle "${name}":`, err);
         }

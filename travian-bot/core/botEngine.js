@@ -51,6 +51,9 @@ class BotEngine {
 
     // Content script communication timeout (ms)
     this._messageTimeout = 15000;
+
+    // Mutex: prevents concurrent mainLoop execution
+    this._mainLoopRunning = false;
   }
 
   // ---------------------------------------------------------------------------
@@ -177,6 +180,46 @@ class BotEngine {
   }
 
   /**
+   * Heartbeat — called by chrome.alarms every ~1 minute.
+   * Detects if the scheduler's main_loop cycle died (service worker sleep)
+   * and resurrects it. Also triggers a mainLoop() as safety fallback.
+   */
+  async heartbeat() {
+    if (!this.running || this.emergencyStopped) return;
+
+    // Check if the main_loop cycle still exists in the scheduler
+    if (!this.scheduler.isScheduled('main_loop')) {
+      console.warn('[BotEngine] Heartbeat: main_loop cycle is DEAD — resurrecting');
+
+      // Ensure scheduler is running (it may have been stopped by worker death)
+      if (!this.scheduler.running) {
+        this.scheduler.start();
+      }
+
+      // Recreate the main_loop cycle
+      const loopInterval = this._getLoopInterval();
+      this.scheduler.scheduleCycle('main_loop', () => {
+        this.mainLoop();
+      }, loopInterval, Math.floor(loopInterval * 0.2));
+
+      // Also resurrect hourly_reset if missing
+      if (!this.scheduler.isScheduled('hourly_reset')) {
+        this.scheduler.scheduleCycle('hourly_reset', () => {
+          this.resetHourlyCounter();
+        }, 3600000, 0);
+      }
+    }
+
+    // Safety fallback: trigger an immediate mainLoop cycle
+    // (the mutex guard in mainLoop prevents double-execution)
+    try {
+      await this.mainLoop();
+    } catch (err) {
+      console.error('[BotEngine] Heartbeat mainLoop error:', err);
+    }
+  }
+
+  /**
    * Emergency stop. Immediately halts all activity and records the reason.
    * @param {string} reason - Why the emergency stop was triggered
    */
@@ -232,6 +275,13 @@ class BotEngine {
     if (!this.running || this.paused || this.emergencyStopped) {
       return;
     }
+
+    // Mutex: skip if another mainLoop is already executing
+    if (this._mainLoopRunning) {
+      console.log('[BotEngine] mainLoop already running, skipping concurrent call');
+      return;
+    }
+    this._mainLoopRunning = true;
 
     try {
       // 2. Check rate limits
@@ -329,6 +379,8 @@ class BotEngine {
 
     } catch (err) {
       console.error('[BotEngine] Error in main loop:', err);
+    } finally {
+      this._mainLoopRunning = false;
     }
   }
 
