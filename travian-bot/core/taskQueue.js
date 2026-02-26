@@ -31,6 +31,34 @@ class TaskQueue {
    * @returns {string} The generated task ID
    */
   add(type, params = {}, priority = 5, villageId = null, scheduledFor = null) {
+    // BUILD QUEUE GUARD: prevent duplicate build tasks for same slot/field
+    if (['upgrade_resource', 'upgrade_building', 'build_new'].includes(type)) {
+      const targetKey = params.fieldId || params.slot || params.gid || null;
+      if (targetKey) {
+        const isDuplicate = this.queue.some(t =>
+          t.type === type &&
+          t.status !== 'completed' && t.status !== 'failed' &&
+          (t.params.fieldId === targetKey || t.params.slot === targetKey)
+        );
+        if (isDuplicate) {
+          TravianLogger.log('DEBUG', `[TaskQueue] Skipped duplicate ${type} for target ${targetKey}`);
+          return null;
+        }
+      }
+    }
+
+    // FARM GUARD: prevent duplicate farm tasks
+    if (type === 'send_farm') {
+      const hasPendingFarm = this.queue.some(t =>
+        t.type === 'send_farm' &&
+        t.status !== 'completed' && t.status !== 'failed'
+      );
+      if (hasPendingFarm) {
+        TravianLogger.log('DEBUG', '[TaskQueue] Skipped duplicate send_farm');
+        return null;
+      }
+    }
+
     const task = {
       id: this._generateId(),
       type: type,

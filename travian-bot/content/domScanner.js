@@ -641,7 +641,7 @@
         // Determine max queue count (usually 1 for free, 2 for Plus)
         var maxCount = 1;
         // Check for Travian Plus (allows 2 simultaneous builds)
-        if (qs('.plusFeature.active') || qs('.gold_club') || qs('.a]2') || qs('.finishNow')) {
+        if (qs('.plusFeature.active') || qs('.gold_club') || qs('.a2') || qs('.finishNow')) {
           maxCount = 2;
         }
 

@@ -602,7 +602,8 @@ class DecisionEngine {
       if (cranny.level >= 10) return null; // Max cranny level
 
       // Cranny needs upgrading
-      if (taskQueue.hasTaskOfType('upgrade_building')) return null;
+      if (taskQueue.hasTaskOfType('upgrade_building', null) ||
+          taskQueue.hasTaskOfType('upgrade_building', gameState.currentVillageId)) return null;
 
       console.log(`[DecisionEngine] Cranny rule: cranny Lv.${cranny.level} < warehouse Lv.${warehouse.level}, upgrading cranny`);
       return {
@@ -616,7 +617,8 @@ class DecisionEngine {
     // No cranny exists — need to build one
     if (!emptySlot) return null; // No empty slot available
 
-    if (taskQueue.hasTaskOfType('build_new')) return null;
+    if (taskQueue.hasTaskOfType('build_new', null) ||
+        taskQueue.hasTaskOfType('build_new', gameState.currentVillageId)) return null;
 
     console.log(`[DecisionEngine] Cranny rule: no cranny found, building in empty slot ${emptySlot}`);
     return {
@@ -655,7 +657,8 @@ class DecisionEngine {
       }
 
       // Check if we already have this task queued
-      if (taskQueue.hasTaskOfType('build_new')) continue;
+      if (taskQueue.hasTaskOfType('build_new', null) ||
+          taskQueue.hasTaskOfType('build_new', gameState.currentVillageId)) continue;
 
       console.log(`[DecisionEngine] New build: GID ${target.buildGid} in slot ${slot}`);
       return {
