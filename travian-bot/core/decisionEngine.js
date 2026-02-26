@@ -603,6 +603,16 @@ class DecisionEngine {
    */
   setCooldown(actionType, durationMs) {
     this.cooldowns.set(actionType, Date.now() + durationMs);
+
+    // ML-3 FIX: Prune expired cooldowns periodically.
+    // Without this, the Map grows unbounded as new slot-specific keys are added.
+    // Prune every 20 entries to keep overhead minimal.
+    if (this.cooldowns.size > 20) {
+      var now = Date.now();
+      for (var [key, expiresAt] of this.cooldowns) {
+        if (now >= expiresAt) this.cooldowns.delete(key);
+      }
+    }
   }
 
   /**
