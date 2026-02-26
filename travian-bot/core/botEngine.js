@@ -411,7 +411,8 @@ class BotEngine {
           // Wait for content script to re-inject after page reload
           await this._waitForContentScript(10000);
           // Step 3: Send farm lists (smart selective or legacy send-all)
-          var smartFarming = this.config && this.config.farmConfig && this.config.farmConfig.smartFarming;
+          var farmCfg = this.config && this.config.farmConfig;
+          var smartFarming = farmCfg && farmCfg.smartFarming !== false; // default ON when field missing
           if (smartFarming) {
             // Smart farming: only send to profitable targets
             var minLoot = (this.config.farmConfig && this.config.farmConfig.minLoot) || 30;
