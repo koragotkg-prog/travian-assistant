@@ -103,9 +103,9 @@ class DecisionEngine {
         TravianLogger.log('INFO', `[AI] Best action: ${best.type} (score: ${best.score.toFixed(1)}) — ${best.reason}`);
         this.lastAIAction = { type: best.type, score: best.score, reason: best.reason };
 
-        // Check if this task type is already in queue
-        if (!taskQueue.hasTaskOfType(best.type, null) &&
-            !taskQueue.hasTaskOfType(best.type, gameState.currentVillageId)) {
+        // TQ-1 FIX: Use villageId-agnostic check to prevent dedup mismatch
+        // (AI path might use null villageId while fallback uses actual villageId)
+        if (!taskQueue.hasAnyTaskOfType(best.type)) {
           newTasks.push({
             type: best.type,
             params: best.params,

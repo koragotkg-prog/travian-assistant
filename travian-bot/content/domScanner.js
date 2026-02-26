@@ -1372,6 +1372,39 @@
      * Gather complete game state from all available scanners.
      * @returns {Object} Full game state object
      */
+    /**
+     * DOM-4 FIX: Wait for key DOM indicators before scanning.
+     * Prevents partial/empty scan data when page is still loading.
+     * Polls for resource bar (#l1) or sidebar (#sidebarBoxVillageList) or login form.
+     * @param {number} maxWaitMs - Maximum wait time (default 3000ms)
+     * @returns {Promise<boolean>} true if DOM is ready, false if timed out
+     */
+    waitForReady: function (maxWaitMs) {
+      maxWaitMs = maxWaitMs || 3000;
+      return new Promise(function (resolve) {
+        var start = Date.now();
+        function check() {
+          // Key indicators that the Travian page is loaded
+          var hasResources = !!qs('#l1');
+          var hasSidebar = !!qs('#sidebarBoxVillageList');
+          var hasLogin = !!qs('form#login') || !!qs('.loginForm');
+          var hasContent = !!qs('#content');
+
+          if (hasResources || hasSidebar || hasLogin || hasContent) {
+            resolve(true);
+            return;
+          }
+          if (Date.now() - start >= maxWaitMs) {
+            console.warn('[TravianScanner] waitForReady timed out after ' + maxWaitMs + 'ms');
+            resolve(false);
+            return;
+          }
+          setTimeout(check, 200);
+        }
+        check();
+      });
+    },
+
     getFullState: function () {
       var state = {
         timestamp: Date.now(),

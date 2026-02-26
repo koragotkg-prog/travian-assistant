@@ -193,7 +193,33 @@
     }, AUTO_FLUSH_INTERVAL);
   }
 
-  // Kick off auto-flush immediately
+  // ST-6 FIX: Load existing logs from storage BEFORE starting auto-flush.
+  // Without this, on SW restart the empty in-memory logs=[] would immediately
+  // overwrite the previous session's logs on the first flush, destroying debug data.
+  function loadExistingLogs() {
+    try {
+      if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+        chrome.storage.local.get([STORAGE_KEY], (result) => {
+          if (chrome.runtime.lastError) return;
+          const saved = result[STORAGE_KEY];
+          if (Array.isArray(saved) && saved.length > 0) {
+            // Prepend saved logs, then append anything already in memory
+            const merged = saved.concat(logs);
+            // Trim to max entries
+            logs = merged.length > MAX_LOG_ENTRIES
+              ? merged.slice(merged.length - MAX_LOG_ENTRIES)
+              : merged;
+            console.log('[TravianLogger] Merged ' + saved.length + ' saved logs (total: ' + logs.length + ')');
+          }
+        });
+      }
+    } catch (_) {
+      // Non-critical — proceed with empty logs
+    }
+  }
+
+  // Load existing logs, then kick off auto-flush
+  loadExistingLogs();
   startAutoFlush();
 
   // ── Expose globally (works in both content script and service worker) ──

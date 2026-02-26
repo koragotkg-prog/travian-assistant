@@ -334,6 +334,20 @@ class TaskQueue {
       (t.status === 'pending' || t.status === 'running')
     );
   }
+
+  /**
+   * TQ-1 FIX: Check if ANY pending/running task of the given type exists,
+   * regardless of villageId. Prevents dedup mismatches when AI scoring path
+   * queues with null but fallback path uses actual villageId (or vice versa).
+   * @param {string} type - Task type to check
+   * @returns {boolean} True if ANY matching pending/running task exists
+   */
+  hasAnyTaskOfType(type) {
+    return this.queue.some(t =>
+      t.type === type &&
+      (t.status === 'pending' || t.status === 'running')
+    );
+  }
 }
 
 // Export for service worker context
