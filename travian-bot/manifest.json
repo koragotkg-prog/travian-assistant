@@ -37,6 +37,7 @@
         "utils/logger.js",
         "utils/storage.js",
         "content/domScanner.js",
+        "content/domHelpers.js",
         "content/actionExecutor.js"
       ],
       "run_at": "document_idle"

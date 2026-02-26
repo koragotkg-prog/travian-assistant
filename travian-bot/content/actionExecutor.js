@@ -7,6 +7,7 @@
  *
  * Dependencies (expected on window):
  *   - window.TravianScanner  (domScanner.js)
+ *   - window.DomHelpers      (domHelpers.js - Phase 4: FIX 10-13)
  *   - window.TravianDelay    (optional - falls back to internal helper)
  *   - window.TravianLogger   (optional - falls back to console)
  */
@@ -78,19 +79,28 @@
   }
 
   /**
-   * Wait for a selector to appear in the DOM (polls every 200ms).
-   * @param {string} selector - CSS selector
+   * Wait for a selector to appear in the DOM.
+   * Delegates to DomHelpers.waitForElement (MutationObserver-based) if available,
+   * otherwise falls back to polling (200ms interval).
+   *
+   * @param {string|string[]} selector - CSS selector(s)
    * @param {number} timeout - max ms to wait (default 5000)
    * @returns {Promise<Element|null>}
    */
   function awaitSelector(selector, timeout) {
     timeout = timeout || 5000;
+    // FIX 10: Prefer MutationObserver-based wait
+    if (window.DomHelpers && window.DomHelpers.waitForElement) {
+      return window.DomHelpers.waitForElement(selector, { timeout: timeout });
+    }
+    // Legacy fallback: polling
     return new Promise(function (resolve) {
-      var el = document.querySelector(selector);
+      var sel = Array.isArray(selector) ? selector[0] : selector;
+      var el = document.querySelector(sel);
       if (el) return resolve(el);
       var elapsed = 0;
       var interval = setInterval(function () {
-        el = document.querySelector(selector);
+        el = document.querySelector(sel);
         elapsed += 200;
         if (el || elapsed >= timeout) {
           clearInterval(interval);
@@ -250,6 +260,7 @@
 
   /**
    * Find an element by selector (or array of selectors) and click it.
+   * FIX 10: Enhanced with interactability checks and snapshot debugging (FIX 13).
    *
    * @param {string|string[]} selector
    * @returns {Promise<boolean>} true if clicked, false if element not found
@@ -264,7 +275,26 @@
 
     if (!el) {
       Logger.warn('clickElement: element not found for selector', selector);
+      // FIX 13: capture snapshot on failure
+      if (window.DomHelpers) {
+        window.DomHelpers.captureAndLog({
+          action: 'clickElement', selector: String(selector), reason: 'not_found'
+        });
+      }
       return false;
+    }
+
+    // FIX 10: Verify element is interactable before clicking
+    if (window.DomHelpers && window.DomHelpers.checkInteractable) {
+      var check = window.DomHelpers.checkInteractable(el);
+      if (!check.ok) {
+        Logger.warn('clickElement: element not interactable:', check.reason, selector);
+        window.DomHelpers.captureAndLog({
+          action: 'clickElement', selector: String(selector),
+          reason: check.reason, element: el
+        });
+        return false;
+      }
     }
 
     // Scroll element into view if needed
@@ -411,6 +441,12 @@
 
         if (!clicked) {
           Logger.warn('navigateTo: could not find nav link for', page);
+          // FIX 13: snapshot on navigation failure
+          if (window.DomHelpers) {
+            window.DomHelpers.captureAndLog({
+              action: 'navigateTo', selector: targetSelectors[0], reason: 'nav_link_not_found'
+            });
+          }
           return false;
         }
 
@@ -646,6 +682,14 @@
 
         // Step 4: Nothing found at all
         Logger.warn('clickUpgradeButton: upgrade button not found');
+        // FIX 13: snapshot to help diagnose why button is missing
+        if (window.DomHelpers) {
+          window.DomHelpers.captureAndLog({
+            action: 'clickUpgradeButton',
+            selector: '.section1 button.green',
+            reason: 'button_not_found'
+          });
+        }
         return { success: false, reason: 'button_not_found', message: 'Upgrade button not found on page' };
       } catch (e) {
         Logger.error('clickUpgradeButton error:', e);
@@ -1649,6 +1693,14 @@
 
         if (!result) {
           Logger.warn('buildNewByGid: building GID', gid, 'not found in current tab');
+          // FIX 13: snapshot to diagnose missing building
+          if (window.DomHelpers) {
+            window.DomHelpers.captureAndLog({
+              action: 'buildNewByGid',
+              selector: '#contract_building' + gid,
+              reason: 'building_not_in_tab'
+            });
+          }
           return { success: false, reason: 'building_not_in_tab', message: 'Building GID ' + gid + ' not in current tab' };
         }
 
@@ -2002,6 +2054,13 @@
       }
     } catch (e) {
       Logger.error('handleMessage error for', message.type, ':', e);
+      // FIX 13: Capture DOM snapshot on unhandled execution errors
+      if (window.DomHelpers && message.type === 'EXECUTE') {
+        window.DomHelpers.captureAndLog({
+          action: message.action || 'unknown',
+          reason: 'unhandled_error: ' + (e.message || String(e))
+        });
+      }
       return { success: false, data: null, error: e.message || String(e) };
     }
   }
@@ -2037,6 +2096,7 @@
     });
   } catch (_) {}
 
-  Logger.log('Action Executor initialized. Scanner available:', !!window.TravianScanner);
+  Logger.log('Action Executor initialized. Scanner:', !!window.TravianScanner,
+    'DomHelpers:', !!window.DomHelpers);
 
 })();
