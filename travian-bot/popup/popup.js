@@ -64,6 +64,12 @@ const dom = {
   togSmartFarming: document.getElementById('togSmartFarming'),
   farmMinLoot: document.getElementById('farmMinLoot'),
   togSkipLosses: document.getElementById('togSkipLosses'),
+  scanRadius: document.getElementById('scanRadius'),
+  scanMaxPop: document.getElementById('scanMaxPop'),
+  togScanOases: document.getElementById('togScanOases'),
+  togScanSkipAlliance: document.getElementById('togScanSkipAlliance'),
+  btnScanFarmTargets: document.getElementById('btnScanFarmTargets'),
+  scanFarmResult: document.getElementById('scanFarmResult'),
   farmX: document.getElementById('farmX'),
   farmY: document.getElementById('farmY'),
   btnAddFarm: document.getElementById('btnAddFarm'),
@@ -1094,6 +1100,10 @@ function collectConfig() {
       smartFarming: dom.togSmartFarming.checked,
       minLoot: parseInt(dom.farmMinLoot.value, 10) || 30,
       skipLosses: dom.togSkipLosses.checked,
+      scanRadius: parseInt(dom.scanRadius ? dom.scanRadius.value : '10', 10) || 10,
+      scanMaxPop: parseInt(dom.scanMaxPop ? dom.scanMaxPop.value : '50', 10) || 50,
+      scanIncludeOases: dom.togScanOases ? dom.togScanOases.checked : true,
+      scanSkipAlliance: dom.togScanSkipAlliance ? dom.togScanSkipAlliance.checked : true,
       targets: [...farmTargets],       // [{x, y, name?}] for send_attack (legacy mode)
     },
     heroConfig: {
@@ -1199,6 +1209,18 @@ function populateForm(config) {
     }
     if (config.farmConfig.skipLosses !== undefined) {
       dom.togSkipLosses.checked = config.farmConfig.skipLosses;
+    }
+    if (config.farmConfig.scanRadius !== undefined && dom.scanRadius) {
+      dom.scanRadius.value = config.farmConfig.scanRadius;
+    }
+    if (config.farmConfig.scanMaxPop !== undefined && dom.scanMaxPop) {
+      dom.scanMaxPop.value = config.farmConfig.scanMaxPop;
+    }
+    if (config.farmConfig.scanIncludeOases !== undefined && dom.togScanOases) {
+      dom.togScanOases.checked = config.farmConfig.scanIncludeOases;
+    }
+    if (config.farmConfig.scanSkipAlliance !== undefined && dom.togScanSkipAlliance) {
+      dom.togScanSkipAlliance.checked = config.farmConfig.scanSkipAlliance;
     }
     if (config.farmConfig.targets) {
       updateFarmTargets(config.farmConfig.targets);
@@ -1628,6 +1650,38 @@ function bindEvents() {
   dom.btnAddFarm.addEventListener('click', () => {
     addFarmTarget();
   });
+
+  // Farm Target Scanner button
+  if (dom.btnScanFarmTargets) {
+    dom.btnScanFarmTargets.addEventListener('click', async function () {
+      if (!currentServerKey) {
+        if (dom.scanFarmResult) dom.scanFarmResult.textContent = 'No server selected';
+        return;
+      }
+
+      // Save config first so scanner uses latest settings
+      try {
+        var config = collectConfig();
+        await sendMessage({ type: 'SAVE_CONFIG', config: config });
+      } catch (_) {}
+
+      if (dom.scanFarmResult) dom.scanFarmResult.textContent = 'Scanning map...';
+      dom.btnScanFarmTargets.disabled = true;
+
+      try {
+        var resp = await sendMessage({ type: 'SCAN_FARM_TARGETS' });
+        if (resp && resp.success && resp.data) {
+          if (dom.scanFarmResult) dom.scanFarmResult.textContent = resp.data.message || ('Found ' + resp.data.found + ', added ' + resp.data.added);
+        } else {
+          if (dom.scanFarmResult) dom.scanFarmResult.textContent = 'Error: ' + ((resp && resp.error) || 'Unknown error');
+        }
+      } catch (err) {
+        if (dom.scanFarmResult) dom.scanFarmResult.textContent = 'Error: ' + err.message;
+      } finally {
+        dom.btnScanFarmTargets.disabled = false;
+      }
+    });
+  }
 
   // --- Queue ---
 

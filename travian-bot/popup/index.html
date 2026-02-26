@@ -248,6 +248,29 @@
         <div id="farmListInfo" class="info-text">
           Smart Farming selectively sends only to profitable targets. Disable for legacy send-all.
         </div>
+        <div class="farm-scanner-section" style="margin-top:8px; padding-top:8px; border-top:1px solid rgba(255,255,255,0.06);">
+          <h4 class="section-subtitle">Farm Target Scanner</h4>
+          <div class="form-row">
+            <div class="form-group form-group--half">
+              <label class="form-label">Scan Radius</label>
+              <input type="number" id="scanRadius" value="10" min="1" max="50">
+            </div>
+            <div class="form-group form-group--half">
+              <label class="form-label">Max Population</label>
+              <input type="number" id="scanMaxPop" value="50" min="1" max="500">
+            </div>
+          </div>
+          <div class="form-row" style="margin-top:4px">
+            <div class="form-group form-group--half">
+              <label class="toggle-pill"><input type="checkbox" id="togScanOases" checked><span>Include Oases</span></label>
+            </div>
+            <div class="form-group form-group--half">
+              <label class="toggle-pill"><input type="checkbox" id="togScanSkipAlliance" checked><span>Skip Alliance</span></label>
+            </div>
+          </div>
+          <button id="btnScanFarmTargets" class="btn-small btn-glow" style="margin-top:6px; width:100%;">Scan Map for Targets</button>
+          <div id="scanFarmResult" class="info-text" style="margin-top:4px">--</div>
+        </div>
         <div id="farmTargets" class="farm-targets-section">
           <h4 class="section-subtitle">Manual Targets <span class="text-muted">(used when Farm Lists disabled)</span></h4>
           <div id="farmTargetList"></div>
