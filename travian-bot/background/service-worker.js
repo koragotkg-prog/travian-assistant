@@ -23,6 +23,7 @@ importScripts(
   '../strategy/strategyEngine.js',
   '../core/actionScorer.js',     // TravianActionScorer
   '../core/decisionEngine.js',
+  '../core/gameStateCollector.js', // TravianGameStateCollector
   '../core/botEngine.js',
   '../core/instanceManager.js'
 );

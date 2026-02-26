@@ -7,6 +7,7 @@
  *   - self.TravianTaskQueue   (core/taskQueue.js)
  *   - self.TravianScheduler   (core/scheduler.js)
  *   - self.TravianDecisionEngine (core/decisionEngine.js)
+ *   - self.TravianGameStateCollector (core/gameStateCollector.js)
  */
 
 class BotEngine {
@@ -18,6 +19,7 @@ class BotEngine {
     this.taskQueue = new self.TravianTaskQueue();
     this.scheduler = new self.TravianScheduler();
     this.decisionEngine = new self.TravianDecisionEngine();
+    this.stateCollector = new self.TravianGameStateCollector();
 
     // Current state
     this.gameState = null;
@@ -249,6 +251,9 @@ class BotEngine {
       }
 
       this.gameState = scanResponse.data;
+
+      // Enrich gameState with cached extras
+      this.gameState = this.stateCollector.enrichGameState(this.gameState);
 
       // Inject persistent lastFarmTime so DecisionEngine sees it
       this.gameState.lastFarmTime = this._lastFarmTime || 0;
