@@ -21,6 +21,7 @@ importScripts(
   '../strategy/buildOptimizer.js',
   '../strategy/militaryPlanner.js',
   '../strategy/strategyEngine.js',
+  '../core/actionScorer.js',     // TravianActionScorer
   '../core/decisionEngine.js',
   '../core/botEngine.js',
   '../core/instanceManager.js'
