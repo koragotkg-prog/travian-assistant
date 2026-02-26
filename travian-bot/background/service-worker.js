@@ -471,6 +471,185 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
           break;
         }
 
+        // ---- Scan map.sql for farm targets ----
+        case 'SCAN_FARM_TARGETS': {
+          var scanFarmInst = resolveInstance(message, sender) || (serverKey ? manager.getOrCreate(serverKey) : null);
+          if (!scanFarmInst) {
+            sendResponse({ success: false, error: 'No bot instance found' });
+            break;
+          }
+
+          var gs = scanFarmInst.engine.gameState;
+          var cfg = scanFarmInst.engine.config;
+          var farmScanCfg = (cfg && cfg.farmConfig) || {};
+
+          // Get player village coordinates from gameState
+          var myVillage = null;
+          if (gs && gs.villages && gs.villages.length > 0) {
+            var activeVid = cfg && cfg.activeVillage;
+            if (activeVid) {
+              myVillage = gs.villages.find(function(v) { return String(v.id) === String(activeVid); });
+            }
+            if (!myVillage) myVillage = gs.villages[0];
+          }
+
+          if (!myVillage || myVillage.x == null || myVillage.y == null) {
+            sendResponse({ success: false, error: 'Cannot determine village coordinates. Run a full scan first (click Scan on Config tab).' });
+            break;
+          }
+
+          // Get server base URL from tab
+          var farmScanTab = null;
+          if (scanFarmInst.tabId) {
+            farmScanTab = await chrome.tabs.get(scanFarmInst.tabId).catch(function() { return null; });
+          }
+          if (!farmScanTab || !farmScanTab.url) {
+            sendResponse({ success: false, error: 'No active Travian tab found' });
+            break;
+          }
+
+          var farmServerUrl = farmScanTab.url.match(/^https?:\/\/[^\/]+/);
+          if (!farmServerUrl) {
+            sendResponse({ success: false, error: 'Cannot parse server URL from tab' });
+            break;
+          }
+          farmServerUrl = farmServerUrl[0];
+
+          try {
+            // Step 1: Scan map.sql for candidates
+            logger.info('[MapScanner] Starting scan from (' + myVillage.x + '|' + myVillage.y + ') radius=' + (farmScanCfg.scanRadius || 10));
+            var candidates = await self.TravianMapScanner.scanForTargets(farmServerUrl, {
+              myX: myVillage.x,
+              myY: myVillage.y,
+              myUserId: myVillage.userId || gs.myUserId || 0,
+              scanRadius: farmScanCfg.scanRadius || 10,
+              maxPop: farmScanCfg.scanMaxPop || 50,
+              includeOases: farmScanCfg.scanIncludeOases !== false,
+              skipAlliance: farmScanCfg.scanSkipAlliance !== false,
+              existingCoords: []
+            });
+
+            if (candidates.length === 0) {
+              sendResponse({ success: true, data: { found: 0, added: 0, failed: 0, message: 'No targets found within radius' } });
+              break;
+            }
+
+            // Step 2: Navigate to farm list page
+            var farmTabId = scanFarmInst.tabId;
+            var farmListUrl = farmServerUrl + '/build.php?id=39&tt=99';
+
+            await new Promise(function(resolve, reject) {
+              var navTimeout = setTimeout(function() {
+                chrome.tabs.onUpdated.removeListener(navListener);
+                reject(new Error('Navigation timeout'));
+              }, 15000);
+              function navListener(updatedTabId, changeInfo) {
+                if (updatedTabId === farmTabId && changeInfo.status === 'complete') {
+                  chrome.tabs.onUpdated.removeListener(navListener);
+                  clearTimeout(navTimeout);
+                  setTimeout(function() { resolve(); }, 1000);
+                }
+              }
+              chrome.tabs.onUpdated.addListener(navListener);
+              chrome.tabs.update(farmTabId, { url: farmListUrl });
+            });
+
+            // Step 3: Wait for content script and get existing slots
+            await new Promise(function(r) { setTimeout(r, 2000); });
+
+            var existingSlots = [];
+            for (var scanRetry = 0; scanRetry < 3; scanRetry++) {
+              try {
+                var slotResp = await new Promise(function(resolve, reject) {
+                  chrome.tabs.sendMessage(farmTabId, {
+                    type: 'EXECUTE', action: 'scanFarmListSlots', params: {}
+                  }, function(r) {
+                    if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+                    else resolve(r);
+                  });
+                });
+                if (slotResp && slotResp.slots) {
+                  existingSlots = slotResp.slots;
+                  break;
+                }
+              } catch (slotErr) {
+                if (scanRetry === 2) logger.warn('[MapScanner] Could not scan existing slots: ' + slotErr.message);
+                await new Promise(function(r) { setTimeout(r, 1500); });
+              }
+            }
+
+            // Check farm list capacity (max 100 slots)
+            var existingCount = existingSlots.length;
+            var maxSlots = 100;
+            var available = maxSlots - existingCount;
+
+            if (available <= 0) {
+              sendResponse({ success: true, data: {
+                found: candidates.length, added: 0, failed: 0,
+                message: 'Farm list full (' + existingCount + '/' + maxSlots + '). Found ' + candidates.length + ' targets.'
+              }});
+              break;
+            }
+
+            // Step 4: Add targets one by one with human-like delays
+            var toAdd = candidates.slice(0, available);
+            var addedCount = 0;
+            var failedCount = 0;
+
+            for (var ci = 0; ci < toAdd.length; ci++) {
+              var target = toAdd[ci];
+              try {
+                var addResp = await new Promise(function(resolve, reject) {
+                  chrome.tabs.sendMessage(farmTabId, {
+                    type: 'EXECUTE', action: 'addToFarmList', params: {
+                      x: target.x, y: target.y, listIndex: 0
+                    }
+                  }, function(r) {
+                    if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+                    else resolve(r);
+                  });
+                });
+
+                if (addResp && addResp.success) {
+                  addedCount++;
+                } else {
+                  failedCount++;
+                  logger.warn('[MapScanner] Failed to add (' + target.x + '|' + target.y + '): ' + (addResp ? addResp.message : 'no response'));
+                  // If we get 'no_input' or 'button_not_found', the selectors may be wrong — stop trying
+                  if (addResp && (addResp.reason === 'no_input' || addResp.reason === 'button_not_found')) {
+                    logger.error('[MapScanner] Stopping: farm list add UI not found. Selectors may need updating.');
+                    break;
+                  }
+                }
+              } catch (addErr) {
+                failedCount++;
+                logger.warn('[MapScanner] Error adding target: ' + addErr.message);
+              }
+
+              // Human-like delay between adds (1-3 seconds)
+              if (ci < toAdd.length - 1) {
+                await new Promise(function(r) { setTimeout(r, 1000 + Math.random() * 2000); });
+              }
+            }
+
+            var resultMsg = 'Found ' + candidates.length + ' targets, added ' + addedCount;
+            if (failedCount > 0) resultMsg += ' (' + failedCount + ' failed)';
+            logger.info('[MapScanner] ' + resultMsg);
+
+            sendResponse({ success: true, data: {
+              found: candidates.length,
+              added: addedCount,
+              failed: failedCount,
+              message: resultMsg
+            }});
+
+          } catch (farmScanErr) {
+            logger.error('[MapScanner] Scan error: ' + farmScanErr.message);
+            sendResponse({ success: false, error: farmScanErr.message });
+          }
+          break;
+        }
+
         default:
           sendResponse({ success: false, error: 'Unknown message type: ' + type });
       }
