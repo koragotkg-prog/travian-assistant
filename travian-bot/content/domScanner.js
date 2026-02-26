@@ -164,6 +164,11 @@
           return 'building';
         }
 
+        // Tasks / quests page
+        if (url.indexOf('/tasks') !== -1) {
+          return 'tasks';
+        }
+
         // Resource fields overview (dorf1)
         if (url.indexOf('dorf1') !== -1) {
           return 'resources';
@@ -1124,6 +1129,56 @@
     },
 
     // -------------------------------------------------------------------------
+    // Quest Scanning
+    // -------------------------------------------------------------------------
+
+    /**
+     * Scan quests/tasks from the /tasks page.
+     * Returns an array of quest objects with title, silver reward, and progress.
+     * Only works when on /tasks page.
+     *
+     * @returns {Array<{ title: string, silver: number, progress: number, total: number, progressPct: number }> | null}
+     */
+    scanQuests: function () {
+      try {
+        if (window.location.pathname.indexOf('/tasks') === -1) return null;
+
+        var tasks = qsa('.task');
+        if (!tasks.length) return [];
+
+        return tasks.map(function (t) {
+          var titleEl = qs('.title', t);
+          var rewardEl = qs('.rewards', t);
+          var progressEl = qs('.progress', t);
+
+          var title = titleEl ? titleEl.textContent.trim() : '';
+
+          // Extract silver reward
+          var silverEl = rewardEl ? qs('.iconValueBoxWrapper', rewardEl) : null;
+          var silverText = silverEl ? silverEl.textContent.trim() : '0';
+          var silver = parseInt(silverText.replace(/[^\d]/g, ''), 10) || 0;
+
+          // Extract progress text like "102/150" or "5/6 เป็นเลเวล 5"
+          var progressText = progressEl ? progressEl.textContent.trim() : '';
+          var progressMatch = progressText.match(/(\d+)\s*\/\s*(\d+)/);
+          var progress = progressMatch ? parseInt(progressMatch[1], 10) : 0;
+          var total = progressMatch ? parseInt(progressMatch[2], 10) : 1;
+
+          return {
+            title: title,
+            silver: silver,
+            progress: progress,
+            total: total,
+            progressPct: progress / total
+          };
+        });
+      } catch (e) {
+        console.warn('[TravianScanner] scanQuests error:', e);
+        return null;
+      }
+    },
+
+    // -------------------------------------------------------------------------
     // Full State
     // -------------------------------------------------------------------------
 
@@ -1250,6 +1305,11 @@
       try { state.villages = this.getVillageList(); } catch (e) { console.warn('[TravianScanner] getFullState - getVillageList error:', e); }
       try { state.hero = this.getHeroStatus(); } catch (e) { console.warn('[TravianScanner] getFullState - getHeroStatus error:', e); }
       try { state.farmLists = this.getFarmLists(); } catch (e) { console.warn('[TravianScanner] getFullState - getFarmLists error:', e); }
+
+      // Quest scanning (only on tasks page)
+      if (state.page === 'tasks' || window.location.pathname.indexOf('/tasks') !== -1) {
+        try { state.quests = this.scanQuests(); } catch (e) { console.warn('[TravianScanner] getFullState - scanQuests error:', e); }
+      }
 
       return state;
     }
