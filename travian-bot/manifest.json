@@ -8,7 +8,8 @@
     "alarms",
     "tabs",
     "scripting",
-    "notifications"
+    "notifications",
+    "cookies"
   ],
   "host_permissions": [
     "*://*.travian.com/*",

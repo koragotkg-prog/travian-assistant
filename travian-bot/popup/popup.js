@@ -64,9 +64,12 @@ const dom = {
   togSmartFarming: document.getElementById('togSmartFarming'),
   farmMinLoot: document.getElementById('farmMinLoot'),
   togSkipLosses: document.getElementById('togSkipLosses'),
+  scanMyX: document.getElementById('scanMyX'),
+  scanMyY: document.getElementById('scanMyY'),
   scanRadius: document.getElementById('scanRadius'),
   scanMaxPop: document.getElementById('scanMaxPop'),
   togScanOases: document.getElementById('togScanOases'),
+  togScanEmptyOases: document.getElementById('togScanEmptyOases'),
   togScanSkipAlliance: document.getElementById('togScanSkipAlliance'),
   btnScanFarmTargets: document.getElementById('btnScanFarmTargets'),
   scanFarmResult: document.getElementById('scanFarmResult'),
@@ -1100,9 +1103,12 @@ function collectConfig() {
       smartFarming: dom.togSmartFarming.checked,
       minLoot: parseInt(dom.farmMinLoot.value, 10) || 30,
       skipLosses: dom.togSkipLosses.checked,
-      scanRadius: parseInt(dom.scanRadius ? dom.scanRadius.value : '10', 10) || 10,
+      scanMyX: dom.scanMyX && dom.scanMyX.value !== '' ? parseInt(dom.scanMyX.value, 10) : null,
+      scanMyY: dom.scanMyY && dom.scanMyY.value !== '' ? parseInt(dom.scanMyY.value, 10) : null,
+      scanRadius: parseInt(dom.scanRadius ? dom.scanRadius.value : '20', 10) || 20,
       scanMaxPop: parseInt(dom.scanMaxPop ? dom.scanMaxPop.value : '50', 10) || 50,
       scanIncludeOases: dom.togScanOases ? dom.togScanOases.checked : true,
+      scanEmptyOasesOnly: dom.togScanEmptyOases ? dom.togScanEmptyOases.checked : true,
       scanSkipAlliance: dom.togScanSkipAlliance ? dom.togScanSkipAlliance.checked : true,
       targets: [...farmTargets],       // [{x, y, name?}] for send_attack (legacy mode)
     },
@@ -1210,6 +1216,12 @@ function populateForm(config) {
     if (config.farmConfig.skipLosses !== undefined) {
       dom.togSkipLosses.checked = config.farmConfig.skipLosses;
     }
+    if (config.farmConfig.scanMyX != null && dom.scanMyX) {
+      dom.scanMyX.value = config.farmConfig.scanMyX;
+    }
+    if (config.farmConfig.scanMyY != null && dom.scanMyY) {
+      dom.scanMyY.value = config.farmConfig.scanMyY;
+    }
     if (config.farmConfig.scanRadius !== undefined && dom.scanRadius) {
       dom.scanRadius.value = config.farmConfig.scanRadius;
     }
@@ -1218,6 +1230,9 @@ function populateForm(config) {
     }
     if (config.farmConfig.scanIncludeOases !== undefined && dom.togScanOases) {
       dom.togScanOases.checked = config.farmConfig.scanIncludeOases;
+    }
+    if (config.farmConfig.scanEmptyOasesOnly !== undefined && dom.togScanEmptyOases) {
+      dom.togScanEmptyOases.checked = config.farmConfig.scanEmptyOasesOnly;
     }
     if (config.farmConfig.scanSkipAlliance !== undefined && dom.togScanSkipAlliance) {
       dom.togScanSkipAlliance.checked = config.farmConfig.scanSkipAlliance;

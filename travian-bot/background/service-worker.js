@@ -124,6 +124,70 @@ function notify(title, message) {
 }
 
 // ---------------------------------------------------------------------------
+// 5b. Oasis animal checker — uses tile-details API
+// ---------------------------------------------------------------------------
+
+/**
+ * Check if an oasis has nature troops (animals) by calling the tile-details API.
+ * Returns { hasAnimals: boolean, troops: [{unit, count}] }
+ *
+ * Uses POST /api/v1/map/tile-details with session cookies.
+ * The response HTML contains #troop_info table with .unit.u31-.u40 for nature troops.
+ *
+ * @param {string} serverOrigin - e.g. "https://ts4.x1.asia.travian.com"
+ * @param {number} x - tile X coordinate
+ * @param {number} y - tile Y coordinate
+ * @param {string} cookieHeader - pre-built "name=val; name2=val2" cookie string
+ * @returns {Promise<{hasAnimals:boolean, troops:Array}>}
+ */
+async function checkOasisAnimals(serverOrigin, x, y, cookieHeader) {
+  try {
+    var resp = await fetch(serverOrigin + '/api/v1/map/tile-details', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Requested-With': 'XMLHttpRequest',
+        'Cookie': cookieHeader
+      },
+      body: JSON.stringify({ x: x, y: y })
+    });
+
+    if (!resp.ok) {
+      logger.warn('[OasisCheck] HTTP ' + resp.status + ' for (' + x + '|' + y + ')');
+      return { hasAnimals: true, troops: [] }; // assume dangerous on error
+    }
+
+    var json = await resp.json();
+    var html = json.html || '';
+
+    // Parse HTML for nature troop units (u31-u40)
+    // Pattern: class="unit u31" ... followed by count in the same row
+    var troopRegex = /class="unit u(3[0-9]|40)"/g;
+    var match;
+    var troops = [];
+    while ((match = troopRegex.exec(html)) !== null) {
+      troops.push({ unit: parseInt(match[1], 10) });
+    }
+
+    return { hasAnimals: troops.length > 0, troops: troops };
+  } catch (err) {
+    logger.warn('[OasisCheck] Error checking (' + x + '|' + y + '): ' + err.message);
+    return { hasAnimals: true, troops: [] }; // assume dangerous on error
+  }
+}
+
+/**
+ * Build Cookie header string for a Travian server hostname.
+ * Requires "cookies" permission in manifest.json.
+ * @param {string} hostname - e.g. "ts4.x1.asia.travian.com"
+ * @returns {Promise<string>} Cookie header value
+ */
+async function buildCookieHeader(hostname) {
+  var cookies = await chrome.cookies.getAll({ domain: hostname });
+  return cookies.map(function (c) { return c.name + '=' + c.value; }).join('; ');
+}
+
+// ---------------------------------------------------------------------------
 // 6. Message Handler (from popup, content scripts, etc.)
 // ---------------------------------------------------------------------------
 chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
@@ -456,6 +520,58 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
           break;
         }
 
+        // ---- Farm list API call (delegated from content script) ----
+        case 'FARM_LIST_API_CALL': {
+          var apiOrigin = message.serverOrigin;
+          var apiOpts = message.opts || {};
+          if (!apiOrigin || !apiOpts.listId) {
+            sendResponse({ ok: false, error: 'Missing serverOrigin or listId' });
+            break;
+          }
+
+          try {
+            // Read session cookies for the Travian server
+            var url = new URL(apiOrigin);
+            var cookieHeader = await buildCookieHeader(url.hostname);
+
+            var apiUrl = apiOrigin + '/api/v1/farm-list/slot';
+            var apiBody = JSON.stringify({
+              slots: [{
+                listId: apiOpts.listId,
+                x: apiOpts.x,
+                y: apiOpts.y,
+                units: apiOpts.units || {},
+                active: true,
+                abandoned: false
+              }]
+            });
+
+            var apiResp = await fetch(apiUrl, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json, text/plain, */*',
+                'X-Version': apiOpts.gameVersion || '347.6',
+                'X-Requested-With': 'XMLHttpRequest',
+                'Cookie': cookieHeader
+              },
+              body: apiBody
+            });
+
+            if (apiResp.ok) {
+              sendResponse({ ok: true });
+            } else {
+              var errBody = null;
+              try { errBody = await apiResp.json(); } catch (e) { /* ignore */ }
+              sendResponse({ ok: false, error: (errBody && errBody.error) || 'HTTP ' + apiResp.status });
+            }
+          } catch (apiErr) {
+            logger.warn('[FARM_LIST_API_CALL] Error: ' + apiErr.message);
+            sendResponse({ ok: false, error: apiErr.message });
+          }
+          break;
+        }
+
         // ---- Content Script Ready ----
         case 'CONTENT_READY': {
           if (sender && sender.tab) {
@@ -483,18 +599,26 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
           var cfg = scanFarmInst.engine.config;
           var farmScanCfg = (cfg && cfg.farmConfig) || {};
 
-          // Get player village coordinates from gameState
+          // Get player village coordinates — prefer manual config, fallback to gameState
           var myVillage = null;
-          if (gs && gs.villages && gs.villages.length > 0) {
+          if (farmScanCfg.scanMyX != null && farmScanCfg.scanMyY != null) {
+            // Manual coordinates from config — most reliable for multi-server
+            myVillage = { x: farmScanCfg.scanMyX, y: farmScanCfg.scanMyY };
+            logger.info('[MapScanner] Using manual coordinates (' + myVillage.x + '|' + myVillage.y + ')');
+          } else if (gs && gs.villages && gs.villages.length > 0) {
+            // Fallback: auto-detected from gameState
             var activeVid = cfg && cfg.activeVillage;
             if (activeVid) {
               myVillage = gs.villages.find(function(v) { return String(v.id) === String(activeVid); });
             }
             if (!myVillage) myVillage = gs.villages[0];
+            if (myVillage) {
+              logger.info('[MapScanner] Using auto-detected coordinates (' + myVillage.x + '|' + myVillage.y + ')');
+            }
           }
 
           if (!myVillage || myVillage.x == null || myVillage.y == null) {
-            sendResponse({ success: false, error: 'Cannot determine village coordinates. Run a full scan first (click Scan on Config tab).' });
+            sendResponse({ success: false, error: 'Village coordinates not set. Enter your X,Y in the Farm Scanner config and Save.' });
             break;
           }
 
@@ -517,12 +641,12 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
 
           try {
             // Step 1: Scan map.sql for candidates
-            logger.info('[MapScanner] Starting scan from (' + myVillage.x + '|' + myVillage.y + ') radius=' + (farmScanCfg.scanRadius || 10));
+            logger.info('[MapScanner] Starting scan from (' + myVillage.x + '|' + myVillage.y + ') radius=' + (farmScanCfg.scanRadius || 20) + ' maxPop=' + (farmScanCfg.scanMaxPop || 50));
             var candidates = await self.TravianMapScanner.scanForTargets(farmServerUrl, {
               myX: myVillage.x,
               myY: myVillage.y,
               myUserId: myVillage.userId || gs.myUserId || 0,
-              scanRadius: farmScanCfg.scanRadius || 10,
+              scanRadius: farmScanCfg.scanRadius || 20,
               maxPop: farmScanCfg.scanMaxPop || 50,
               includeOases: farmScanCfg.scanIncludeOases !== false,
               skipAlliance: farmScanCfg.scanSkipAlliance !== false,
@@ -532,6 +656,46 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
             if (candidates.length === 0) {
               sendResponse({ success: true, data: { found: 0, added: 0, failed: 0, message: 'No targets found within radius' } });
               break;
+            }
+
+            // Step 1b: Filter oases with animals (if enabled)
+            var emptyOasesOnly = farmScanCfg.scanEmptyOasesOnly !== false; // default true
+            var oasisCandidates = candidates.filter(function(c) { return c.type === 'oasis'; });
+            var villageCandidates = candidates.filter(function(c) { return c.type !== 'oasis'; });
+
+            if (emptyOasesOnly && oasisCandidates.length > 0) {
+              logger.info('[MapScanner] Checking ' + oasisCandidates.length + ' oases for animals...');
+              var oasisUrl = new URL(farmServerUrl);
+              var oasisCookies = await buildCookieHeader(oasisUrl.hostname);
+              var emptyOases = [];
+              var animalOases = 0;
+
+              for (var oi = 0; oi < oasisCandidates.length; oi++) {
+                var oasis = oasisCandidates[oi];
+                var check = await checkOasisAnimals(farmServerUrl, oasis.x, oasis.y, oasisCookies);
+                if (check.hasAnimals) {
+                  animalOases++;
+                  logger.debug('[MapScanner] Oasis (' + oasis.x + '|' + oasis.y + ') has animals — skipped');
+                } else {
+                  emptyOases.push(oasis);
+                  logger.debug('[MapScanner] Oasis (' + oasis.x + '|' + oasis.y + ') is empty — keeping');
+                }
+                // Small delay between API calls to avoid rate limiting
+                if (oi < oasisCandidates.length - 1) {
+                  await new Promise(function(r) { setTimeout(r, 300); });
+                }
+              }
+
+              logger.info('[MapScanner] Oasis check: ' + emptyOases.length + ' empty, ' + animalOases + ' with animals');
+              candidates = villageCandidates.concat(emptyOases);
+              // Re-sort by distance
+              candidates.sort(function(a, b) { return a.distance - b.distance; });
+
+              if (candidates.length === 0) {
+                sendResponse({ success: true, data: { found: oasisCandidates.length + villageCandidates.length, added: 0, failed: 0,
+                  message: 'All ' + animalOases + ' oases have animals. No valid targets.' } });
+                break;
+              }
             }
 
             // Step 2: Navigate to farm list page
@@ -614,7 +778,7 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
                   addedCount++;
                 } else {
                   failedCount++;
-                  logger.warn('[MapScanner] Failed to add (' + target.x + '|' + target.y + '): ' + (addResp ? addResp.message : 'no response'));
+                  logger.warn('[MapScanner] Failed to add (' + target.x + '|' + target.y + '): ' + (addResp ? (addResp.error || addResp.message || JSON.stringify(addResp)) : 'no response'));
                   // If we get 'no_input' or 'button_not_found', the selectors may be wrong — stop trying
                   if (addResp && (addResp.reason === 'no_input' || addResp.reason === 'button_not_found')) {
                     logger.error('[MapScanner] Stopping: farm list add UI not found. Selectors may need updating.');

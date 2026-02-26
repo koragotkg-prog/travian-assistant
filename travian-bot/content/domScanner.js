@@ -765,59 +765,33 @@
       try {
         var villages = [];
 
-        // Method 1: Village list sidebar (Travian Legends)
-        var villageLinks = trySelectorAll([
-          '#sidebarBoxVillageList li a',
-          '#sidebarBoxVil498 li a',
-          '.villageList li a',
-          '#villageListLinks li a',
-          '#sidebarBoxVillageList .innerBox a',
-          '#sidebarBoxVil498 .innerBox a',
-          '.sidebarBox .villageList a',
-          '#villageListLinks a'
-        ]);
+        // Method 1: Modern Travian Legends — .listEntry.village with .coordinatesGrid
+        var villageEntries = document.querySelectorAll('#sidebarBoxVillageList .listEntry.village');
+        if (villageEntries.length > 0) {
+          villageEntries.forEach(function (entry) {
+            var nameEl = entry.querySelector('.name');
+            var coordEl = entry.querySelector('.coordinatesGrid');
+            var linkEl = entry.querySelector('a');
+            var isActive = entry.classList.contains('active');
+            var name = nameEl ? nameEl.textContent.trim() : '';
 
-        if (villageLinks.length > 0) {
-          villageLinks.forEach(function (link) {
-            var href = link.getAttribute('href') || '';
-            var name = link.textContent.trim();
-            var li = link.closest('li');
-            var isActive = false;
-
-            if (li) {
-              isActive = li.classList.contains('active') || li.classList.contains('selected');
-            }
-
-            // Extract village ID from href
-            var idMatch = href.match(/newdid=(\d+)/) || href.match(/did=(\d+)/) || href.match(/village=(\d+)/);
-            var id = idMatch ? idMatch[1] : '';
-
-            // Try to get coordinates from data attributes or tooltip
+            // Extract coordinates — strip Unicode bidi markers before parsing
             var x = 0, y = 0;
-            var coordMatch = (link.getAttribute('title') || '').match(/\((-?\d+)\s*\|\s*(-?\d+)\)/);
-            if (coordMatch) {
-              x = parseInt(coordMatch[1], 10);
-              y = parseInt(coordMatch[2], 10);
-            }
-
-            // Fallback: try data attributes on the list item
-            if (x === 0 && y === 0 && li) {
-              var dataX = li.getAttribute('data-x') || li.getAttribute('data-did-x');
-              var dataY = li.getAttribute('data-y') || li.getAttribute('data-did-y');
-              if (dataX && dataY) {
-                x = parseInt(dataX, 10) || 0;
-                y = parseInt(dataY, 10) || 0;
+            if (coordEl) {
+              var coordText = coordEl.textContent.replace(/[^\d|\-]/g, '');
+              var coordMatch = coordText.match(/(-?\d+)\|(-?\d+)/);
+              if (coordMatch) {
+                x = parseInt(coordMatch[1], 10);
+                y = parseInt(coordMatch[2], 10);
               }
             }
 
-            // Fallback: try href params
-            if (x === 0 && y === 0) {
-              var hrefXMatch = href.match(/x=(-?\d+)/);
-              var hrefYMatch = href.match(/y=(-?\d+)/);
-              if (hrefXMatch && hrefYMatch) {
-                x = parseInt(hrefXMatch[1], 10) || 0;
-                y = parseInt(hrefYMatch[1], 10) || 0;
-              }
+            // Extract village ID from link href or entry data attributes
+            var id = '';
+            if (linkEl) {
+              var href = linkEl.getAttribute('href') || '';
+              var idMatch = href.match(/newdid=(\d+)/) || href.match(/did=(\d+)/);
+              if (idMatch) id = idMatch[1];
             }
 
             if (name) {
@@ -832,26 +806,34 @@
           });
         }
 
-        // Method 2: Village dropdown/switcher (newer versions)
+        // Method 2: Legacy sidebar with li > a structure
         if (villages.length === 0) {
-          var dropdownItems = trySelectorAll([
-            '.villageSwitch option',
-            '#villageSwitcher option',
-            'select[name="newdid"] option'
+          var villageLinks = trySelectorAll([
+            '#sidebarBoxVillageList li a',
+            '#sidebarBoxVil498 li a',
+            '.villageList li a',
+            '#villageListLinks li a'
           ]);
 
-          dropdownItems.forEach(function (opt) {
-            var id = opt.value || opt.getAttribute('value') || '';
-            var name = opt.textContent.trim();
-            var isActive = opt.selected;
+          villageLinks.forEach(function (link) {
+            var href = link.getAttribute('href') || '';
+            var name = link.textContent.trim();
+            var li = link.closest('li');
+            var isActive = li && (li.classList.contains('active') || li.classList.contains('selected'));
 
-            villages.push({
-              id: id,
-              name: name,
-              x: 0,
-              y: 0,
-              isActive: isActive
-            });
+            var idMatch = href.match(/newdid=(\d+)/) || href.match(/did=(\d+)/);
+            var id = idMatch ? idMatch[1] : '';
+
+            var x = 0, y = 0;
+            var coordMatch = (link.getAttribute('title') || '').match(/\((-?\d+)\s*\|\s*(-?\d+)\)/);
+            if (coordMatch) {
+              x = parseInt(coordMatch[1], 10);
+              y = parseInt(coordMatch[2], 10);
+            }
+
+            if (name) {
+              villages.push({ id: id, name: name, x: x, y: y, isActive: isActive });
+            }
           });
         }
 

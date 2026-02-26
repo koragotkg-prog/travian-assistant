@@ -585,6 +585,19 @@ header h1 {
   padding: 12px 0 4px 0;
 }
 
+.save-section--sticky {
+  position: sticky;
+  bottom: 0;
+  z-index: 10;
+  background: var(--bg-card);
+  padding: 8px 0;
+  margin: 0 -10px;
+  padding-left: 10px;
+  padding-right: 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.3);
+}
+
 /* ============================================================
    CONTROL BAR (fixed bottom)
    ============================================================ */

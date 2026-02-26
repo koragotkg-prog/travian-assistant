@@ -134,6 +134,71 @@
   }
 
   // ---------------------------------------------------------------------------
+  // Farm list API helpers (bypass FormV2 via direct REST API)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Extract game version from CDN URLs for X-Version header.
+   * @returns {string} Game version like "347.6"
+   */
+  function _getGameVersion() {
+    var link = document.querySelector('link[href*="gpack/"], script[src*="gpack/"]');
+    if (link) {
+      var href = link.getAttribute('href') || link.getAttribute('src') || '';
+      var m = href.match(/gpack\/([0-9.]+)\//);
+      if (m) return m[1];
+    }
+    return '347.6'; // fallback
+  }
+
+  /**
+   * Get first farm list ID from DOM data attributes.
+   * Farm list checkboxes have data-farm-list-id on the page.
+   * @returns {number|null} Farm list ID, or null
+   */
+  function _getFarmListId() {
+    // Primary: data-farm-list-id attribute on checkbox inputs
+    var el = document.querySelector('[data-farm-list-id]');
+    if (el) {
+      var id = parseInt(el.getAttribute('data-farm-list-id'), 10);
+      if (id > 0) {
+        Logger.log('Detected farm list ID from DOM: ' + id);
+        return id;
+      }
+    }
+    Logger.warn('_getFarmListId: no data-farm-list-id found on page');
+    return null;
+  }
+
+  /**
+   * Call POST /api/v1/farm-list/slot via service worker (has host_permissions + cookies API).
+   * Content scripts can't inject <script> (CSP blocks it) and content script fetch()
+   * uses extension origin so session cookies aren't sent. Delegate to service worker.
+   * @param {Object} opts - { listId, x, y, units, gameVersion }
+   * @returns {Promise<{ok:boolean, error?:string}>}
+   */
+  function _callFarmListSlotApi(opts) {
+    return new Promise(function (resolve) {
+      var timeoutId = setTimeout(function () {
+        resolve({ ok: false, error: 'Service worker timeout' });
+      }, 15000);
+
+      chrome.runtime.sendMessage({
+        type: 'FARM_LIST_API_CALL',
+        serverOrigin: window.location.origin,
+        opts: opts
+      }, function (response) {
+        clearTimeout(timeoutId);
+        if (chrome.runtime.lastError) {
+          resolve({ ok: false, error: chrome.runtime.lastError.message });
+        } else {
+          resolve(response || { ok: false, error: 'No response from service worker' });
+        }
+      });
+    });
+  }
+
+  // ---------------------------------------------------------------------------
   // Core interaction primitives
   // ---------------------------------------------------------------------------
 
@@ -1068,105 +1133,69 @@
     },
 
     /**
-     * Add a target to a farm list by coordinates.
+     * Add a target to a farm list by coordinates using direct REST API.
+     * Bypasses Travian FormV2 which blocks programmatic form submission.
      * Must be called while on the rally point farm list page (tt=99).
-     *
-     * Flow: click "Add Target" link → wait for dialog → fill X/Y → click Save.
      *
      * @param {object} params
      * @param {number} params.x - Target X coordinate
      * @param {number} params.y - Target Y coordinate
+     * @param {Object} [params.troops] - Troop map { t1: N, ... t10: N }, defaults to { t1: 1 }
+     * @param {number} [params.listId] - Farm list ID (auto-detected from React fiber if omitted)
      * @returns {Promise<{success:boolean, reason?:string, message:string}>}
      */
     addToFarmList: async function (params) {
       var x = params.x;
       var y = params.y;
+      var troops = params.troops || { t1: 1 };
+      var listId = params.listId || null;
 
-      Logger.log('Adding to farm list: (' + x + '|' + y + ')');
+      Logger.log('Adding to farm list via API: (' + x + '|' + y + ')');
 
-      // Verify we're on the farm list page
       if (window.location.href.indexOf('tt=99') === -1) {
         return { success: false, reason: 'wrong_page', message: 'Not on farm list page (tt=99)' };
       }
 
-      // Step 1: Click the "Add Target" link
-      var addLink = qs('td.addTarget a');
-      if (!addLink) {
-        // Fallback selectors
-        addLink = trySelectors([
-          '.addTarget a',
-          'a:has-text("เพิ่มเป้าหมาย")'
-        ]);
+      // Auto-detect listId from React fiber if not provided
+      if (!listId) {
+        listId = await _getFarmListId();
       }
-      if (!addLink) {
-        // Try finding by text content
-        var allLinks = qsa('a');
-        for (var i = 0; i < allLinks.length; i++) {
-          var linkText = allLinks[i].textContent.trim();
-          if (linkText === 'เพิ่มเป้าหมาย' || linkText === 'Add target' || linkText === 'add target') {
-            addLink = allLinks[i];
-            break;
+      if (!listId) {
+        return { success: false, reason: 'building_not_available', message: 'Cannot detect farm list ID from page' };
+      }
+
+      // Build units map (t1..t10)
+      var units = {};
+      for (var ti = 1; ti <= 10; ti++) {
+        units['t' + ti] = troops['t' + ti] || 0;
+      }
+
+      var gameVersion = _getGameVersion();
+      Logger.log('Calling farm-list/slot API: listId=' + listId + ' (' + x + '|' + y + ') v' + gameVersion);
+
+      try {
+        var apiResult = await _callFarmListSlotApi({
+          listId: listId,
+          x: Number(x),
+          y: Number(y),
+          units: units,
+          gameVersion: gameVersion
+        });
+
+        if (!apiResult.ok) {
+          Logger.warn('farm-list/slot API error: ' + apiResult.error);
+          if (apiResult.error === 'raidList.targetExists') {
+            return { success: false, reason: 'duplicate', message: 'Target (' + x + '|' + y + ') already in farm list' };
           }
+          return { success: false, reason: 'save_failed', message: 'API error: ' + apiResult.error };
         }
+
+        Logger.log('farm-list/slot API success for (' + x + '|' + y + ')');
+        return { success: true, message: 'Added (' + x + '|' + y + ') to farm list via API' };
+      } catch (err) {
+        Logger.error('farm-list/slot error: ' + err.message);
+        return { success: false, reason: 'save_failed', message: 'Error: ' + err.message };
       }
-      if (!addLink) {
-        return { success: false, reason: 'button_not_found', message: 'Cannot find "Add Target" link on farm list page' };
-      }
-
-      await simulateHumanClick(addLink);
-      await humanDelay(300, 600);
-
-      // Step 2: Wait for the dialog to appear
-      var xInput = await awaitSelector('.coordinateX input[name="x"]', 5000);
-      if (!xInput) {
-        // Fallback: try other selectors
-        xInput = await awaitSelector('input[name="x"]', 3000);
-      }
-      if (!xInput) {
-        return { success: false, reason: 'no_input', message: 'Add target dialog did not open (X input not found)' };
-      }
-
-      var yInput = qs('.coordinateY input[name="y"]') || qs('input[name="y"]');
-      if (!yInput) {
-        return { success: false, reason: 'no_input', message: 'Add target dialog missing Y input' };
-      }
-
-      // Step 3: Fill in coordinates
-      xInput.focus();
-      xInput.value = String(x);
-      xInput.dispatchEvent(new Event('input', { bubbles: true }));
-      xInput.dispatchEvent(new Event('change', { bubbles: true }));
-      await humanDelay(150, 300);
-
-      yInput.focus();
-      yInput.value = String(y);
-      yInput.dispatchEvent(new Event('input', { bubbles: true }));
-      yInput.dispatchEvent(new Event('change', { bubbles: true }));
-      await humanDelay(150, 300);
-
-      // Step 4: Click Save button
-      var saveBtn = qs('button.save');
-      if (!saveBtn) {
-        saveBtn = trySelectors([
-          'button[type="submit"].green',
-          'button.textButtonV2.save',
-          '.save button'
-        ]);
-      }
-      if (!saveBtn) {
-        // Cancel the dialog if we can't save
-        var cancelBtn = qs('button.cancel');
-        if (cancelBtn) await simulateHumanClick(cancelBtn);
-        return { success: false, reason: 'button_not_found', message: 'Cannot find Save button in add target dialog' };
-      }
-
-      await simulateHumanClick(saveBtn);
-
-      // Step 5: Wait for dialog to close / page to process
-      await humanDelay(500, 1000);
-
-      Logger.log('Added target (' + x + '|' + y + ') to farm list');
-      return { success: true, message: 'Added (' + x + '|' + y + ') to farm list' };
     },
 
     /**

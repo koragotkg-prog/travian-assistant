@@ -252,8 +252,18 @@
           <h4 class="section-subtitle">Farm Target Scanner</h4>
           <div class="form-row">
             <div class="form-group form-group--half">
+              <label class="form-label">My Village X</label>
+              <input type="number" id="scanMyX" placeholder="X" min="-400" max="400">
+            </div>
+            <div class="form-group form-group--half">
+              <label class="form-label">My Village Y</label>
+              <input type="number" id="scanMyY" placeholder="Y" min="-400" max="400">
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group form-group--half">
               <label class="form-label">Scan Radius</label>
-              <input type="number" id="scanRadius" value="10" min="1" max="50">
+              <input type="number" id="scanRadius" value="20" min="1" max="100">
             </div>
             <div class="form-group form-group--half">
               <label class="form-label">Max Population</label>
@@ -266,6 +276,11 @@
             </div>
             <div class="form-group form-group--half">
               <label class="toggle-pill"><input type="checkbox" id="togScanSkipAlliance" checked><span>Skip Alliance</span></label>
+            </div>
+          </div>
+          <div class="form-row" style="margin-top:4px">
+            <div class="form-group">
+              <label class="toggle-pill"><input type="checkbox" id="togScanEmptyOases" checked><span>Empty Oases Only (no animals)</span></label>
             </div>
           </div>
           <button id="btnScanFarmTargets" class="btn-small btn-glow" style="margin-top:6px; width:100%;">Scan Map for Targets</button>
@@ -311,8 +326,8 @@
         </div>
       </section>
 
-      <!-- Save Button -->
-      <section id="saveSection" class="save-section">
+      <!-- Save Button (sticky) -->
+      <section id="saveSection" class="save-section save-section--sticky">
         <button id="btnSaveAll" class="btn-primary btn-glow-primary">💾 Save All Settings</button>
       </section>
 

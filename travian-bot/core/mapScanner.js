@@ -327,40 +327,64 @@
     return fetchAndParse(serverUrl).then(function (tiles) {
       var targets = [];
 
+      // Diagnostic counters to understand filtering
+      var stats = {
+        total: tiles.length,
+        inRange: 0,
+        skippedOwn: 0,
+        skippedNatar: 0,
+        skippedOutOfRange: 0,
+        skippedExisting: 0,
+        skippedEmptyTile: 0,
+        skippedOasisDisabled: 0,
+        skippedPopTooHigh: 0,
+        skippedAlliance: 0,
+        addedOasis: 0,
+        addedVillage: 0
+      };
+
       for (var i = 0; i < tiles.length; i++) {
         var tile = tiles[i];
 
         // Skip own villages
         if (myUserId && tile.userId === myUserId) {
+          stats.skippedOwn++;
           continue;
         }
 
         // Skip Natar (tribe 5) — they always defend
         if (tile.tribe === 5) {
+          stats.skippedNatar++;
           continue;
         }
 
         // Calculate distance — early exit if out of range
         var dist = distance(myX, myY, tile.x, tile.y);
         if (dist > scanRadius) {
+          stats.skippedOutOfRange++;
           continue;
         }
 
+        stats.inRange++;
+
         // Skip tiles already in farm list (O(1) lookup)
         if (existingSet[tile.x + '|' + tile.y]) {
+          stats.skippedExisting++;
           continue;
         }
 
         // Determine tile type
-        var isOasis = tile.tribe === 4 && tile.population === 0;
+        // In map.sql: oases have playerId=0, population=0, but villageName set
+        // Unoccupied oases have nature animals (tribe=4 or tribe=0 with oasis name)
+        var isOasis = tile.population === 0 && tile.playerId === 0 && tile.villageName;
         var isVillage = tile.population > 0;
 
         // Oasis handling
         if (isOasis) {
           if (!includeOases) {
+            stats.skippedOasisDisabled++;
             continue;
           }
-          // Unoccupied oasis — include as target
           targets.push({
             x: tile.x,
             y: tile.y,
@@ -373,21 +397,25 @@
             allianceName: tile.allianceName,
             type: 'oasis'
           });
+          stats.addedOasis++;
           continue;
         }
 
         // Must be a village (population > 0) to be a farm target
         if (!isVillage) {
+          stats.skippedEmptyTile++;
           continue;
         }
 
         // Population filter
         if (tile.population > maxPop) {
+          stats.skippedPopTooHigh++;
           continue;
         }
 
         // Alliance filter — villages with alliances are likely active/defended
         if (skipAlliance && tile.allianceId > 0) {
+          stats.skippedAlliance++;
           continue;
         }
 
@@ -403,6 +431,7 @@
           allianceName: tile.allianceName,
           type: 'village'
         });
+        stats.addedVillage++;
       }
 
       // Sort by distance (closest first)
@@ -410,7 +439,18 @@
         return a.distance - b.distance;
       });
 
-      Logger.log('INFO', '[MapScanner] Found ' + targets.length + ' farm targets within radius ' + scanRadius);
+      Logger.log('INFO', '[MapScanner] Scan stats — tiles=' + stats.total +
+        ' inRange=' + stats.inRange +
+        ' (own=' + stats.skippedOwn +
+        ' natar=' + stats.skippedNatar +
+        ' outRange=' + stats.skippedOutOfRange +
+        ' existing=' + stats.skippedExisting +
+        ' empty=' + stats.skippedEmptyTile +
+        ' oasisOff=' + stats.skippedOasisDisabled +
+        ' popHigh=' + stats.skippedPopTooHigh +
+        ' alliance=' + stats.skippedAlliance +
+        ' → oasis=' + stats.addedOasis +
+        ' village=' + stats.addedVillage + ')');
 
       return targets;
     });
