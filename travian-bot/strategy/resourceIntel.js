@@ -17,6 +17,7 @@
            (typeof require === 'function' ? require('./gameData') : null);
 
   var RESOURCE_KEYS = ['wood', 'clay', 'iron', 'crop'];
+  var FARM_EMA_ALPHA = 0.3; // EMA smoothing factor (0.3 = responsive to recent, 0.7 weight to history)
 
   // =========================================================================
   // ResourceIntel
@@ -677,11 +678,6 @@
       this._farmHistory = state.farmHistory;
     }
   };
-
-  // -------------------------------------------------------------------------
-  // Constants
-  // -------------------------------------------------------------------------
-  var FARM_EMA_ALPHA = 0.3; // EMA smoothing factor (0.3 = responsive to recent, 0.7 weight to history)
 
   // Export
   if (typeof module !== 'undefined' && module.exports) module.exports = ResourceIntel;
