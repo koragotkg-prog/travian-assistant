@@ -24,6 +24,7 @@ importScripts(
   '../core/actionScorer.js',     // TravianActionScorer
   '../core/decisionEngine.js',
   '../core/gameStateCollector.js', // TravianGameStateCollector
+  '../core/mapScanner.js',
   '../core/botEngine.js',
   '../core/instanceManager.js'
 );
