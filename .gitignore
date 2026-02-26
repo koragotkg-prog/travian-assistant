@@ -1,0 +1,15 @@
+# Archives
+*.rar
+*.zip
+
+# Claude internal
+.claude/
+
+# Dependencies
+node_modules/
+
+# Rust build output
+target/
+
+# Temp/scratch
+_ul
