@@ -57,6 +57,23 @@
   }
 
   /**
+   * RND-1 FIX: Gaussian random number using Box-Muller transform.
+   * Returns a value centered on `mean` with standard deviation `stddev`.
+   * Clamped to [min, max] to prevent extreme outliers.
+   */
+  function gaussianRandom(mean, stddev, min, max) {
+    var u1 = Math.random();
+    var u2 = Math.random();
+    // Box-Muller: convert two uniform randoms → one Gaussian
+    var z = Math.sqrt(-2.0 * Math.log(u1 || 0.0001)) * Math.cos(2.0 * Math.PI * u2);
+    var value = mean + z * stddev;
+    // Clamp to bounds
+    if (min !== undefined && value < min) value = min;
+    if (max !== undefined && value > max) value = max;
+    return Math.round(value);
+  }
+
+  /**
    * Promise-based delay. Uses TravianDelay.wait() if available, else setTimeout.
    * @param {number} ms - milliseconds to wait
    * @returns {Promise<void>}
@@ -71,10 +88,16 @@
   }
 
   /**
-   * Human-like delay: random duration between min and max ms.
+   * RND-1 FIX: Human-like delay using Gaussian distribution.
+   * Most delays cluster around the midpoint (like real human reaction times)
+   * instead of being uniformly spread across the range.
    */
   function humanDelay(minMs, maxMs) {
-    var ms = randomInt(minMs || 80, maxMs || 300);
+    var lo = minMs || 80;
+    var hi = maxMs || 300;
+    var mean = (lo + hi) / 2;
+    var stddev = (hi - lo) / 6; // 99.7% of values within [lo, hi]
+    var ms = gaussianRandom(mean, stddev, lo, hi);
     return delay(ms);
   }
 

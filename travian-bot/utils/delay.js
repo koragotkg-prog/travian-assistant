@@ -35,14 +35,31 @@
   }
 
   /**
-   * Sleep for a random duration between min and max milliseconds.
-   * Mimics human-like pauses between actions.
+   * RND-1 FIX: Gaussian random using Box-Muller transform.
+   * Returns value centered on mean, clamped to [min, max].
+   */
+  function gaussianRandom(mean, stddev, min, max) {
+    var u1 = Math.random();
+    var u2 = Math.random();
+    var z = Math.sqrt(-2.0 * Math.log(u1 || 0.0001)) * Math.cos(2.0 * Math.PI * u2);
+    var value = mean + z * stddev;
+    if (min !== undefined && value < min) value = min;
+    if (max !== undefined && value > max) value = max;
+    return Math.round(value);
+  }
+
+  /**
+   * RND-1 FIX: Sleep for a random duration between min and max milliseconds.
+   * Uses Gaussian distribution so delays cluster around the midpoint,
+   * mimicking real human reaction time patterns.
    * @param {number} [min=2000] - Minimum delay in ms
    * @param {number} [max=8000] - Maximum delay in ms
    * @returns {Promise<number>} Resolves with the actual delay used
    */
   function humanDelay(min = 2000, max = 8000) {
-    const delay = randomBetween(min, max);
+    var mean = (min + max) / 2;
+    var stddev = (max - min) / 6;
+    const delay = gaussianRandom(mean, stddev, min, max);
     return new Promise((resolve) => {
       setTimeout(() => resolve(delay), delay);
     });
