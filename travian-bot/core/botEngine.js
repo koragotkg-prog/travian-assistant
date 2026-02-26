@@ -466,10 +466,20 @@ class BotEngine {
       });
 
       if (!scanResponse || !scanResponse.success) {
-        // FIX 4: Count scan failures in circuit breaker. Previously, scan timeouts
-        // (the most common failure in throttled background tabs) were silently swallowed.
-        // The bot would retry forever without ever tripping the circuit breaker,
-        // burning CPU cycles and rate-limit quota on a dead tab.
+        // SAF-4 FIX: On scan failure, try a lightweight captcha check before
+        // falling into circuit breaker. Captcha overlay may block normal scan
+        // but the captcha elements themselves are still queryable.
+        try {
+          var captchaCheck = await this.sendToContentScript({
+            type: 'SCAN', params: { property: 'captcha' }
+          }).catch(() => null);
+          if (captchaCheck && captchaCheck.success && captchaCheck.data === true) {
+            this.emergencyStop('Captcha detected (scan failed but captcha confirmed)');
+            return;
+          }
+        } catch (_) { /* lightweight check failed too — fall through to circuit breaker */ }
+
+        // FIX 4: Count scan failures in circuit breaker.
         this._consecutiveFailures++;
         this._slog('WARN', 'Failed to get game state scan (failures: ' + this._consecutiveFailures + '/' + this._circuitBreakerThreshold + ')', { duration_ms: Date.now() - _cycleStart });
         return;
@@ -1128,8 +1138,8 @@ class BotEngine {
     try {
       // Per-server config when serverKey is set
       if (this.serverKey && typeof self.TravianStorage !== 'undefined' && self.TravianStorage.getServerConfig) {
-        this.config = await self.TravianStorage.getServerConfig(this.serverKey);
-        console.log('[BotEngine] Config loaded for server: ' + this.serverKey);
+        this.config = this._validateConfig(await self.TravianStorage.getServerConfig(this.serverKey));
+        console.log('[BotEngine] Config loaded + validated for server: ' + this.serverKey);
         return;
       }
 
@@ -1150,8 +1160,8 @@ class BotEngine {
           }
 
           if (result.bot_config) {
-            this.config = result.bot_config;
-            console.log('[BotEngine] Config loaded from storage');
+            this.config = this._validateConfig(result.bot_config);
+            console.log('[BotEngine] Config loaded + validated from storage');
           } else {
             this.config = this._getDefaultConfig();
             console.log('[BotEngine] No saved config found, using defaults');
@@ -1313,6 +1323,57 @@ class BotEngine {
         loopIdleMs: 180000      // Loop interval when idle (60-300s range with jitter)
       }
     };
+  }
+
+  /**
+   * ST-2 FIX: Validate and sanitize loaded config against defaults.
+   * Ensures numeric fields are numbers, booleans are booleans, and missing
+   * fields get default values. Prevents NaN/undefined from corrupted storage.
+   */
+  _validateConfig(cfg) {
+    var defaults = this._getDefaultConfig();
+    if (!cfg || typeof cfg !== 'object') return defaults;
+
+    // Type coercion helpers
+    function ensureNum(val, fallback) {
+      var n = Number(val);
+      return (isNaN(n) || !isFinite(n)) ? fallback : n;
+    }
+    function ensureBool(val, fallback) {
+      if (typeof val === 'boolean') return val;
+      if (val === 'true') return true;
+      if (val === 'false') return false;
+      return fallback;
+    }
+
+    // Top-level booleans
+    cfg.autoUpgradeResources = ensureBool(cfg.autoUpgradeResources || cfg.autoResourceUpgrade, defaults.autoUpgradeResources);
+    cfg.autoUpgradeBuildings = ensureBool(cfg.autoUpgradeBuildings || cfg.autoBuildingUpgrade, defaults.autoUpgradeBuildings);
+    cfg.autoTrainTroops = ensureBool(cfg.autoTrainTroops, defaults.autoTrainTroops);
+    cfg.autoFarm = ensureBool(cfg.autoFarm || cfg.autoFarming, defaults.autoFarm);
+
+    // Safety config
+    if (!cfg.safetyConfig || typeof cfg.safetyConfig !== 'object') cfg.safetyConfig = {};
+    cfg.safetyConfig.maxActionsPerHour = ensureNum(cfg.safetyConfig.maxActionsPerHour, defaults.safetyConfig.maxActionsPerHour);
+
+    // Delay settings
+    if (!cfg.delays || typeof cfg.delays !== 'object') cfg.delays = {};
+    cfg.delays.minActionDelay = ensureNum(cfg.delays.minActionDelay, defaults.delays.minActionDelay);
+    cfg.delays.maxActionDelay = ensureNum(cfg.delays.maxActionDelay, defaults.delays.maxActionDelay);
+    cfg.delays.loopActiveMs = ensureNum(cfg.delays.loopActiveMs, defaults.delays.loopActiveMs);
+    cfg.delays.loopIdleMs = ensureNum(cfg.delays.loopIdleMs, defaults.delays.loopIdleMs);
+
+    // Farm config
+    if (!cfg.farmConfig || typeof cfg.farmConfig !== 'object') cfg.farmConfig = {};
+    cfg.farmConfig.intervalMs = ensureNum(cfg.farmConfig.intervalMs, defaults.farmConfig.intervalMs);
+    cfg.farmConfig.minTroops = ensureNum(cfg.farmConfig.minTroops, defaults.farmConfig.minTroops);
+    if (!Array.isArray(cfg.farmConfig.targets)) cfg.farmConfig.targets = [];
+
+    // Resource config
+    if (!cfg.resourceConfig || typeof cfg.resourceConfig !== 'object') cfg.resourceConfig = {};
+    cfg.resourceConfig.maxLevel = ensureNum(cfg.resourceConfig.maxLevel, defaults.resourceConfig.maxLevel);
+
+    return cfg;
   }
 
   /**

@@ -860,6 +860,22 @@ chrome.tabs.onUpdated.addListener(function (tabId, changeInfo, tab) {
     return;
   }
 
+  // TQ-8 FIX: For stopped bots, only reassign tabId if the old tab is gone.
+  // Prevents accidental tab stealing when user navigates multiple Travian tabs
+  // after stopping the bot (e.g., browsing S4 on tab 2 while S4 bot was on tab 1).
+  if (inst.tabId && inst.tabId !== tabId && !inst.engine.running) {
+    chrome.tabs.get(inst.tabId).then(function () {
+      // Old tab still exists — don't steal
+      logger.debug('Tab reassignment skipped for stopped ' + serverKey + ' — original tab ' + inst.tabId + ' still open');
+    }).catch(function () {
+      // Old tab is gone — allow reassignment
+      logger.info('Server ' + serverKey + ' moved from closed tab ' + inst.tabId + ' to ' + tabId);
+      inst.tabId = tabId;
+      inst.engine.activeTabId = tabId;
+    });
+    return;
+  }
+
   // Warn if same server opens in a different tab
   if (inst.tabId && inst.tabId !== tabId) {
     logger.warn('Server ' + serverKey + ' moved from tab ' + inst.tabId + ' to ' + tabId);
