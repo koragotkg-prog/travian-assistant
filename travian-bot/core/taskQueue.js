@@ -28,7 +28,7 @@ class TaskQueue {
    * @param {number} [priority=5] - Priority level (1=highest, 10=lowest)
    * @param {string|null} [villageId=null] - Target village ID
    * @param {number|null} [scheduledFor=null] - Timestamp for delayed execution
-   * @returns {string} The generated task ID
+   * @returns {string|null} The generated task ID, or null if duplicate was skipped
    */
   add(type, params = {}, priority = 5, villageId = null, scheduledFor = null) {
     // BUILD QUEUE GUARD: prevent duplicate build tasks for same slot/field
@@ -37,6 +37,7 @@ class TaskQueue {
       if (targetKey) {
         const isDuplicate = this.queue.some(t =>
           t.type === type &&
+          t.villageId === villageId &&
           t.status !== 'completed' && t.status !== 'failed' &&
           (t.params.fieldId === targetKey || t.params.slot === targetKey)
         );
@@ -51,6 +52,7 @@ class TaskQueue {
     if (type === 'send_farm') {
       const hasPendingFarm = this.queue.some(t =>
         t.type === 'send_farm' &&
+        t.villageId === villageId &&
         t.status !== 'completed' && t.status !== 'failed'
       );
       if (hasPendingFarm) {
