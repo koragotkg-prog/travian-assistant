@@ -111,7 +111,11 @@ class Scheduler {
     const scheduleNext = () => {
       // Recalculate jitter each iteration for natural variance
       const jitter = this._randomJitter(jitterMs);
-      const actualInterval = Math.max(1000, intervalMs + jitter); // Minimum 1 second
+      // PERF-1 FIX: Compensate for callback duration drift.
+      // If the last callback took 30s and interval is 45s, next delay should be ~15s.
+      const entry = this.cycles.get(name);
+      const drift = (entry && entry._lastCbDuration) ? entry._lastCbDuration : 0;
+      const actualInterval = Math.max(1000, intervalMs + jitter - drift); // Minimum 1 second
       const nextRun = Date.now() + actualInterval;
 
       const timerId = setTimeout(async () => {
@@ -121,6 +125,10 @@ class Scheduler {
         const entry = this.cycles.get(name);
         if (!entry) return;
 
+        // PERF-1 FIX: Track callback duration to compensate for drift.
+        // Without this, effective interval = configuredInterval + callbackDuration.
+        // A mainLoop cycle taking 30s means the bot acts every 75s instead of 45s.
+        const cbStart = Date.now();
         try {
           const result = callback();
           // If callback returns a Promise (async), await it before scheduling next
@@ -130,9 +138,14 @@ class Scheduler {
         } catch (err) {
           console.error(`[Scheduler] Error in cycle "${name}":`, err);
         }
+        const cbDuration = Date.now() - cbStart;
 
         // Schedule next iteration if still running and cycle still exists
+        // Subtract callback duration from next interval to maintain target pace
         if (this.running && this.cycles.has(name)) {
+          // Store drift info so scheduleNext can compensate
+          const updatedEntry = this.cycles.get(name);
+          if (updatedEntry) updatedEntry._lastCbDuration = cbDuration;
           scheduleNext();
         }
       }, actualInterval);

@@ -321,6 +321,12 @@ class BotEngine {
     // Save state before fully stopping
     this.saveState();
 
+    // ST-5 FIX: Flush logs immediately on stop to prevent loss on SW death.
+    // The 30s setInterval flush may never fire if the SW is killed soon after.
+    if (typeof self.TravianLogger !== 'undefined' && typeof self.TravianLogger.flush === 'function') {
+      self.TravianLogger.flush();
+    }
+
     console.log('[BotEngine] Stopped');
   }
 
@@ -387,6 +393,11 @@ class BotEngine {
   emergencyStop(reason) {
     console.error(`[BotEngine] EMERGENCY STOP: ${reason}`);
 
+    // ST-5 FIX: Flush logs BEFORE stopping — emergency stop may precede SW death
+    if (typeof self.TravianLogger !== 'undefined' && typeof self.TravianLogger.flush === 'function') {
+      self.TravianLogger.flush();
+    }
+
     this._emergencyReason = reason; // SAF-5 FIX: store for getStatus()
     this._transition(BOT_STATES.EMERGENCY, reason);
     this.stop(); // EMERGENCY → STOPPED
@@ -443,6 +454,15 @@ class BotEngine {
       console.log('[BotEngine] mainLoop already running, skipping concurrent call');
       return;
     }
+
+    // RC-4 FIX: Skip if task execution is still in progress.
+    // The heartbeat can trigger mainLoop while a multi-step EXECUTE is still running.
+    // Without this check, we'd scan + decide + queue while a task is mid-execution.
+    if (this._executionLocked) {
+      console.log('[BotEngine] Execution in progress, skipping cycle');
+      return;
+    }
+
     this._mainLoopRunning = true;
 
     // FIX 8: Cycle tracking for structured logging
@@ -616,6 +636,12 @@ class BotEngine {
       }
       this._mainLoopRunning = false;
       this._currentCycleId = null;
+
+      // ST-5/PERF-4 FIX: Flush logs after each cycle to minimize loss on SW death.
+      // This replaces sole reliance on the 30s setInterval which doesn't keep SW alive.
+      if (typeof self.TravianLogger !== 'undefined' && typeof self.TravianLogger.flush === 'function') {
+        self.TravianLogger.flush();
+      }
     }
   }
 
@@ -655,6 +681,26 @@ class BotEngine {
         });
         this.taskQueue.markFailed(task.id, 'Content script unreachable: ' + (liveErr.message || 'unknown'));
         return;
+      }
+
+      // TQ-3 FIX: Refresh activeVillageId before village mismatch check.
+      // User may have manually switched villages in-game since the last scan.
+      // A quick GET_STATE villages call is much cheaper than a full SCAN.
+      if (task.villageId && this.gameState) {
+        try {
+          var villageCheck = await this.sendToContentScript({
+            type: 'GET_STATE', params: { property: 'villages' }
+          });
+          if (villageCheck && villageCheck.success && villageCheck.data) {
+            var vList = villageCheck.data;
+            for (var vi = 0; vi < vList.length; vi++) {
+              if (vList[vi].active) {
+                this.gameState.activeVillageId = vList[vi].id;
+                break;
+              }
+            }
+          }
+        } catch (_) { /* non-critical — fall through to stale check */ }
       }
 
       // FIX 9: Village context assertion — ensure correct village before executing
@@ -1440,7 +1486,10 @@ class BotEngine {
     while (Date.now() - start < maxWaitMs) {
       attempts++;
       try {
-        var ping = await this.sendToContentScript({ type: 'SCAN' });
+        // TQ-4/PERF-2 FIX: Use lightweight GET_STATE page check instead of full SCAN.
+        // Full SCAN parses the entire DOM (resources, buildings, troops, hero, etc.)
+        // which is expensive. We only need to know the content script is responsive.
+        var ping = await this.sendToContentScript({ type: 'GET_STATE', params: { property: 'page' } });
         if (ping && ping.success) {
           if (attempts > 1) {
             console.log('[BotEngine] Content script ready after ' + attempts + ' attempts (' + (Date.now() - start) + 'ms)');
@@ -1465,7 +1514,19 @@ class BotEngine {
   _randomDelay() {
     const minDelay = (this.config && this.config.delays && this.config.delays.minActionDelay) || 2000;
     const maxDelay = (this.config && this.config.delays && this.config.delays.maxActionDelay) || 8000;
-    const delay = Math.floor(Math.random() * (maxDelay - minDelay + 1)) + minDelay;
+
+    // RND-5 FIX: Session fatigue simulation.
+    // Real humans get slower over time. After 1 hour, delays increase by up to 50%.
+    // Formula: fatigueFactor = 1 + min(0.5, sessionHours * 0.15)
+    var fatigue = 1;
+    if (this.stats && this.stats.startTime) {
+      var sessionHours = (Date.now() - this.stats.startTime) / 3600000;
+      fatigue = 1 + Math.min(0.5, sessionHours * 0.15);
+    }
+    var adjustedMin = Math.round(minDelay * fatigue);
+    var adjustedMax = Math.round(maxDelay * fatigue);
+
+    const delay = Math.floor(Math.random() * (adjustedMax - adjustedMin + 1)) + adjustedMin;
 
     return new Promise(resolve => setTimeout(resolve, delay));
   }

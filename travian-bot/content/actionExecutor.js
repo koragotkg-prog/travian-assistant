@@ -249,12 +249,25 @@
       return;
     }
 
-    // Get bounding rect and compute click position with small random offset
+    // RND-2 FIX: Center-biased click position using Gaussian distribution.
+    // Real users tend to click near the center of elements, not uniformly random.
     var rect = element.getBoundingClientRect();
-    var offsetX = randomInt(2, Math.max(3, Math.floor(rect.width * 0.8)));
-    var offsetY = randomInt(2, Math.max(3, Math.floor(rect.height * 0.8)));
+    var centerX = rect.width / 2;
+    var centerY = rect.height / 2;
+    // Gaussian: mean=center, stddev=width/6 (99.7% within element bounds)
+    var offsetX = gaussianRandom(centerX, Math.max(1, rect.width / 6), 2, Math.max(3, rect.width - 2));
+    var offsetY = gaussianRandom(centerY, Math.max(1, rect.height / 6), 2, Math.max(3, rect.height - 2));
     var clientX = rect.left + offsetX;
     var clientY = rect.top + offsetY;
+
+    // RND-7 FIX: screenX/screenY should account for browser chrome offset.
+    // Real events have screenX = clientX + window.screenX + outerWidth-innerWidth padding.
+    // Using window.screenX/screenY as the offset for a more realistic fingerprint.
+    var screenOffsetX = (typeof window.screenX === 'number') ? window.screenX : 0;
+    var screenOffsetY = (typeof window.screenY === 'number') ? window.screenY : 0;
+    // Approximate browser chrome height (toolbar etc.)
+    var chromeHeight = (typeof window.outerHeight === 'number' && typeof window.innerHeight === 'number')
+      ? (window.outerHeight - window.innerHeight) : 80;
 
     var commonProps = {
       bubbles: true,
@@ -262,8 +275,8 @@
       view: window,
       clientX: clientX,
       clientY: clientY,
-      screenX: clientX,
-      screenY: clientY,
+      screenX: clientX + screenOffsetX,
+      screenY: clientY + screenOffsetY + chromeHeight,
       button: 0
     };
 
@@ -1889,6 +1902,13 @@
    * @param {{ type: string, action?: string, params?: Object }} message
    * @returns {Promise<{ success: boolean, data: any, error: string|null }>}
    */
+  // RC-5 FIX: Track page unload to ignore messages from dying content script.
+  // When a page navigates, both old and new content scripts briefly coexist.
+  // The old one must ignore messages to prevent duplicate action execution.
+  var _pageUnloading = false;
+  window.addEventListener('pagehide', function () { _pageUnloading = true; });
+  window.addEventListener('beforeunload', function () { _pageUnloading = true; });
+
   // TQ-6 FIX: Track last processed requestId to prevent duplicate EXECUTE actions.
   // When Chrome throttles a background tab, the bot's timeout can fire before the
   // content script responds. The bot retries with a NEW requestId, but the original
@@ -1896,6 +1916,11 @@
   var _lastProcessedRequestId = 0;
 
   async function handleMessage(message) {
+    // RC-5 FIX: Bail immediately if page is unloading — we're the dying instance
+    if (_pageUnloading) {
+      return { success: false, data: null, error: 'Content script unloading (page navigation)' };
+    }
+
     if (!message || !message.type) {
       return { success: false, data: null, error: 'Invalid message: missing type' };
     }
