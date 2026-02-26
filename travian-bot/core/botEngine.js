@@ -408,8 +408,25 @@ class BotEngine {
             type: 'EXECUTE', action: 'clickFarmListTab', params: {}
           });
           await this._randomDelay();
-          // Step 3: Click start on farm lists
-          if (task.params.farmListId != null) {
+          // Wait for content script to re-inject after page reload
+          await this._waitForContentScript(10000);
+          // Step 3: Send farm lists (smart selective or legacy send-all)
+          var smartFarming = this.config && this.config.farmConfig && this.config.farmConfig.smartFarming;
+          if (smartFarming) {
+            // Smart farming: only send to profitable targets
+            var minLoot = (this.config.farmConfig && this.config.farmConfig.minLoot) || 30;
+            var skipLosses = this.config.farmConfig.skipLosses !== false;
+            TravianLogger.log('INFO', '[BotEngine] Smart farming: minLoot=' + minLoot + ' skipLosses=' + skipLosses);
+            response = await this.sendToContentScript({
+              type: 'EXECUTE', action: 'selectiveFarmSend', params: {
+                minLoot: minLoot,
+                skipLosses: skipLosses
+              }
+            });
+            if (response && response.sent != null) {
+              TravianLogger.log('INFO', '[BotEngine] Smart farm result: sent=' + response.sent + ' skipped=' + response.skipped + ' total=' + response.total);
+            }
+          } else if (task.params.farmListId != null) {
             // Send a specific farm list
             response = await this.sendToContentScript({
               type: 'EXECUTE', action: 'sendFarmList', params: {
@@ -417,7 +434,7 @@ class BotEngine {
               }
             });
           } else {
-            // Send all farm lists on the page
+            // Legacy: Send all farm lists on the page
             response = await this.sendToContentScript({
               type: 'EXECUTE', action: 'sendAllFarmLists', params: {}
             });

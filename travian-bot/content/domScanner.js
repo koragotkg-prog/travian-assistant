@@ -1306,6 +1306,67 @@
     },
 
     /**
+     * Scan farm list slots with raid status and loot data.
+     * Only works on rally point farm list tab (tt=99).
+     * @returns {Array<{ slotId, name, raidStatus, lastLoot, avgLoot, bountyLevel, distance, population }>}
+     */
+    scanFarmListSlots: function () {
+      try {
+        var url = window.location.href;
+        if (url.indexOf('tt=99') === -1) return [];
+
+        var slots = qsa('.slot');
+        var result = [];
+
+        for (var i = 0; i < slots.length; i++) {
+          var slot = slots[i];
+          var checkbox = qs('input[type="checkbox"][name="selectOne"]', slot);
+          if (!checkbox) continue; // skip header/footer rows
+
+          var slotId = checkbox.getAttribute('data-slot-id') || String(i);
+          var nameEl = qs('.villageNameWrapper a, .target a, a.targetLink', slot);
+          var raidIcon = qs('i.lastRaidState', slot);
+          var bountyIcon = qs('.lastRaidBounty i', slot);
+          var bountyVal = qs('.lastRaidBounty .value', slot);
+          var avgVal = qs('.averageRaidBounty .value', slot);
+          var popEl = qs('td.population .value, td.pop .value', slot);
+          var distEl = qs('td.distance .value, td.dist .value', slot);
+
+          // Parse raid status from icon class
+          var raidClass = raidIcon ? (raidIcon.className || '') : '';
+          var raidStatus = 'unknown';
+          if (raidClass.indexOf('attack_lost') !== -1) raidStatus = 'lost';
+          else if (raidClass.indexOf('withLosses') !== -1) raidStatus = 'won_with_losses';
+          else if (raidClass.indexOf('withoutLosses') !== -1) raidStatus = 'won';
+
+          // Parse bounty level from icon class
+          var bountyClass = bountyIcon ? (bountyIcon.className || '') : '';
+          var bountyLevel = 'unknown';
+          if (bountyClass.indexOf('bounty_full') !== -1) bountyLevel = 'full';
+          else if (bountyClass.indexOf('bounty_half') !== -1) bountyLevel = 'half';
+          else if (bountyClass.indexOf('bounty_empty') !== -1) bountyLevel = 'empty';
+
+          result.push({
+            index: i,
+            slotId: slotId,
+            name: nameEl ? nameEl.textContent.trim() : '',
+            raidStatus: raidStatus,
+            bountyLevel: bountyLevel,
+            lastLoot: bountyVal ? (parseInt(bountyVal.textContent.replace(/[^\d]/g, ''), 10) || 0) : 0,
+            avgLoot: avgVal ? (parseInt(avgVal.textContent.replace(/[^\d]/g, ''), 10) || 0) : 0,
+            population: popEl ? (parseInt(popEl.textContent.replace(/[^\d]/g, ''), 10) || 0) : 0,
+            distance: distEl ? parseFloat(distEl.textContent) || 0 : 0
+          });
+        }
+
+        return result;
+      } catch (e) {
+        console.warn('[TravianScanner] scanFarmListSlots error:', e);
+        return [];
+      }
+    },
+
+    /**
      * Gather complete game state from all available scanners.
      * @returns {Object} Full game state object
      */

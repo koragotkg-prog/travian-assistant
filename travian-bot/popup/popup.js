@@ -61,6 +61,9 @@ const dom = {
   farmInterval: document.getElementById('farmInterval'),
   farmMinTroops: document.getElementById('farmMinTroops'),
   togUseFarmList: document.getElementById('togUseFarmList'),
+  togSmartFarming: document.getElementById('togSmartFarming'),
+  farmMinLoot: document.getElementById('farmMinLoot'),
+  togSkipLosses: document.getElementById('togSkipLosses'),
   farmX: document.getElementById('farmX'),
   farmY: document.getElementById('farmY'),
   btnAddFarm: document.getElementById('btnAddFarm'),
@@ -1088,6 +1091,9 @@ function collectConfig() {
       intervalMs: (parseInt(dom.farmInterval.value, 10) || 300) * 1000, // convert seconds to ms
       minTroops: parseInt(dom.farmMinTroops.value, 10) || 10,
       useRallyPointFarmList: dom.togUseFarmList.checked,
+      smartFarming: dom.togSmartFarming.checked,
+      minLoot: parseInt(dom.farmMinLoot.value, 10) || 30,
+      skipLosses: dom.togSkipLosses.checked,
       targets: [...farmTargets],       // [{x, y, name?}] for send_attack (legacy mode)
     },
     heroConfig: {
@@ -1184,6 +1190,15 @@ function populateForm(config) {
     if (config.farmConfig.minTroops) dom.farmMinTroops.value = config.farmConfig.minTroops;
     if (config.farmConfig.useRallyPointFarmList !== undefined) {
       dom.togUseFarmList.checked = config.farmConfig.useRallyPointFarmList;
+    }
+    if (config.farmConfig.smartFarming !== undefined) {
+      dom.togSmartFarming.checked = config.farmConfig.smartFarming;
+    }
+    if (config.farmConfig.minLoot !== undefined) {
+      dom.farmMinLoot.value = config.farmConfig.minLoot;
+    }
+    if (config.farmConfig.skipLosses !== undefined) {
+      dom.togSkipLosses.checked = config.farmConfig.skipLosses;
     }
     if (config.farmConfig.targets) {
       updateFarmTargets(config.farmConfig.targets);
@@ -1653,6 +1668,8 @@ function bindEvents() {
     dom.togFarming,
     dom.togHeroAdventure,
     dom.togUseFarmList,
+    dom.togSmartFarming,
+    dom.togSkipLosses,
   ];
 
   toggles.forEach((toggle) => {

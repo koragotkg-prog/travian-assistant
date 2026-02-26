@@ -235,8 +235,18 @@
           </div>
         </div>
         <label class="toggle-pill toggle-pill--wide"><input type="checkbox" id="togUseFarmList" checked><span>Use Rally Point Farm Lists</span></label>
+        <label class="toggle-pill toggle-pill--wide"><input type="checkbox" id="togSmartFarming" checked><span>Smart Farming (skip low-loot targets)</span></label>
+        <div id="smartFarmConfig" class="form-row" style="margin-top:4px">
+          <div class="form-group form-group--half">
+            <label class="form-label">Min Loot</label>
+            <input type="number" id="farmMinLoot" value="30" min="0" max="500">
+          </div>
+          <div class="form-group form-group--half">
+            <label class="toggle-pill"><input type="checkbox" id="togSkipLosses" checked><span>Skip Losses</span></label>
+          </div>
+        </div>
         <div id="farmListInfo" class="info-text">
-          Bot will navigate to Rally Point → Farm List tab and click Start on all lists.
+          Smart Farming selectively sends only to profitable targets. Disable for legacy send-all.
         </div>
         <div id="farmTargets" class="farm-targets-section">
           <h4 class="section-subtitle">Manual Targets <span class="text-muted">(used when Farm Lists disabled)</span></h4>

@@ -938,6 +938,128 @@
     },
 
     /**
+     * Selective farm send: scan slots, uncheck bad targets, check good targets, then start.
+     * Skips slots where troops were lost or loot is below threshold.
+     *
+     * @param {object} opts - { minLoot: number, skipLosses: boolean }
+     * @returns {Promise<{ success, sent, skipped, total }>}
+     */
+    selectiveFarmSend: async function (opts) {
+      try {
+        opts = opts || {};
+        var minLoot = opts.minLoot || 30;
+        var skipLosses = opts.skipLosses !== false;
+
+        Logger.log('selectiveFarmSend: minLoot=' + minLoot + ' skipLosses=' + skipLosses);
+        await humanDelay(300, 600);
+
+        // Must be on farm list tab
+        if (window.location.href.indexOf('tt=99') === -1) {
+          Logger.warn('selectiveFarmSend: not on farm list tab');
+          return { success: false, sent: 0, skipped: 0, total: 0 };
+        }
+
+        var allLists = qsa('.farmListWrapper, .raidList, .farmList');
+        if (allLists.length === 0) {
+          Logger.warn('selectiveFarmSend: no farm lists found');
+          return { success: false, sent: 0, skipped: 0, total: 0 };
+        }
+
+        var totalSent = 0;
+        var totalSkipped = 0;
+        var totalSlots = 0;
+
+        for (var li = 0; li < allLists.length; li++) {
+          var listEl = allLists[li];
+          var slots = qsa('.slot', listEl);
+          var sentThisList = 0;
+          var skippedThisList = 0;
+
+          // First: uncheck all by clicking "select all" twice (check then uncheck)
+          var selectAllBox = qs('input[data-check-all="true"]', listEl);
+          if (selectAllBox) {
+            if (!selectAllBox.checked) {
+              selectAllBox.click();
+              await delay(100);
+            }
+            selectAllBox.click(); // uncheck all
+            await delay(100);
+          }
+
+          // Now selectively check good targets
+          for (var si = 0; si < slots.length; si++) {
+            var slot = slots[si];
+            var checkbox = qs('input[type="checkbox"][name="selectOne"]', slot);
+            if (!checkbox) continue;
+            totalSlots++;
+
+            // Read raid status
+            var raidIcon = qs('i.lastRaidState', slot);
+            var raidClass = raidIcon ? (raidIcon.className || '') : '';
+            var lost = raidClass.indexOf('attack_lost') !== -1;
+            var withLosses = raidClass.indexOf('withLosses') !== -1;
+
+            // Read last loot
+            var bountyVal = qs('.lastRaidBounty .value', slot);
+            var lastLoot = bountyVal ? (parseInt(bountyVal.textContent.replace(/[^\d]/g, ''), 10) || 0) : 0;
+
+            // Decision: skip if losses or loot below threshold
+            var skip = false;
+            if (skipLosses && (lost || withLosses)) {
+              skip = true;
+            }
+            if (lastLoot > 0 && lastLoot < minLoot) {
+              skip = true;
+            }
+
+            if (skip) {
+              skippedThisList++;
+              // Ensure unchecked (should be from the uncheck-all above)
+              if (checkbox.checked) checkbox.click();
+            } else {
+              sentThisList++;
+              // Check this target
+              if (!checkbox.checked) checkbox.click();
+              await delay(randomInt(30, 80));
+            }
+          }
+
+          Logger.log('selectiveFarmSend: list ' + li + ' — sending ' + sentThisList + ', skipping ' + skippedThisList);
+
+          // Click the per-list start button (sends only checked targets)
+          if (sentThisList > 0) {
+            var startBtn = trySelectors([
+              '.farmListHeader button.startFarmList',
+              'button.startFarmList',
+              '.farmListHeader button.green'
+            ], listEl);
+
+            if (startBtn) {
+              await humanDelay(200, 500);
+              await simulateHumanClick(startBtn);
+              Logger.log('selectiveFarmSend: clicked start for list ' + li);
+            } else {
+              Logger.warn('selectiveFarmSend: no start button for list ' + li);
+            }
+          }
+
+          totalSent += sentThisList;
+          totalSkipped += skippedThisList;
+
+          if (li < allLists.length - 1) {
+            await humanDelay(500, 1000);
+          }
+        }
+
+        Logger.log('selectiveFarmSend: done — sent=' + totalSent + ' skipped=' + totalSkipped + ' total=' + totalSlots);
+        return { success: totalSent > 0, sent: totalSent, skipped: totalSkipped, total: totalSlots };
+      } catch (e) {
+        Logger.error('selectiveFarmSend error:', e);
+        return { success: false, sent: 0, skipped: 0, total: 0 };
+      }
+    },
+
+    /**
      * Fill in the rally point attack form and send an attack.
      *
      * @param {{ x: number, y: number }} target - Target coordinates
@@ -1667,6 +1789,14 @@
 
             case 'sendAllFarmLists':
               actionResult = await TravianExecutor.sendAllFarmLists();
+              break;
+
+            case 'selectiveFarmSend':
+              actionResult = await TravianExecutor.selectiveFarmSend(params);
+              break;
+
+            case 'scanFarmListSlots':
+              actionResult = { success: true, slots: window.TravianScanner ? window.TravianScanner.scanFarmListSlots() : [] };
               break;
 
             case 'sendAttack':
