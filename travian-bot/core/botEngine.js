@@ -414,6 +414,37 @@ class BotEngine {
           this.stats.farmRaidsSent++;
           break;
 
+        case 'build_traps':
+          // Step 1: Find trapper building slot from gameState (gid=36, slot != 40 which is wall)
+          var trapperSlot = null;
+          if (this.gameState && this.gameState.buildings) {
+            var trapperBld = this.gameState.buildings.find(function(b) {
+              return (b.id === 36 || b.gid === 36) && b.slot !== 40;
+            });
+            if (trapperBld) trapperSlot = trapperBld.slot;
+          }
+          if (!trapperSlot) {
+            response = { success: false, reason: 'building_not_available', message: 'Trapper building not found' };
+            break;
+          }
+          // Step 2: Navigate to dorf2
+          await this.sendToContentScript({
+            type: 'EXECUTE', action: 'navigateTo', params: { page: 'dorf2' }
+          });
+          await this._randomDelay();
+          // Step 3: Click the trapper building slot (navigates to /build.php?id=XX)
+          await this.sendToContentScript({
+            type: 'EXECUTE', action: 'clickBuildingSlot', params: { slotId: trapperSlot }
+          });
+          await this._randomDelay();
+          // Step 4: Wait for content script re-injection after page navigation
+          await this._waitForContentScript(10000);
+          // Step 5: Train traps
+          response = await this.sendToContentScript({
+            type: 'EXECUTE', action: 'trainTraps', params: { count: task.params.count || 10 }
+          });
+          break;
+
         case 'send_hero_adventure':
           // Navigate to hero adventures page and send hero
           await this.sendToContentScript({
@@ -685,7 +716,8 @@ class BotEngine {
       scheduler: this.scheduler.getStatus(),
       gameState: this.gameState,
       config: this.config,
-      nextActionTime: this.nextActionTime
+      nextActionTime: this.nextActionTime,
+      lastAIAction: this.decisionEngine ? this.decisionEngine.lastAIAction : null
     };
   }
 
@@ -896,6 +928,8 @@ class BotEngine {
         return 60000;     // 1 minute cooldown after building/resource upgrade
       case 'train_troops':
         return 120000;    // 2 minutes cooldown after troop training
+      case 'build_traps':
+        return 120000;    // 2 minutes cooldown after trap building
       case 'send_farm':
         return 300000;    // 5 minutes cooldown after farm send
       case 'send_hero_adventure':
