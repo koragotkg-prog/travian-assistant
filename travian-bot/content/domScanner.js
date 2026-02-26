@@ -800,6 +800,26 @@
               y = parseInt(coordMatch[2], 10);
             }
 
+            // Fallback: try data attributes on the list item
+            if (x === 0 && y === 0 && li) {
+              var dataX = li.getAttribute('data-x') || li.getAttribute('data-did-x');
+              var dataY = li.getAttribute('data-y') || li.getAttribute('data-did-y');
+              if (dataX && dataY) {
+                x = parseInt(dataX, 10) || 0;
+                y = parseInt(dataY, 10) || 0;
+              }
+            }
+
+            // Fallback: try href params
+            if (x === 0 && y === 0) {
+              var hrefXMatch = href.match(/x=(-?\d+)/);
+              var hrefYMatch = href.match(/y=(-?\d+)/);
+              if (hrefXMatch && hrefYMatch) {
+                x = parseInt(hrefXMatch[1], 10) || 0;
+                y = parseInt(hrefYMatch[1], 10) || 0;
+              }
+            }
+
             if (name) {
               villages.push({
                 id: id,
@@ -1414,6 +1434,19 @@
 
       // Trapper info (only on trapper building page gid=36)
       try { state.trapperInfo = this.getTrapperInfo(); } catch (e) { console.warn('[TravianScanner] getFullState - getTrapperInfo error:', e); }
+
+      // Extract own userId from page for MapScanner
+      try {
+        var bodyText = document.body ? document.body.innerHTML.substring(0, 5000) : '';
+        var uidMatch = bodyText.match(/playerId['":\s]+(\d+)/) ||
+                       bodyText.match(/Travian\.Game\.player\s*=\s*\{[^}]*?id\s*:\s*(\d+)/) ||
+                       bodyText.match(/player_id['":\s]+(\d+)/);
+        if (uidMatch) {
+          state.myUserId = parseInt(uidMatch[1], 10) || 0;
+        }
+      } catch (e) {
+        console.warn('[TravianScanner] getFullState - myUserId error:', e);
+      }
 
       return state;
     }
