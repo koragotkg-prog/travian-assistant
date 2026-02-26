@@ -71,6 +71,8 @@ const dom = {
   togScanOases: document.getElementById('togScanOases'),
   togScanEmptyOases: document.getElementById('togScanEmptyOases'),
   togScanSkipAlliance: document.getElementById('togScanSkipAlliance'),
+  scanTroopSlot: document.getElementById('scanTroopSlot'),
+  scanTroopCount: document.getElementById('scanTroopCount'),
   btnScanFarmTargets: document.getElementById('btnScanFarmTargets'),
   scanFarmResult: document.getElementById('scanFarmResult'),
   farmX: document.getElementById('farmX'),
@@ -1110,6 +1112,8 @@ function collectConfig() {
       scanIncludeOases: dom.togScanOases ? dom.togScanOases.checked : true,
       scanEmptyOasesOnly: dom.togScanEmptyOases ? dom.togScanEmptyOases.checked : true,
       scanSkipAlliance: dom.togScanSkipAlliance ? dom.togScanSkipAlliance.checked : true,
+      scanTroopSlot: dom.scanTroopSlot ? dom.scanTroopSlot.value : 't1',
+      scanTroopCount: parseInt(dom.scanTroopCount ? dom.scanTroopCount.value : '1', 10) || 1,
       targets: [...farmTargets],       // [{x, y, name?}] for send_attack (legacy mode)
     },
     heroConfig: {
@@ -1236,6 +1240,12 @@ function populateForm(config) {
     }
     if (config.farmConfig.scanSkipAlliance !== undefined && dom.togScanSkipAlliance) {
       dom.togScanSkipAlliance.checked = config.farmConfig.scanSkipAlliance;
+    }
+    if (config.farmConfig.scanTroopSlot && dom.scanTroopSlot) {
+      dom.scanTroopSlot.value = config.farmConfig.scanTroopSlot;
+    }
+    if (config.farmConfig.scanTroopCount && dom.scanTroopCount) {
+      dom.scanTroopCount.value = config.farmConfig.scanTroopCount;
     }
     if (config.farmConfig.targets) {
       updateFarmTargets(config.farmConfig.targets);

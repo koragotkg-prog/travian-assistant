@@ -283,6 +283,23 @@
               <label class="toggle-pill"><input type="checkbox" id="togScanEmptyOases" checked><span>Empty Oases Only (no animals)</span></label>
             </div>
           </div>
+          <div class="form-row" style="margin-top:4px">
+            <div class="form-group form-group--half">
+              <label class="form-label">Troop Slot (t1-t10)</label>
+              <select id="scanTroopSlot">
+                <option value="t1">t1 (default raider)</option>
+                <option value="t2">t2</option>
+                <option value="t3">t3</option>
+                <option value="t4">t4</option>
+                <option value="t5">t5</option>
+                <option value="t6">t6</option>
+              </select>
+            </div>
+            <div class="form-group form-group--half">
+              <label class="form-label">Troops per target</label>
+              <input type="number" id="scanTroopCount" value="1" min="1" max="1000">
+            </div>
+          </div>
           <button id="btnScanFarmTargets" class="btn-small btn-glow" style="margin-top:6px; width:100%;">Scan Map for Targets</button>
           <div id="scanFarmResult" class="info-text" style="margin-top:4px">--</div>
         </div>

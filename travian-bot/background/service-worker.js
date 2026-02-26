@@ -756,6 +756,13 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
             }
 
             // Step 4: Add targets one by one with human-like delays
+            // Build troops object from config (e.g., {t1: 5} or {t3: 10})
+            var troopSlot = farmScanCfg.scanTroopSlot || 't1';
+            var troopCount = farmScanCfg.scanTroopCount || 1;
+            var scanTroops = {};
+            scanTroops[troopSlot] = troopCount;
+            logger.info('[MapScanner] Troops per target: ' + troopSlot + '=' + troopCount);
+
             var toAdd = candidates.slice(0, available);
             var addedCount = 0;
             var failedCount = 0;
@@ -766,7 +773,7 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
                 var addResp = await new Promise(function(resolve, reject) {
                   chrome.tabs.sendMessage(farmTabId, {
                     type: 'EXECUTE', action: 'addToFarmList', params: {
-                      x: target.x, y: target.y, listIndex: 0
+                      x: target.x, y: target.y, troops: scanTroops, listIndex: 0
                     }
                   }, function(r) {
                     if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
