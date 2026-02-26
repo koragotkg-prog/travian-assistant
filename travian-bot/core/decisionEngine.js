@@ -456,6 +456,13 @@ class DecisionEngine {
     const lastFarmTime = state.lastFarmTime || 0;
     if (Date.now() - lastFarmTime < farmInterval) return null;
 
+    // Skip if raids are already out
+    const outgoing = state.troopMovements?.outgoing || 0;
+    if (outgoing > 0) {
+      TravianLogger.log('DEBUG', `[DecisionEngine] Skipping farm — ${outgoing} raids still out`);
+      return null;
+    }
+
     const minTroops = config.farmConfig.minTroops || 10;
     let totalTroops = 0;
     if (state.troops && typeof state.troops === 'object') {

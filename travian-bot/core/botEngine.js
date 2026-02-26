@@ -40,6 +40,9 @@ class BotEngine {
     // Safety
     this.emergencyStopped = false;
 
+    // Persistent farm cooldown (survives gameState overwrites)
+    this._lastFarmTime = 0;
+
     // Rate limiting
     this.actionsThisHour = 0;
     this.hourResetTime = Date.now();
@@ -80,6 +83,21 @@ class BotEngine {
     this.stats.startTime = Date.now();
     this.actionsThisHour = 0;
     this.hourResetTime = Date.now();
+
+    // Restore persistent state (e.g., lastFarmTime) from chrome.storage
+    try {
+      if (typeof chrome !== 'undefined' && chrome.storage && typeof self.TravianStorage !== 'undefined') {
+        const savedState = this.serverKey
+          ? await self.TravianStorage.getServerState(this.serverKey)
+          : null;
+        if (savedState) {
+          this._lastFarmTime = savedState.lastFarmTime || 0;
+          console.log('[BotEngine] Restored lastFarmTime: ' + this._lastFarmTime);
+        }
+      }
+    } catch (err) {
+      console.warn('[BotEngine] Could not restore saved state:', err);
+    }
 
     // Start the scheduler
     this.scheduler.start();
@@ -232,6 +250,9 @@ class BotEngine {
 
       this.gameState = scanResponse.data;
 
+      // Inject persistent lastFarmTime so DecisionEngine sees it
+      this.gameState.lastFarmTime = this._lastFarmTime || 0;
+
       // 4. Safety checks - captcha / errors
       if (this.gameState.captcha) {
         this.emergencyStop('Captcha detected on page');
@@ -383,8 +404,8 @@ class BotEngine {
               type: 'EXECUTE', action: 'sendAllFarmLists', params: {}
             });
           }
-          // Update last farm time and stats
-          if (this.gameState) this.gameState.lastFarmTime = Date.now();
+          // Update last farm time (persistent, not on gameState which gets overwritten)
+          this._lastFarmTime = Date.now();
           this.stats.farmRaidsSent++;
           break;
 
@@ -719,6 +740,7 @@ class BotEngine {
         taskQueue: this.taskQueue.getAll(),
         actionsThisHour: this.actionsThisHour,
         hourResetTime: this.hourResetTime,
+        lastFarmTime: this._lastFarmTime || 0,
         wasRunning: this.running,
         savedAt: Date.now()
       };
