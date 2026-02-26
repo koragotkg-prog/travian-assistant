@@ -993,7 +993,12 @@
             if (!checkbox) continue;
             totalSlots++;
 
-            // Read raid status
+            // Check if troops are already on the way (ongoing raid)
+            var stateTd = qs('td.state', slot);
+            var ongoingIcon = stateTd ? qs('i', stateTd) : null;
+            var isOngoing = !!ongoingIcon; // any icon in td.state = troops on the way
+
+            // Read raid status (last completed raid result)
             var raidIcon = qs('i.lastRaidState', slot);
             var raidClass = raidIcon ? (raidIcon.className || '') : '';
             var lost = raidClass.indexOf('attack_lost') !== -1;
@@ -1003,8 +1008,11 @@
             var bountyVal = qs('.lastRaidBounty .value', slot);
             var lastLoot = bountyVal ? (parseInt(bountyVal.textContent.replace(/[^\d]/g, ''), 10) || 0) : 0;
 
-            // Decision: skip if losses or loot below threshold
+            // Decision: skip if ongoing, losses, or loot below threshold
             var skip = false;
+            if (isOngoing) {
+              skip = true; // troops already on the way — don't send again
+            }
             if (skipLosses && (lost || withLosses)) {
               skip = true;
             }
