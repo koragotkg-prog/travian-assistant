@@ -195,6 +195,78 @@
       }
       return null;
     },
+
+    // =========================================================================
+    // Building Prerequisites (Travian Legends)
+    // Each entry: array of {gid, level} — ALL must be satisfied to build.
+    // Only buildings with non-trivial prerequisites are listed.
+    // =========================================================================
+    PREREQUISITES: {
+      5:  [{gid: 15, level: 5}, {gid: 1, level: 10}],  // Sawmill: MB 5, Woodcutter 10
+      6:  [{gid: 15, level: 5}, {gid: 2, level: 10}],  // Brickyard: MB 5, Clay Pit 10
+      7:  [{gid: 15, level: 5}, {gid: 3, level: 10}],  // Iron Foundry: MB 5, Iron Mine 10
+      8:  [{gid: 15, level: 5}, {gid: 4, level: 5}],   // Grain Mill: MB 5, Crop Field 5
+      9:  [{gid: 15, level: 5}, {gid: 8, level: 5}, {gid: 4, level: 10}], // Bakery: MB 5, Grain Mill 5, Crop 10
+      17: [{gid: 15, level: 1}, {gid: 10, level: 1}, {gid: 11, level: 1}], // Marketplace: MB 1, WH 1, Gran 1
+      18: [{gid: 15, level: 1}],                        // Embassy: MB 1
+      19: [{gid: 15, level: 3}, {gid: 16, level: 1}],  // Barracks: MB 3, Rally Point 1
+      20: [{gid: 22, level: 5}, {gid: 19, level: 3}],  // Stable: Academy 5, Barracks 3
+      21: [{gid: 15, level: 5}, {gid: 22, level: 10}], // Workshop: MB 5, Academy 10
+      22: [{gid: 15, level: 3}, {gid: 19, level: 3}],  // Academy: MB 3, Barracks 3
+      24: [{gid: 15, level: 10}, {gid: 22, level: 10}],// Town Hall: MB 10, Academy 10
+      25: [{gid: 15, level: 5}],                        // Residence: MB 5
+      26: [{gid: 15, level: 5}, {gid: 18, level: 1}],  // Palace: MB 5, Embassy 1
+      28: [{gid: 15, level: 10}, {gid: 17, level: 20}, {gid: 20, level: 10}], // Trade Office
+      37: [{gid: 15, level: 3}, {gid: 16, level: 1}],  // Hero Mansion: MB 3, Rally Point 1
+    },
+
+    /**
+     * Check if all prerequisites for a building are met.
+     * @param {number} gid - Building GID to check
+     * @param {Array} buildings - Array of {id: gid, level} from gameState.buildings
+     * @param {Array} [resourceFields] - Array of {gid|type, level} from gameState.resourceFields
+     * @returns {{met: boolean, missing: Array}} - missing contains {gid, need, have} entries
+     */
+    checkPrerequisites: function (gid, buildings, resourceFields) {
+      var prereqs = this.PREREQUISITES[gid];
+      if (!prereqs) return { met: true, missing: [] };
+
+      var resTypeToGid = { wood: 1, clay: 2, iron: 3, crop: 4 };
+      var missing = [];
+
+      for (var i = 0; i < prereqs.length; i++) {
+        var req = prereqs[i];
+        var best = 0;
+
+        // Check dorf2 buildings (id field IS the gid)
+        if (buildings) {
+          for (var j = 0; j < buildings.length; j++) {
+            var b = buildings[j];
+            var bGid = b.gid || b.id;
+            if (Number(bGid) === req.gid && (b.level || 0) > best) {
+              best = b.level || 0;
+            }
+          }
+        }
+
+        // Check dorf1 resource fields (gid 1-4)
+        if (req.gid <= 4 && resourceFields) {
+          for (var k = 0; k < resourceFields.length; k++) {
+            var rf = resourceFields[k];
+            var rfGid = rf.gid || resTypeToGid[rf.type] || 0;
+            if (Number(rfGid) === req.gid && (rf.level || 0) > best) {
+              best = rf.level || 0;
+            }
+          }
+        }
+
+        if (best < req.level) {
+          missing.push({ gid: req.gid, need: req.level, have: best });
+        }
+      }
+
+      return { met: missing.length === 0, missing: missing };
+    },
   };
 
   // Export

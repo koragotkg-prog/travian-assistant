@@ -741,6 +741,23 @@ class DecisionEngine {
       // Check per-slot cooldown (this specific slot may have recently failed)
       if (this.isSlotCoolingDown('build_new', slot)) continue;
 
+      // Check building prerequisites (e.g., Stable needs Academy 5 + Barracks 3)
+      var GameData = typeof self !== 'undefined' && self.TravianGameData
+        ? self.TravianGameData : null;
+      if (GameData && typeof GameData.checkPrerequisites === 'function') {
+        var prereqResult = GameData.checkPrerequisites(
+          target.buildGid, buildings, gameState.resourceFields
+        );
+        if (!prereqResult.met) {
+          var missingStr = prereqResult.missing.map(function (m) {
+            return 'GID' + m.gid + ' need L' + m.need + ' (have L' + m.have + ')';
+          }).join(', ');
+          console.log('[DecisionEngine] Skipping build_new GID ' + target.buildGid +
+            ' — prerequisites not met: ' + missingStr);
+          continue;
+        }
+      }
+
       // Check if we already have this task queued
       if (taskQueue.hasTaskOfType('build_new', null) ||
           taskQueue.hasTaskOfType('build_new', gameState.currentVillageId)) continue;
