@@ -728,6 +728,8 @@ class BotEngine {
             type: 'EXECUTE', action: 'navigateTo', params: { page: 'dorf1' }
           });
           await this._randomDelay();
+          // Wait for page reload and new content script injection
+          await this._waitForContentScript(10000);
           // FIX 9: Verify navigation to dorf1
           if (!await this._verifyNavigation('resources')) {
             response = { success: false, reason: 'page_mismatch', message: 'Not on dorf1 after navigation' };
@@ -750,6 +752,8 @@ class BotEngine {
             type: 'EXECUTE', action: 'navigateTo', params: { page: 'dorf2' }
           });
           await this._randomDelay();
+          // Wait for page reload and new content script injection
+          await this._waitForContentScript(10000);
           // FIX 9: Verify navigation to dorf2
           if (!await this._verifyNavigation('village')) {
             response = { success: false, reason: 'page_mismatch', message: 'Not on dorf2 after navigation' };
@@ -772,6 +776,7 @@ class BotEngine {
             type: 'EXECUTE', action: 'navigateTo', params: { page: task.params.buildingType || 'barracks' }
           });
           await this._randomDelay();
+          await this._waitForContentScript(10000);
           response = await this.sendToContentScript({
             type: 'EXECUTE', action: 'trainTroops', params: {
               troopType: task.params.troopType,
@@ -786,6 +791,7 @@ class BotEngine {
             type: 'EXECUTE', action: 'navigateTo', params: { page: 'rallyPoint' }
           });
           await this._randomDelay();
+          await this._waitForContentScript(10000);
           // Step 2: Click the farm list tab (tt=99) - causes page reload
           await this.sendToContentScript({
             type: 'EXECUTE', action: 'clickFarmListTab', params: {}
@@ -846,6 +852,7 @@ class BotEngine {
             type: 'EXECUTE', action: 'navigateTo', params: { page: 'dorf2' }
           });
           await this._randomDelay();
+          await this._waitForContentScript(10000);
           // Step 3: Click the trapper building slot (navigates to /build.php?id=XX)
           await this.sendToContentScript({
             type: 'EXECUTE', action: 'clickBuildingSlot', params: { slotId: trapperSlot }
@@ -865,6 +872,7 @@ class BotEngine {
             type: 'EXECUTE', action: 'navigateTo', params: { page: 'heroAdventures' }
           });
           await this._randomDelay();
+          await this._waitForContentScript(10000);
           response = await this.sendToContentScript({
             type: 'EXECUTE', action: 'sendHeroAdventure', params: {}
           });
@@ -876,6 +884,7 @@ class BotEngine {
             type: 'EXECUTE', action: 'navigateTo', params: { page: 'hero' }
           });
           await this._randomDelay();
+          await this._waitForContentScript(10000);
           response = await this.sendToContentScript({
             type: 'EXECUTE', action: 'useHeroItem', params: { itemIndex: task.params.itemIndex || 0 }
           });
@@ -887,6 +896,8 @@ class BotEngine {
             type: 'EXECUTE', action: 'navigateTo', params: { page: 'dorf2' }
           });
           await this._randomDelay();
+          // Wait for page reload and new content script injection
+          await this._waitForContentScript(10000);
           // FIX 9: Verify navigation to dorf2
           if (!await this._verifyNavigation('village')) {
             response = { success: false, reason: 'page_mismatch', message: 'Not on dorf2 after navigation for build_new' };
@@ -941,6 +952,7 @@ class BotEngine {
             type: 'EXECUTE', action: 'navigateTo', params: { page: 'rallyPoint' }
           });
           await this._randomDelay();
+          await this._waitForContentScript(10000);
           response = await this.sendToContentScript({
             type: 'EXECUTE', action: 'sendAttack', params: {
               target: task.params.target,
@@ -1700,7 +1712,7 @@ class BotEngine {
         return false;
       }
 
-      // Step 3: Scan inventory items
+      // Step 3: Scan inventory items (also detects UI version)
       const scanResult = await this.sendToContentScript({
         type: 'EXECUTE', action: 'scanHeroInventory', params: {}
       });
@@ -1714,6 +1726,8 @@ class BotEngine {
       // or nested under scanResult.data.data (double-wrapped response)
       const rawData = scanResult.data || {};
       const items = rawData.items || (rawData.data && rawData.data.items) || [];
+      const uiVersion = rawData.uiVersion || (rawData.data && rawData.data.uiVersion) || 'v1';
+
       if (items.length === 0) {
         TravianLogger.log('WARN', '[BotEngine] Hero inventory scan returned no items');
         return false;
@@ -1726,67 +1740,131 @@ class BotEngine {
         return false;
       }
 
-      // Map item class to resource type.
-      // In Travian Legends, hero resource items are resource POOLS, not individual crates.
-      // item.count = total resource amount stored (e.g., 21909 wood).
-      // The dialog input asks for RESOURCE AMOUNT to transfer (not number of items).
-      // So we pass the raw deficit directly as the amount.
-      const itemClassToRes = {
-        item145: 'wood', item176: 'wood',
-        item146: 'clay', item177: 'clay',
-        item147: 'iron', item178: 'iron',
-        item148: 'crop', item179: 'crop'
-      };
-
-      let claimed = false;
-      for (const item of usableResources) {
-        // Determine resource type from itemClass
-        let resType = null;
-        const cls = item.itemClass || '';
-        for (const [pattern, type] of Object.entries(itemClassToRes)) {
-          if (cls.indexOf(pattern) !== -1) { resType = type; break; }
-        }
-        if (!resType) continue;
-
-        // Calculate exact amount needed for THIS resource type
-        const needed = deficit[resType] || 0;
-        if (needed <= 0) {
-          TravianLogger.log('DEBUG', `[BotEngine] Skipping ${resType} — not short`);
-          continue; // don't need this resource type
-        }
-
-        // Cap at available amount (don't try to transfer more than hero has)
-        const available = parseInt(item.count) || 0;
-        const transferAmount = Math.min(Math.ceil(needed), available);
-        if (transferAmount <= 0) {
-          TravianLogger.log('DEBUG', `[BotEngine] Skipping ${resType} — hero has none available`);
-          continue;
-        }
-
-        TravianLogger.log('INFO', `[BotEngine] Claiming ${transferAmount} ${resType} from hero (deficit=${Math.ceil(needed)}, heroHas=${available})`);
-
-        const useResult = await this.sendToContentScript({
-          type: 'EXECUTE', action: 'useHeroItem',
-          params: { itemIndex: item.index, amount: transferAmount }
-        });
-
-        if (useResult && useResult.success) {
-          TravianLogger.log('INFO', `[BotEngine] ${resType} claimed (${transferAmount} resources)`);
-          claimed = true;
-        } else {
-          TravianLogger.log('WARN', `[BotEngine] Failed to claim ${resType} from hero`);
-        }
-
-        await this._randomDelay();
+      // ── Route: V2 bulk transfer (post-Changelog-367) vs V1 one-at-a-time ──
+      if (uiVersion === 'v2') {
+        return await this._claimHeroResourcesV2(deficit, usableResources);
       }
+      return await this._claimHeroResourcesV1(deficit, usableResources);
 
-      if (claimed) {
-        TravianLogger.log('INFO', '[BotEngine] Hero resource(s) claimed successfully');
-      }
-      return claimed;
     } catch (err) {
       TravianLogger.log('WARN', '[BotEngine] Hero resource claim failed: ' + err.message);
       return false;
+    }
+  }
+
+  /**
+   * V1 hero resource claim: one resource at a time via per-item dialog.
+   * (Pre-Changelog-367 legacy path)
+   */
+  async _claimHeroResourcesV1(deficit, usableResources) {
+    const itemClassToRes = {
+      item145: 'wood', item176: 'wood',
+      item146: 'clay', item177: 'clay',
+      item147: 'iron', item178: 'iron',
+      item148: 'crop', item179: 'crop'
+    };
+
+    let claimed = false;
+    for (const item of usableResources) {
+      // Determine resource type from itemClass
+      let resType = null;
+      const cls = item.itemClass || '';
+      for (const [pattern, type] of Object.entries(itemClassToRes)) {
+        if (cls.indexOf(pattern) !== -1) { resType = type; break; }
+      }
+      if (!resType) continue;
+
+      // Calculate exact amount needed for THIS resource type
+      const needed = deficit[resType] || 0;
+      if (needed <= 0) {
+        TravianLogger.log('DEBUG', `[BotEngine] Skipping ${resType} — not short`);
+        continue;
+      }
+
+      // Cap at available amount (don't try to transfer more than hero has)
+      const available = parseInt(item.count) || 0;
+      const transferAmount = Math.min(Math.ceil(needed), available);
+      if (transferAmount <= 0) {
+        TravianLogger.log('DEBUG', `[BotEngine] Skipping ${resType} — hero has none available`);
+        continue;
+      }
+
+      TravianLogger.log('INFO', `[BotEngine] V1 claiming ${transferAmount} ${resType} from hero (deficit=${Math.ceil(needed)}, heroHas=${available})`);
+
+      const useResult = await this.sendToContentScript({
+        type: 'EXECUTE', action: 'useHeroItem',
+        params: { itemIndex: item.index, amount: transferAmount }
+      });
+
+      if (useResult && useResult.success) {
+        TravianLogger.log('INFO', `[BotEngine] ${resType} claimed (${transferAmount} resources)`);
+        claimed = true;
+      } else {
+        TravianLogger.log('WARN', `[BotEngine] Failed to claim ${resType} from hero`);
+      }
+
+      await this._randomDelay();
+    }
+
+    if (claimed) {
+      TravianLogger.log('INFO', '[BotEngine] V1 hero resource(s) claimed successfully');
+    }
+    return claimed;
+  }
+
+  /**
+   * V2 hero resource claim: bulk transfer all resources in one action.
+   * (Post-Changelog-367 — transfers all 4 resource types at once)
+   */
+  async _claimHeroResourcesV2(deficit, usableResources) {
+    const itemClassToRes = {
+      item145: 'wood', item176: 'wood',
+      item146: 'clay', item177: 'clay',
+      item147: 'iron', item178: 'iron',
+      item148: 'crop', item179: 'crop'
+    };
+
+    // Build amounts map: for each resource type, min(deficit, available)
+    const amounts = { wood: 0, clay: 0, iron: 0, crop: 0 };
+    for (const item of usableResources) {
+      let resType = null;
+      const cls = item.itemClass || '';
+      for (const [pattern, type] of Object.entries(itemClassToRes)) {
+        if (cls.indexOf(pattern) !== -1) { resType = type; break; }
+      }
+      if (!resType) continue;
+
+      const needed = deficit[resType] || 0;
+      if (needed <= 0) continue;
+
+      const available = parseInt(item.count) || 0;
+      const transferAmount = Math.min(Math.ceil(needed), available);
+      if (transferAmount <= 0) continue;
+
+      // Accumulate (in case multiple items map to same resource type)
+      amounts[resType] = Math.max(amounts[resType], transferAmount);
+    }
+
+    const totalTransfer = amounts.wood + amounts.clay + amounts.iron + amounts.crop;
+    if (totalTransfer <= 0) {
+      TravianLogger.log('INFO', '[BotEngine] V2: no resources to transfer');
+      return false;
+    }
+
+    TravianLogger.log('INFO', `[BotEngine] V2 bulk transfer: ${JSON.stringify(amounts)}`);
+
+    const bulkResult = await this.sendToContentScript({
+      type: 'EXECUTE', action: 'useHeroItemBulk',
+      params: { amounts: amounts }
+    });
+
+    if (bulkResult && bulkResult.success) {
+      TravianLogger.log('INFO', '[BotEngine] V2 bulk hero resource claim successful');
+      return true;
+    } else {
+      // Fallback: if V2 fails (e.g. selectors not configured), try V1
+      TravianLogger.log('WARN', '[BotEngine] V2 bulk transfer failed, falling back to V1');
+      return await this._claimHeroResourcesV1(deficit, usableResources);
     }
   }
 
@@ -1868,7 +1946,7 @@ class BotEngine {
         return false;
       }
 
-      // Step 3: Scan inventory
+      // Step 3: Scan inventory (also detects UI version)
       const scanResult = await this.sendToContentScript({
         type: 'EXECUTE', action: 'scanHeroInventory', params: {}
       });
@@ -1878,56 +1956,19 @@ class BotEngine {
       }
       const rawData = scanResult.data || {};
       const items = rawData.items || (rawData.data && rawData.data.items) || [];
+      const uiVersion = rawData.uiVersion || (rawData.data && rawData.data.uiVersion) || 'v1';
       const usableResources = items.filter(item => item.isResource && item.hasUseButton);
       if (usableResources.length === 0) {
         TravianLogger.log('INFO', '[BotEngine] No hero resource items for proactive claim');
         return false;
       }
 
-      // Step 4: Claim resources for each type with deficit
-      const itemClassToRes = {
-        item145: 'wood', item176: 'wood',
-        item146: 'clay', item177: 'clay',
-        item147: 'iron', item178: 'iron',
-        item148: 'crop', item179: 'crop'
-      };
-
-      let claimed = false;
-      for (const item of usableResources) {
-        let resType = null;
-        const cls = item.itemClass || '';
-        for (const [pattern, type] of Object.entries(itemClassToRes)) {
-          if (cls.indexOf(pattern) !== -1) { resType = type; break; }
-        }
-        if (!resType) continue;
-
-        const needed = deficit[resType] || 0;
-        if (needed <= 0) continue;
-
-        const available = parseInt(item.count) || 0;
-        const transferAmount = Math.min(Math.ceil(needed), available);
-        if (transferAmount <= 0) continue;
-
-        TravianLogger.log('INFO', `[BotEngine] Proactive claim: ${transferAmount} ${resType} (deficit=${needed}, heroHas=${available})`);
-
-        const useResult = await this.sendToContentScript({
-          type: 'EXECUTE', action: 'useHeroItem',
-          params: { itemIndex: item.index, amount: transferAmount }
-        });
-
-        if (useResult && useResult.success) {
-          TravianLogger.log('INFO', `[BotEngine] Proactive claim: ${resType} transferred (${transferAmount})`);
-          claimed = true;
-        } else {
-          TravianLogger.log('WARN', `[BotEngine] Proactive claim: ${resType} failed`);
-        }
-        await this._randomDelay();
+      // Step 4: Route to V1 or V2 claim (shared with _tryClaimHeroResources)
+      TravianLogger.log('INFO', `[BotEngine] Proactive claim using ${uiVersion} path`);
+      if (uiVersion === 'v2') {
+        return await this._claimHeroResourcesV2(deficit, usableResources);
       }
-
-      if (claimed) {
-        TravianLogger.log('INFO', '[BotEngine] Proactive hero resource claim completed');
-      }
-      return claimed;
+      return await this._claimHeroResourcesV1(deficit, usableResources);
     } catch (err) {
       TravianLogger.log('WARN', '[BotEngine] Proactive hero claim error: ' + err.message);
       return false;

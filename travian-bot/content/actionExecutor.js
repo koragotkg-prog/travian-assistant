@@ -1488,9 +1488,129 @@
     // Hero Inventory - Claim resource items
     // -----------------------------------------------------------------------
 
+    // ── Hero UI Selectors (centralised for easy update after Travian patches) ──
+    // V1 = pre-Changelog-367 (one-at-a-time dialog per resource)
+    // V2 = post-Changelog-367 (bulk transfer: all 4 resources at once)
+    // After inspecting the new DOM via MCP, update the V2 block below.
+    _heroSelectors: {
+      // ── V1 selectors (confirmed working pre-367) ──────────────────────
+      v1: {
+        // Item containers on /hero/inventory
+        itemList:   '.heroItems .heroItem, .heroInventory .heroItem, #itemsToSale .heroItem, .inventoryContent .item',
+        // Child element whose class contains the item ID (e.g. "item item145")
+        itemChild:  '[class*="item item"]',
+        // Resource item IDs regex (small: 145-148, large: 176-179)
+        resourceIdPattern: /item14[5678]|item17[6789]/,
+        // Count badge inside each item
+        countChild: '.count',
+        // Dialog that opens when clicking a resource item
+        dialog:     '.heroConsumablesPopup, .dialogContent, .dialog.plain',
+        // Input field inside the dialog to set transfer amount
+        dialogInput: [
+          '.heroConsumablesPopup input[type="text"]',
+          '.dialog input[type="text"]',
+          '.dialogContainer input[type="number"]',
+          '.dialogContainer input',
+          '.heroConsumablesPopup input'
+        ],
+        // Green confirm button in dialog
+        dialogConfirm: [
+          '.heroConsumablesPopup button.green',
+          '.dialog button.green',
+          '.dialogContainer button.green',
+          '.dialogButtonOk',
+          '#ok',
+          'button.green[type="submit"]',
+          'button.green[type="button"]'
+        ],
+        // Grey cancel button in dialog
+        dialogCancel: '.heroConsumablesPopup button.grey, .dialog button.grey, button.textButtonV2.grey'
+      },
+
+      // ── V2 selectors (post-Changelog-367 bulk transfer UI) ────────────
+      // TODO: Fill these in after MCP DOM inspection of the new hero inventory.
+      // The new UI allows transferring all 4 resources at once with:
+      //   - individual amount inputs per resource (or drag-to-select)
+      //   - a "transfer max" button
+      //   - a single confirm button for all resources
+      v2: {
+        // Container for the new bulk transfer panel (inspect DOM to find)
+        bulkPanel:       null, // e.g. '.heroResourceTransfer', '.resourceTransferPanel'
+        // Individual resource input fields inside the bulk panel
+        // Keys: wood/clay/iron/crop, values: CSS selectors for input elements
+        resourceInputs:  {
+          wood: null, // e.g. '.resourceTransfer input[data-resource="wood"]'
+          clay: null,
+          iron: null,
+          crop: null
+        },
+        // "Transfer max" / "Transfer all" button (per-resource or global)
+        maxButton:       null, // e.g. '.transferMax', 'button.maxTransfer'
+        // Green confirm/submit button for the bulk transfer
+        confirmButton:   null, // e.g. '.resourceTransfer button.green', 'button.transferConfirm'
+        // Cancel / close button
+        cancelButton:    null, // e.g. '.resourceTransfer button.grey'
+        // Item list (may be same as V1 or changed)
+        itemList:        null, // e.g. same as v1.itemList or new selector
+        // Resource count display (may have moved)
+        countChild:      null, // e.g. same as v1.countChild or new selector
+        // Item child class for resource type detection
+        itemChild:       null,
+        resourceIdPattern: null // may be same regex or new pattern
+      }
+    },
+
+    /**
+     * Detect which hero inventory UI version is active.
+     * Called on /hero/inventory page. Returns 'v2' if new bulk transfer UI
+     * is detected, otherwise 'v1' (legacy one-at-a-time dialog).
+     *
+     * After MCP inspection, update the v2 detection markers below.
+     *
+     * @returns {string} 'v1' or 'v2'
+     */
+    detectHeroUIVersion: function () {
+      var sel = this._heroSelectors;
+
+      // V2 detection: check for the new bulk transfer panel
+      // TODO: Update these markers after MCP DOM inspection
+      if (sel.v2.bulkPanel) {
+        var bulkEl = qs(sel.v2.bulkPanel);
+        if (bulkEl) {
+          Logger.log('detectHeroUIVersion: V2 (bulk transfer) detected');
+          return 'v2';
+        }
+      }
+
+      // Heuristic fallback: look for common new-UI markers
+      // Changelog says: "transfer all four resources at once", "drag with mouse to select amounts"
+      // These hints suggest a multi-input panel (not a per-item popup dialog)
+      var heuristicSelectors = [
+        '.resourceTransferPanel',
+        '.heroResourceTransfer',
+        '.bulkTransfer',
+        '.transferAll',
+        '.resourceTransfer',
+        '[class*="resourceTransfer"]',
+        '[class*="bulkTransfer"]',
+        '.heroConsumablesV2'
+      ];
+      for (var i = 0; i < heuristicSelectors.length; i++) {
+        if (qs(heuristicSelectors[i])) {
+          Logger.log('detectHeroUIVersion: V2 detected via heuristic (' + heuristicSelectors[i] + ')');
+          return 'v2';
+        }
+      }
+
+      // Default: V1 (legacy)
+      Logger.log('detectHeroUIVersion: V1 (legacy) — no bulk transfer markers found');
+      return 'v1';
+    },
+
     /**
      * Use a hero inventory item (resource bucket, etc.) by index.
      * Must already be on /hero/inventory page.
+     * Uses V1 (legacy one-at-a-time dialog) selectors.
      *
      * @param {number} itemIndex - Index of the item to use (0-based among all .heroItem elements)
      * @param {number} [amount] - Optional specific amount to transfer. If omitted, uses Travian default (fill warehouse).
@@ -1501,10 +1621,12 @@
         Logger.log('useHeroItem: claiming item at index', itemIndex, 'amount:', amount || 'default');
         await humanDelay(300, 600);
 
+        var sel = this._heroSelectors.v1;
+
         // In Travian Legends, hero items don't have "use" buttons.
         // You click the .heroItem element directly → a dialog opens → click green confirm button.
         // IMPORTANT: Must use same selectors as scanHeroInventory so indices match!
-        var heroItems = qsa('.heroItems .heroItem, .heroInventory .heroItem, #itemsToSale .heroItem, .inventoryContent .item');
+        var heroItems = qsa(sel.itemList);
 
         if (!heroItems || heroItems.length === 0) {
           Logger.warn('useHeroItem: no hero items found on page');
@@ -1522,7 +1644,7 @@
         Logger.log('useHeroItem: clicked item at index', idx);
 
         // Wait for the consumable dialog to appear
-        var dialogPopup = await awaitSelector('.heroConsumablesPopup, .dialogContent, .dialog.plain', 3000);
+        var dialogPopup = await awaitSelector(sel.dialog, 3000);
         if (!dialogPopup) {
           Logger.warn('useHeroItem: dialog did not appear after clicking item');
           return { success: false, reason: 'no_items', message: 'Item dialog did not open' };
@@ -1534,41 +1656,26 @@
         // SAFETY: If no amount specified, CANCEL dialog to avoid draining hero resources.
         if (!amount || amount <= 0) {
           Logger.warn('useHeroItem: no specific amount — cancelling dialog to avoid waste');
-          var cancelBtn2 = qs('.heroConsumablesPopup button.grey, .dialog button.grey, button.textButtonV2.grey');
+          var cancelBtn2 = qs(sel.dialogCancel);
           if (cancelBtn2) cancelBtn2.click();
           return { success: false, reason: 'no_amount', message: 'No transfer amount specified, cancelled to avoid waste' };
         }
         var useAmount = Math.ceil(amount);
-        var inputSelectors = [
-          '.heroConsumablesPopup input[type="text"]',
-          '.dialog input[type="text"]',
-          '.dialogContainer input[type="number"]',
-          '.dialogContainer input',
-          '.heroConsumablesPopup input'
-        ];
-        var filled = await fillInput(inputSelectors, useAmount);
+        var filled = await fillInput(sel.dialogInput, useAmount);
         if (filled) {
           Logger.log('useHeroItem: set transfer amount to', useAmount);
         } else {
           // CRITICAL: If we can't set the amount, the dialog default may transfer everything!
           // Cancel instead of proceeding with unknown amount.
           Logger.warn('useHeroItem: could not set amount in input — cancelling to avoid waste');
-          var cancelBtn3 = qs('.heroConsumablesPopup button.grey, .dialog button.grey, button.textButtonV2.grey');
+          var cancelBtn3 = qs(sel.dialogCancel);
           if (cancelBtn3) cancelBtn3.click();
           return { success: false, reason: 'button_not_found', message: 'Could not set transfer amount' };
         }
         await humanDelay(200, 400);
 
         // Click the green confirm/transfer button in the dialog
-        var confirmBtn = trySelectors([
-          '.heroConsumablesPopup button.green',
-          '.dialog button.green',
-          '.dialogContainer button.green',
-          '.dialogButtonOk',
-          '#ok',
-          'button.green[type="submit"]',
-          'button.green[type="button"]'
-        ]);
+        var confirmBtn = trySelectors(sel.dialogConfirm);
         if (confirmBtn) {
           await simulateHumanClick(confirmBtn);
           Logger.log('useHeroItem: confirmed transfer');
@@ -1576,7 +1683,7 @@
           return { success: true };
         } else {
           // Dialog opened but no green button — close it
-          var cancelBtn = qs('.heroConsumablesPopup button.grey, .dialog button.grey');
+          var cancelBtn = qs(sel.dialogCancel);
           if (cancelBtn) cancelBtn.click();
           Logger.warn('useHeroItem: no confirm button found in dialog');
           return { success: false, reason: 'button_not_found', message: 'No confirm button in item dialog' };
@@ -1588,8 +1695,109 @@
     },
 
     /**
+     * [V2] Bulk-transfer hero resources using the new Changelog-367 UI.
+     * Transfers multiple resource types in a single operation instead of
+     * opening per-item dialogs one at a time.
+     *
+     * Must already be on /hero/inventory page with V2 UI active.
+     *
+     * @param {object} amounts - { wood: number, clay: number, iron: number, crop: number }
+     *   Each value = amount to transfer (0 or omitted = skip that resource).
+     * @returns {Promise<object>} { success, transferred: {wood,clay,iron,crop}, reason?, message? }
+     */
+    useHeroItemBulk: async function (amounts) {
+      try {
+        var sel = this._heroSelectors.v2;
+        Logger.log('useHeroItemBulk: transferring', JSON.stringify(amounts));
+        await humanDelay(300, 600);
+
+        // ── Guard: V2 selectors must be configured ──
+        if (!sel.bulkPanel) {
+          Logger.warn('useHeroItemBulk: V2 selectors not configured — cannot proceed');
+          return { success: false, reason: 'button_not_found', message: 'V2 hero selectors not configured. Run MCP inspection and update _heroSelectors.v2.' };
+        }
+
+        // ── Step 1: Verify bulk panel is visible ──
+        var panel = await awaitSelector(sel.bulkPanel, 3000);
+        if (!panel) {
+          Logger.warn('useHeroItemBulk: bulk transfer panel not found');
+          return { success: false, reason: 'button_not_found', message: 'Bulk transfer panel not found' };
+        }
+
+        // ── Step 2: Fill in amounts for each resource type ──
+        var transferred = { wood: 0, clay: 0, iron: 0, crop: 0 };
+        var resTypes = ['wood', 'clay', 'iron', 'crop'];
+        for (var i = 0; i < resTypes.length; i++) {
+          var resType = resTypes[i];
+          var amt = amounts[resType] || 0;
+          if (amt <= 0) continue;
+
+          var inputSel = sel.resourceInputs[resType];
+          if (!inputSel) {
+            Logger.warn('useHeroItemBulk: no input selector for ' + resType);
+            continue;
+          }
+
+          var inputEl = qs(inputSel, panel);
+          if (!inputEl) {
+            // Try outside panel scope
+            inputEl = qs(inputSel);
+          }
+          if (!inputEl) {
+            Logger.warn('useHeroItemBulk: input element not found for ' + resType);
+            continue;
+          }
+
+          // Clear existing value and type new amount
+          var useAmount = Math.ceil(amt);
+          // Use nativeSetter for React-controlled inputs
+          var nativeSetter = Object.getOwnPropertyDescriptor(
+            window.HTMLInputElement.prototype, 'value'
+          );
+          if (nativeSetter && nativeSetter.set) {
+            nativeSetter.set.call(inputEl, String(useAmount));
+          } else {
+            inputEl.value = String(useAmount);
+          }
+          inputEl.dispatchEvent(new Event('input', { bubbles: true }));
+          inputEl.dispatchEvent(new Event('change', { bubbles: true }));
+          transferred[resType] = useAmount;
+          Logger.log('useHeroItemBulk: set ' + resType + ' = ' + useAmount);
+          await humanDelay(100, 250);
+        }
+
+        // ── Step 3: Click confirm button ──
+        var hasAny = transferred.wood + transferred.clay + transferred.iron + transferred.crop > 0;
+        if (!hasAny) {
+          Logger.warn('useHeroItemBulk: no amounts to transfer');
+          return { success: false, reason: 'no_amount', message: 'All transfer amounts are zero' };
+        }
+        await humanDelay(200, 400);
+
+        var confirmBtn = qs(sel.confirmButton, panel) || qs(sel.confirmButton);
+        if (!confirmBtn) {
+          Logger.warn('useHeroItemBulk: confirm button not found');
+          // Try to cancel to avoid stuck state
+          var cancelBtn = qs(sel.cancelButton, panel) || qs(sel.cancelButton);
+          if (cancelBtn) cancelBtn.click();
+          return { success: false, reason: 'button_not_found', message: 'No confirm button in bulk transfer panel' };
+        }
+
+        await simulateHumanClick(confirmBtn);
+        Logger.log('useHeroItemBulk: confirmed bulk transfer');
+        await humanDelay(500, 1000);
+
+        return { success: true, transferred: transferred };
+      } catch (e) {
+        Logger.error('useHeroItemBulk error:', e);
+        return { success: false, reason: 'button_not_found', message: e.message };
+      }
+    },
+
+    /**
      * Scan hero inventory and return items info.
-     * Must be on hero page (/hero).
+     * Must be on hero page (/hero/inventory).
+     * Auto-detects V1 vs V2 UI and includes uiVersion in result.
      *
      * @returns {Promise<object>}
      */
@@ -1598,9 +1806,16 @@
         Logger.log('scanHeroInventory');
         await humanDelay(200, 400);
 
+        // Detect UI version
+        var uiVersion = this.detectHeroUIVersion();
+        var sel = (uiVersion === 'v2' && this._heroSelectors.v2.itemList)
+          ? this._heroSelectors.v2
+          : this._heroSelectors.v1;
+        var resPattern = sel.resourceIdPattern || this._heroSelectors.v1.resourceIdPattern;
+
         var items = [];
         // Hero inventory items - look for item containers
-        var itemEls = qsa('.heroItems .heroItem, .heroInventory .heroItem, #itemsToSale .heroItem, .inventoryContent .item');
+        var itemEls = qsa(sel.itemList || this._heroSelectors.v1.itemList);
 
         if (itemEls && itemEls.length > 0) {
           for (var i = 0; i < itemEls.length; i++) {
@@ -1613,9 +1828,10 @@
             // Detect resource items by child .item class (Travian item IDs):
             // Small crates: item145=wood, item146=clay, item147=iron, item148=crop
             // Large crates: item176=wood, item177=clay, item178=iron, item179=crop
-            var itemChild = qs('[class*="item item"]', el);
+            var childSel = sel.itemChild || this._heroSelectors.v1.itemChild;
+            var itemChild = qs(childSel, el);
             var itemChildCls = itemChild ? (itemChild.className || '') : '';
-            var isResourceByItemId = /item14[5678]|item17[6789]/.test(itemChildCls);
+            var isResourceByItemId = resPattern.test(itemChildCls);
 
             // Fallback: also check title/class for older Travian versions
             var isResourceByText = cls.indexOf('resource') !== -1 ||
@@ -1631,7 +1847,8 @@
             var isConsumable = tier === 'consumable' || cls.indexOf('consumable') !== -1;
 
             // Read count from .count child element
-            var countEl = qs('.count', el);
+            var countSel = sel.countChild || this._heroSelectors.v1.countChild;
+            var countEl = qs(countSel, el);
             var count = countEl ? parseInt(countEl.textContent.trim(), 10) || 0 : 0;
 
             items.push({
@@ -1646,11 +1863,11 @@
           }
         }
 
-        Logger.log('scanHeroInventory: found', items.length, 'items, resources:', items.filter(function(x){return x.isResource;}).length);
-        return { success: true, items: items };
+        Logger.log('scanHeroInventory: found', items.length, 'items, resources:', items.filter(function(x){return x.isResource;}).length, 'uiVersion:', uiVersion);
+        return { success: true, items: items, uiVersion: uiVersion };
       } catch (e) {
         Logger.error('scanHeroInventory error:', e);
-        return { success: false, items: [] };
+        return { success: false, items: [], uiVersion: 'v1' };
       }
     },
 
@@ -2087,6 +2304,14 @@
 
             case 'useHeroItem':
               actionResult = await TravianExecutor.useHeroItem(params.itemIndex, params.amount);
+              break;
+
+            case 'useHeroItemBulk':
+              actionResult = await TravianExecutor.useHeroItemBulk(params.amounts || {});
+              break;
+
+            case 'detectHeroUIVersion':
+              actionResult = { success: true, uiVersion: TravianExecutor.detectHeroUIVersion() };
               break;
 
             case 'scanHeroInventory':
