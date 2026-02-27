@@ -51,6 +51,8 @@ const dom = {
   // Upgrade targets
   btnScanBuildings: document.getElementById('btnScanBuildings'),
   upgradeList: document.getElementById('upgradeList'),
+  villageScope: document.getElementById('villageScope'),
+  villageScopeName: document.getElementById('villageScopeName'),
   targetSummary: document.getElementById('targetSummary'),
   targetCount: document.getElementById('targetCount'),
   targetWarning: document.getElementById('targetWarning'),
@@ -198,10 +200,101 @@ const GID_NAMES = {
   43: 'Command Center', 44: 'Waterworks', 45: 'Hospital'
 };
 
+// Building prerequisites: gid → [{gid, level}] (from strategy/gameData.js)
+const BUILDING_PREREQS = {
+  5:  [{gid: 15, level: 5}, {gid: 1, level: 10}],  // Sawmill
+  6:  [{gid: 15, level: 5}, {gid: 2, level: 10}],  // Brickyard
+  7:  [{gid: 15, level: 5}, {gid: 3, level: 10}],  // Iron Foundry
+  8:  [{gid: 15, level: 5}, {gid: 4, level: 5}],   // Grain Mill
+  9:  [{gid: 15, level: 5}, {gid: 8, level: 5}, {gid: 4, level: 10}], // Bakery
+  17: [{gid: 15, level: 1}, {gid: 10, level: 1}, {gid: 11, level: 1}], // Marketplace
+  18: [{gid: 15, level: 1}],                        // Embassy
+  19: [{gid: 15, level: 3}, {gid: 16, level: 1}],  // Barracks
+  20: [{gid: 22, level: 5}, {gid: 19, level: 3}],  // Stable
+  21: [{gid: 15, level: 5}, {gid: 22, level: 10}], // Workshop
+  22: [{gid: 15, level: 3}, {gid: 19, level: 3}],  // Academy
+  24: [{gid: 15, level: 10}, {gid: 22, level: 10}],// Town Hall
+  25: [{gid: 15, level: 5}],                        // Residence
+  26: [{gid: 15, level: 5}, {gid: 18, level: 1}],  // Palace
+  28: [{gid: 15, level: 10}, {gid: 17, level: 20}, {gid: 20, level: 10}], // Trade Office
+  37: [{gid: 15, level: 3}, {gid: 16, level: 1}],  // Hero Mansion
+};
+
+// Resource type colors for grouped display
+const RES_TYPE_COLORS = {
+  1: '#8bc34a', // Wood
+  2: '#ff7043', // Clay
+  3: '#78909c', // Iron
+  4: '#ffd54f', // Crop
+};
+const RES_TYPE_NAMES = { 1: 'WOOD', 2: 'CLAY', 3: 'IRON', 4: 'CROP' };
+
 // Scanned items and saved upgrade targets
 let scannedResources = [];
 let scannedBuildings = [];
 let upgradeTargets = {};  // { "slot_number": { enabled: true, targetLevel: 10 } }
+
+// Per-village target cache
+let currentVillageId = null;
+let villageTargetCache = {};
+// Shape: { "villageId": { upgradeTargets: {...}, scannedRes: [...], scannedBld: [...] } }
+
+/**
+ * Save current village's targets into the cache.
+ */
+function saveCurrentVillageTargets() {
+  if (!currentVillageId) return;
+  villageTargetCache[currentVillageId] = {
+    upgradeTargets: JSON.parse(JSON.stringify(upgradeTargets)),
+    scannedRes: JSON.parse(JSON.stringify(scannedResources)),
+    scannedBld: JSON.parse(JSON.stringify(scannedBuildings)),
+  };
+}
+
+/**
+ * Load a village's targets from cache into working variables.
+ */
+function loadVillageTargets(villageId) {
+  currentVillageId = villageId;
+  var cached = villageTargetCache[villageId];
+  if (cached) {
+    upgradeTargets = JSON.parse(JSON.stringify(cached.upgradeTargets || {}));
+    scannedResources = cached.scannedRes || [];
+    scannedBuildings = cached.scannedBld || [];
+  } else {
+    upgradeTargets = {};
+    scannedResources = [];
+    scannedBuildings = [];
+  }
+}
+
+/**
+ * One-time migration: move global upgradeTargets into per-village cache.
+ */
+function migrateGlobalTargets(config) {
+  if (config.villageTargets) return; // already migrated
+  if (!config.upgradeTargets) return; // nothing to migrate
+  var villageId = config.activeVillage || 'default';
+  villageTargetCache[villageId] = {
+    upgradeTargets: JSON.parse(JSON.stringify(config.upgradeTargets)),
+    scannedRes: config.scannedItems ? (config.scannedItems.resources || []) : [],
+    scannedBld: config.scannedItems ? (config.scannedItems.buildings || []) : [],
+  };
+}
+
+/**
+ * Update village scope label in the UI.
+ */
+function updateVillageScope() {
+  if (!dom.villageScopeName || !dom.villageScope) return;
+  if (!currentVillageId) {
+    dom.villageScope.style.display = 'none';
+    return;
+  }
+  dom.villageScope.style.display = '';
+  var opt = dom.villageSelect.querySelector('option[value="' + currentVillageId + '"]');
+  dom.villageScopeName.textContent = opt ? opt.textContent : currentVillageId;
+}
 
 // ============================================================
 // Communication with Background Service Worker
@@ -850,23 +943,19 @@ function applyScannedState(gameState) {
  * Render the upgrade list UI from scanned data + saved targets.
  */
 function renderUpgradeList() {
-  dom.upgradeList.innerHTML = '';
+  dom.upgradeList.textContent = '';
 
   if (scannedResources.length === 0 && scannedBuildings.length === 0) {
-    dom.upgradeList.innerHTML = '<div class="upgrade-empty">Click "Scan" while on a Travian page to load buildings.</div>';
+    var empty = document.createElement('div');
+    empty.className = 'upgrade-empty';
+    empty.textContent = 'Click "Scan" while on a Travian page to load buildings.';
+    dom.upgradeList.appendChild(empty);
     return;
   }
 
-  // Resource fields
+  // Resource fields grouped by type
   if (scannedResources.length > 0) {
-    var resTitle = document.createElement('div');
-    resTitle.className = 'upgrade-group-title';
-    resTitle.textContent = 'Resource Fields';
-    dom.upgradeList.appendChild(resTitle);
-
-    scannedResources.forEach(function (item) {
-      dom.upgradeList.appendChild(createUpgradeRow(item));
-    });
+    renderResourceFieldGroups();
   }
 
   // Buildings (existing, non-empty)
@@ -874,31 +963,235 @@ function renderUpgradeList() {
   var emptySlots = scannedBuildings.filter(function (b) { return b.empty; });
 
   if (existingBuildings.length > 0) {
-    var bldTitle = document.createElement('div');
-    bldTitle.className = 'upgrade-group-title';
-    bldTitle.textContent = 'Buildings';
-    dom.upgradeList.appendChild(bldTitle);
-
-    // Sort by level ascending
-    var sorted = existingBuildings.slice().sort(function (a, b) { return a.level - b.level; });
-    sorted.forEach(function (item) {
-      dom.upgradeList.appendChild(createUpgradeRow(item));
-    });
+    renderBuildingsList(existingBuildings);
   }
 
-  // Empty building slots — user can choose what to build
   if (emptySlots.length > 0) {
-    var emptyTitle = document.createElement('div');
-    emptyTitle.className = 'upgrade-group-title';
-    emptyTitle.textContent = 'Empty Slots (' + emptySlots.length + ' available)';
-    dom.upgradeList.appendChild(emptyTitle);
-
-    emptySlots.forEach(function (item) {
-      dom.upgradeList.appendChild(createEmptySlotRow(item));
-    });
+    renderEmptySlotsList(emptySlots);
   }
 
   updateTargetCount();
+}
+
+/**
+ * Group scanned resources by GID (1=Wood, 2=Clay, 3=Iron, 4=Crop)
+ * and render each group with a collapsible header.
+ */
+function renderResourceFieldGroups() {
+  var groups = {};
+  scannedResources.forEach(function (item) {
+    var gid = item.gid || 0;
+    if (!groups[gid]) groups[gid] = [];
+    groups[gid].push(item);
+  });
+
+  [1, 2, 3, 4].forEach(function (gid) {
+    var fields = groups[gid];
+    if (!fields || fields.length === 0) return;
+
+    var header = createResourceTypeHeader(gid, fields);
+    dom.upgradeList.appendChild(header);
+
+    var container = document.createElement('div');
+    container.className = 'res-type-fields collapsed';
+    container.id = 'resGroup_' + gid;
+    fields.forEach(function (item) {
+      container.appendChild(createUpgradeRow(item));
+    });
+    dom.upgradeList.appendChild(container);
+  });
+}
+
+/**
+ * Create resource type group header.
+ * [check-all] [dot] WOOD (4) avg Lv.7 -> [batch-input] [chevron]
+ */
+function createResourceTypeHeader(gid, fields) {
+  var header = document.createElement('div');
+  header.className = 'res-type-header';
+
+  // Check-all checkbox
+  var checkAll = document.createElement('input');
+  checkAll.type = 'checkbox';
+  checkAll.title = 'Toggle all ' + (RES_TYPE_NAMES[gid] || 'Unknown') + ' fields';
+  checkAll.addEventListener('change', function () {
+    var container = document.getElementById('resGroup_' + gid);
+    if (!container) return;
+    var cbs = container.querySelectorAll('input[type="checkbox"]');
+    cbs.forEach(function (cb) {
+      cb.checked = checkAll.checked;
+      cb.dispatchEvent(new Event('change'));
+    });
+  });
+
+  // Color dot
+  var dot = document.createElement('span');
+  dot.className = 'res-type-dot';
+  dot.style.backgroundColor = RES_TYPE_COLORS[gid] || '#999';
+
+  // Type label with count
+  var label = document.createElement('span');
+  label.className = 'res-type-label';
+  label.textContent = (RES_TYPE_NAMES[gid] || 'Unknown') + ' (' + fields.length + ')';
+
+  // Average level
+  var totalLevel = 0;
+  fields.forEach(function (f) { totalLevel += (f.level || 0); });
+  var avgLevel = Math.round(totalLevel / fields.length);
+  var avgSpan = document.createElement('span');
+  avgSpan.className = 'res-type-avg';
+  avgSpan.textContent = 'avg Lv.' + avgLevel;
+
+  // Arrow
+  var arrow = document.createElement('span');
+  arrow.className = 'upgrade-arrow';
+  arrow.textContent = '\u2192';
+
+  // Batch target input
+  var batchInput = document.createElement('input');
+  batchInput.type = 'number';
+  batchInput.className = 'upgrade-target res-type-batch';
+  batchInput.min = '0';
+  batchInput.max = '20';
+  batchInput.placeholder = '--';
+  batchInput.title = 'Set target for all ' + (RES_TYPE_NAMES[gid] || '') + ' fields';
+  batchInput.addEventListener('change', function () {
+    var val = parseInt(batchInput.value, 10);
+    if (isNaN(val)) return;
+    var container = document.getElementById('resGroup_' + gid);
+    if (!container) return;
+    var inputs = container.querySelectorAll('input[type="number"]');
+    inputs.forEach(function (inp) {
+      inp.value = val;
+      inp.dispatchEvent(new Event('change'));
+    });
+  });
+
+  // Chevron (collapse/expand)
+  var chevron = document.createElement('span');
+  chevron.className = 'res-type-chevron';
+  chevron.textContent = '\u25B8';
+  chevron.title = 'Expand/collapse';
+  chevron.addEventListener('click', function (e) {
+    e.stopPropagation();
+    toggleResGroup(gid, chevron);
+  });
+
+  // Make header clickable (except inputs)
+  header.addEventListener('click', function (e) {
+    if (e.target.tagName === 'INPUT') return;
+    toggleResGroup(gid, chevron);
+  });
+
+  header.appendChild(checkAll);
+  header.appendChild(dot);
+  header.appendChild(label);
+  header.appendChild(avgSpan);
+  header.appendChild(arrow);
+  header.appendChild(batchInput);
+  header.appendChild(chevron);
+  return header;
+}
+
+/**
+ * Toggle collapse/expand for a resource group.
+ */
+function toggleResGroup(gid, chevronEl) {
+  var container = document.getElementById('resGroup_' + gid);
+  if (!container) return;
+  var isCollapsed = container.classList.toggle('collapsed');
+  if (chevronEl) {
+    chevronEl.classList.toggle('expanded', !isCollapsed);
+  }
+}
+
+/**
+ * Render buildings list with prereq lines.
+ */
+function renderBuildingsList(existingBuildings) {
+  var bldTitle = document.createElement('div');
+  bldTitle.className = 'upgrade-group-title';
+  bldTitle.textContent = 'Buildings';
+  dom.upgradeList.appendChild(bldTitle);
+
+  var sorted = existingBuildings.slice().sort(function (a, b) { return a.level - b.level; });
+  sorted.forEach(function (item) {
+    dom.upgradeList.appendChild(createUpgradeRow(item));
+    var prereqLine = createPrereqLine(item.gid);
+    if (prereqLine) dom.upgradeList.appendChild(prereqLine);
+  });
+}
+
+/**
+ * Render empty slot rows with dynamic prereq preview.
+ */
+function renderEmptySlotsList(emptySlots) {
+  var emptyTitle = document.createElement('div');
+  emptyTitle.className = 'upgrade-group-title';
+  emptyTitle.textContent = 'Empty Slots (' + emptySlots.length + ' available)';
+  dom.upgradeList.appendChild(emptyTitle);
+
+  emptySlots.forEach(function (item) {
+    dom.upgradeList.appendChild(createEmptySlotRow(item));
+  });
+}
+
+/**
+ * Create prerequisite indicator line for a building GID.
+ * Returns null if no prereqs defined.
+ */
+function createPrereqLine(gid) {
+  var prereqs = BUILDING_PREREQS[gid];
+  if (!prereqs || prereqs.length === 0) return null;
+
+  var line = document.createElement('div');
+  line.className = 'prereq-line';
+
+  var prefix = document.createTextNode('\u21B3 ');
+  line.appendChild(prefix);
+
+  prereqs.forEach(function (req, idx) {
+    if (idx > 0) {
+      line.appendChild(document.createTextNode(', '));
+    }
+
+    var currentLevel = findCurrentLevel(req.gid);
+    var name = GID_NAMES[req.gid] || ('GID ' + req.gid);
+    var span = document.createElement('span');
+
+    if (currentLevel >= req.level) {
+      span.className = 'prereq-met';
+      span.textContent = name + ' Lv.' + req.level + ' \u2713';
+    } else if (currentLevel > 0) {
+      var need = req.level - currentLevel;
+      span.className = 'prereq-partial';
+      span.textContent = name + ' Lv.' + req.level + ' (need ' + need + ' more)';
+    } else {
+      span.className = 'prereq-missing';
+      span.textContent = name + ' Lv.' + req.level + ' (not built)';
+    }
+
+    line.appendChild(span);
+  });
+
+  return line;
+}
+
+/**
+ * Find current level for a building GID from scanned data.
+ */
+function findCurrentLevel(gid) {
+  if (gid >= 1 && gid <= 4) {
+    var maxLevel = 0;
+    scannedResources.forEach(function (r) {
+      if (r.gid === gid && r.level > maxLevel) maxLevel = r.level;
+    });
+    return maxLevel;
+  }
+  for (var i = 0; i < scannedBuildings.length; i++) {
+    if (scannedBuildings[i].gid === gid) return scannedBuildings[i].level || 0;
+  }
+  return 0;
 }
 
 /**
@@ -1022,11 +1315,22 @@ function createEmptySlotRow(item) {
   });
   if (saved.buildGid) select.value = String(saved.buildGid);
 
+  // Prereq preview container (updates dynamically on dropdown change)
+  var prereqContainer = document.createElement('div');
+  prereqContainer.className = 'prereq-preview';
+
   select.addEventListener('change', function () {
     if (!upgradeTargets[key]) upgradeTargets[key] = {};
     upgradeTargets[key].buildGid = parseInt(select.value, 10) || 0;
     upgradeTargets[key].isNewBuild = true;
     upgradeTargets[key].slot = item.slot;
+    // Update prereq preview
+    prereqContainer.textContent = '';
+    var selectedGid = parseInt(select.value, 10);
+    if (selectedGid) {
+      var prereqLine = createPrereqLine(selectedGid);
+      if (prereqLine) prereqContainer.appendChild(prereqLine);
+    }
   });
 
   // Arrow
@@ -1065,7 +1369,18 @@ function createEmptySlotRow(item) {
   row.appendChild(select);
   row.appendChild(arrow);
   row.appendChild(targetInput);
-  return row;
+
+  // Wrapper to include prereq preview below the row
+  var wrapper = document.createElement('div');
+  wrapper.className = 'upgrade-slot-wrapper';
+  wrapper.appendChild(row);
+  // Show initial prereq if a building was already selected
+  if (saved.buildGid) {
+    var initPrereq = createPrereqLine(saved.buildGid);
+    if (initPrereq) prereqContainer.appendChild(initPrereq);
+  }
+  wrapper.appendChild(prereqContainer);
+  return wrapper;
 }
 
 /**
@@ -1178,6 +1493,8 @@ function collectUpgradeTargets() {
  * Collect all form values into a single config object.
  */
 function collectConfig() {
+  // Save current village targets before collecting
+  saveCurrentVillageTargets();
   return {
     enabled: true,
     autoResourceUpgrade: dom.togResourceUpgrade.checked,
@@ -1199,6 +1516,7 @@ function collectConfig() {
       maxLevel: dom.cfgMaxBuildLevel ? parseInt(dom.cfgMaxBuildLevel.value, 10) || 10 : 10,
     },
     upgradeTargets: collectUpgradeTargets(),
+    villageTargets: villageTargetCache,
     scannedItems: {
       resources: scannedResources,
       buildings: scannedBuildings
@@ -1323,17 +1641,29 @@ function populateForm(config) {
     dom.cfgMaxBuildLevel.value = config.buildingConfig.maxLevel;
   }
 
-  // Upgrade targets + scanned items
-  if (config.scannedItems) {
-    scannedResources = config.scannedItems.resources || [];
-    scannedBuildings = config.scannedItems.buildings || [];
+  // Per-village target cache
+  if (config.villageTargets) {
+    villageTargetCache = config.villageTargets;
   }
-  if (config.upgradeTargets) {
-    upgradeTargets = config.upgradeTargets;
+  migrateGlobalTargets(config);
+
+  // Upgrade targets + scanned items
+  currentVillageId = config.activeVillage || null;
+  if (currentVillageId) {
+    loadVillageTargets(currentVillageId);
+  } else {
+    if (config.scannedItems) {
+      scannedResources = config.scannedItems.resources || [];
+      scannedBuildings = config.scannedItems.buildings || [];
+    }
+    if (config.upgradeTargets) {
+      upgradeTargets = config.upgradeTargets;
+    }
   }
   if (scannedResources.length > 0 || scannedBuildings.length > 0) {
     renderUpgradeList();
   }
+  updateVillageScope();
 
   // Troop config
   if (config.troopConfig) {
@@ -2046,6 +2376,10 @@ function bindEvents() {
   dom.villageSelect.addEventListener('change', () => {
     const villageId = dom.villageSelect.value;
     if (villageId) {
+      saveCurrentVillageTargets();      // save old village
+      loadVillageTargets(villageId);    // load new village
+      renderUpgradeList();              // re-render targets
+      updateVillageScope();             // update scope label
       sendMessage({ type: 'SWITCH_VILLAGE', villageId }).catch(console.warn);
     }
   });

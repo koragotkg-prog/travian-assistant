@@ -812,6 +812,91 @@ input[type="text"]:focus {
   border-bottom: 1px solid var(--border-subtle);
 }
 
+/* Resource type group header */
+.res-type-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 2px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.res-type-header input[type="checkbox"] {
+  accent-color: var(--primary);
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  flex-shrink: 0;
+}
+.res-type-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+.res-type-label {
+  flex: 1;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text);
+}
+.res-type-avg {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+.res-type-batch {
+  width: 38px;
+}
+.res-type-chevron {
+  font-size: 12px;
+  color: var(--text-muted);
+  transition: transform 0.15s;
+  user-select: none;
+  width: 14px;
+  text-align: center;
+}
+.res-type-chevron.expanded {
+  transform: rotate(90deg);
+}
+.res-type-fields {
+  padding-left: 16px;
+}
+.res-type-fields.collapsed {
+  display: none;
+}
+
+/* Prerequisite indicator */
+.prereq-line {
+  font-size: 10px;
+  padding: 1px 0 3px 20px;
+  color: var(--text-muted);
+}
+.prereq-met {
+  color: var(--success);
+}
+.prereq-partial {
+  color: var(--warning);
+}
+.prereq-missing {
+  color: var(--danger);
+}
+
+/* Prereq preview in empty slots */
+.prereq-preview {
+  min-height: 0;
+}
+.upgrade-slot-wrapper {
+  border-bottom: 1px solid rgba(255,255,255,0.03);
+}
+
+/* Village scope */
+.village-scope {
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+  padding: 0 4px;
+}
+
 .upgrade-row {
   display: flex;
   align-items: center;
