@@ -183,7 +183,10 @@ const App = {
       case 'overview':    this.renderOverview(s, state); break;
       case 'tasks':       this.renderTasks(s); break;
       case 'strategy':    this.renderStrategy(s); break;
-      case 'config':      if (!this.configLoaded && s.config) { this.bindConfig(s.config); this.configLoaded = true; } break;
+      case 'config':
+        if (!this.configLoaded && s.config) { this.bindConfig(s.config); this.configLoaded = true; }
+        this.renderUpgradeTargets(s);
+        break;
       case 'diagnostics': this.renderDiagnostics(s); break;
       case 'debug':       this.renderDebug(s); break;
     }
@@ -309,7 +312,15 @@ const App = {
 
   renderResources(s) {
     var gs = s.gameState;
-    if (!gs || !gs.resources) return;
+    if (!gs || !gs.resources) {
+      // No game state — show placeholder values
+      this._setOvRes('Wood', 0, 1, 0);
+      this._setOvRes('Clay', 0, 1, 0);
+      this._setOvRes('Iron', 0, 1, 0);
+      this._setOvRes('Crop', 0, 1, 0);
+      document.getElementById('ovVillageName').textContent = 'No data — start bot';
+      return;
+    }
 
     var res = gs.resources;
     var cap = gs.capacity || {};
@@ -329,15 +340,26 @@ const App = {
         if (gs.villages[i].id === gs.activeVillageId) { active = gs.villages[i]; break; }
       }
       document.getElementById('ovVillageName').textContent = active ? active.name : '--';
+    } else {
+      document.getElementById('ovVillageName').textContent = '--';
     }
   },
 
   _setOvRes(name, amount, capacity, production) {
-    var pct = Math.min(100, Math.round((amount / capacity) * 100));
     var bar = document.getElementById('ovBar' + name);
     var val = document.getElementById('ovVal' + name);
     var prod = document.getElementById('ovProd' + name);
 
+    if (capacity <= 1 && amount === 0) {
+      // No data state
+      bar.style.width = '0%';
+      bar.classList.remove('overflow');
+      val.textContent = '--';
+      prod.textContent = '--';
+      return;
+    }
+
+    var pct = Math.min(100, Math.round((amount / capacity) * 100));
     bar.style.width = pct + '%';
     if (pct >= 90) { bar.classList.add('overflow'); } else { bar.classList.remove('overflow'); }
     val.textContent = formatNumber(amount) + ' / ' + formatNumber(capacity);
@@ -353,10 +375,14 @@ const App = {
       score.textContent = s.lastAIAction.score != null ? s.lastAIAction.score : '--';
       type.textContent = TASK_TYPE_NAMES[s.lastAIAction.type] || s.lastAIAction.type || '--';
       reason.textContent = s.lastAIAction.reason || 'No reason given';
+    } else if (!s.running) {
+      score.textContent = '--';
+      type.textContent = 'Idle';
+      reason.textContent = 'Start bot to enable AI decisions';
     } else {
       score.textContent = '--';
       type.textContent = '--';
-      reason.textContent = 'No decision yet';
+      reason.textContent = 'Waiting for first scan...';
     }
   },
 
@@ -433,14 +459,19 @@ const App = {
   renderStrategy(s) {
     var id = function(x) { return document.getElementById(x); };
 
-    // Phase
-    if (s.config && s.config._currentPhase) {
-      id('stratPhase').textContent = s.config._currentPhase;
-      var descs = { early: 'Focus on resource production and basic infrastructure', mid: 'Military buildup and expansion', late: 'Endgame strategy and alliances' };
-      id('stratPhaseDesc').textContent = descs[s.config._currentPhase] || 'Phase active';
+    // Phase — use currentPhase from decision engine (exposed via getStatus)
+    var phase = s.currentPhase || null;
+    if (phase) {
+      id('stratPhase').textContent = phase.charAt(0).toUpperCase() + phase.slice(1);
+      var descs = {
+        early: 'Focus on resource production and basic infrastructure',
+        mid: 'Military buildup and expansion',
+        late: 'Endgame strategy and alliances'
+      };
+      id('stratPhaseDesc').textContent = descs[phase] || 'Phase active';
     } else {
-      id('stratPhase').textContent = '--';
-      id('stratPhaseDesc').textContent = 'Phase not detected';
+      id('stratPhase').textContent = s.running ? 'Detecting...' : '--';
+      id('stratPhaseDesc').textContent = s.running ? 'Analyzing game state' : 'Start bot to detect phase';
     }
 
     // Last decision
@@ -467,6 +498,59 @@ const App = {
         cdList.innerHTML = '<div class="empty-state">No active cooldowns</div>';
       }
     }
+
+    // Prerequisite resolution chains
+    this.renderPrereqs(s);
+  },
+
+  renderPrereqs(s) {
+    var container = document.getElementById('prereqList');
+    var resolutions = s.prereqResolutions || [];
+
+    if (resolutions.length === 0) {
+      container.innerHTML = '<div class="empty-state">No active prerequisite chains</div>';
+      return;
+    }
+
+    var html = resolutions.map(function(r) {
+      var statusClass = r.status === 'resolving' ? 'resolved' : (r.status === 'blocked' ? 'blocked' : '');
+      var statusLabel = r.status === 'resolving' ? 'RESOLVING' : (r.status === 'blocked' ? 'BLOCKED' : 'WAITING');
+      var statusColor = r.status === 'resolving' ? 'ok' : (r.status === 'blocked' ? 'blocked' : 'pending');
+
+      // Chain visualization: Target ← Dep1 ← Dep2
+      var chainStr = r.chain.map(function(c) {
+        return '<span>' + escapeHtml(c.name) + '</span>';
+      }).join(' <span class="prereq-arrow">→</span> ');
+
+      // Missing prereqs
+      var missingStr = r.missing.map(function(m) {
+        return escapeHtml(m.name) + ' (L' + m.have + '→L' + m.need + ')';
+      }).join(', ');
+
+      // Current action
+      var actionStr = '';
+      if (r.action) {
+        var taskName = TASK_TYPE_NAMES[r.action.type] || r.action.type;
+        actionStr = '<div style="font-size:10px;color:var(--green);margin-top:2px">▸ ' +
+          escapeHtml(taskName) + ': ' + escapeHtml(r.action.name || '') +
+          (r.action.slot ? ' slot #' + r.action.slot : '') +
+          (r.action.fieldId ? ' field #' + r.action.fieldId : '') +
+          '</div>';
+      }
+
+      return '<div class="prereq-item ' + statusClass + '">' +
+        '<div style="flex:1">' +
+          '<div style="font-weight:600">' + escapeHtml(r.targetName) + ' <span style="color:var(--txt-dim)">(slot #' + r.slot + ')</span></div>' +
+          '<div style="font-size:10px;color:var(--txt-dim);margin-top:2px">Chain: ' + chainStr + '</div>' +
+          '<div style="font-size:10px;color:var(--amber);margin-top:2px">Need: ' + escapeHtml(missingStr) + '</div>' +
+          (r.reason ? '<div style="font-size:10px;color:var(--txt-dim);margin-top:1px">Reason: ' + escapeHtml(r.reason) + '</div>' : '') +
+          actionStr +
+        '</div>' +
+        '<span class="prereq-status ' + statusColor + '">' + statusLabel + '</span>' +
+        '</div>';
+    }).join('');
+
+    container.innerHTML = html;
   },
 
   /* ═══════════════════════════════════════════════ */
@@ -511,8 +595,9 @@ const App = {
   },
 
   async saveConfig() {
-    if (!this.status || !this.status.config) return;
-    var cfg = JSON.parse(JSON.stringify(this.status.config));
+    // Start from existing config or build a fresh one
+    var base = (this.status && this.status.config) ? this.status.config : {};
+    var cfg = JSON.parse(JSON.stringify(base));
 
     var getVal = function(id, type) {
       var el = document.getElementById(id);
@@ -547,6 +632,9 @@ const App = {
     cfg.delays.minActionDelay = getVal('cfgMinDelay', 'number');
     cfg.delays.maxActionDelay = getVal('cfgMaxDelay', 'number');
 
+    // Collect per-slot upgrade targets
+    cfg.upgradeTargets = this._collectUpgradeTargets();
+
     var resp = await UIClient.updateConfig(this.serverKey, cfg);
     if (resp && resp.success) {
       alert('Settings saved');
@@ -555,6 +643,172 @@ const App = {
     } else {
       alert('Failed to save');
     }
+  },
+
+  /* ═══════════════════════════════════════════════ */
+  /*  UPGRADE TARGETS (Per-slot)                    */
+  /* ═══════════════════════════════════════════════ */
+
+  _lastTargetsKey: '',
+
+  renderUpgradeTargets(s) {
+    var gs = s.gameState;
+    var cfg = s.config || {};
+    var targets = cfg.upgradeTargets || {};
+
+    // Build a stable key to avoid re-rendering every poll
+    var stableKey = JSON.stringify(targets) + '|' + (gs ? (gs.resourceFields || []).length + ',' + (gs.buildings || []).length : '0');
+    if (stableKey === this._lastTargetsKey) return;
+    this._lastTargetsKey = stableKey;
+
+    var resContainer = document.getElementById('targetResFields');
+    var bldContainer = document.getElementById('targetBuildings');
+    var emptyContainer = document.getElementById('targetEmptySlots');
+    var emptySection = document.getElementById('targetEmptySection');
+    var infoEl = document.getElementById('targetsInfo');
+
+    // Resource fields from gameState (or show placeholder)
+    var resFields = (gs && gs.resourceFields) ? gs.resourceFields : [];
+    var buildings = (gs && gs.buildings) ? gs.buildings : [];
+
+    if (resFields.length === 0 && buildings.length === 0) {
+      infoEl.innerHTML = '<span class="targets-empty">No game state available — start the bot to scan village data, or edit targets in the fields below.</span>';
+    } else {
+      var activeTargets = Object.keys(targets).filter(function(k) { return targets[k].enabled; }).length;
+      infoEl.innerHTML = '<span class="targets-empty">' + activeTargets + ' active target' + (activeTargets !== 1 ? 's' : '') + ' configured</span>';
+    }
+
+    // Render resource fields
+    this._renderSlotList(resContainer, resFields, targets, 'res');
+
+    // Separate occupied and empty building slots
+    var occupied = [];
+    var empty = [];
+    buildings.forEach(function(b) {
+      if (b.empty || (b.gid === 0 && b.id === 0) || (!b.gid && !b.id && !b.name)) {
+        empty.push(b);
+      } else {
+        occupied.push(b);
+      }
+    });
+
+    this._renderSlotList(bldContainer, occupied, targets, 'bld');
+
+    // Empty slots (build new)
+    if (empty.length > 0) {
+      emptySection.style.display = '';
+      this._renderEmptySlots(emptyContainer, empty, targets);
+    } else {
+      emptySection.style.display = 'none';
+    }
+  },
+
+  _renderSlotList(container, items, targets, prefix) {
+    if (items.length === 0) {
+      container.innerHTML = '<div class="targets-empty">No data — scan needed</div>';
+      return;
+    }
+
+    var html = items.map(function(item) {
+      var slot = item.slot || item.id || item.position;
+      var key = 'slot_' + slot;
+      var tgt = targets[key] || {};
+      var enabled = !!tgt.enabled;
+      var targetLvl = tgt.targetLevel || '';
+
+      // Determine name and current level
+      var name, level;
+      if (prefix === 'res') {
+        // Resource field
+        var resType = item.type || 'unknown';
+        var gid = item.gid || RESOURCE_TYPE_GID[resType] || 0;
+        name = GID_NAMES[gid] || resType;
+        level = item.level || 0;
+      } else {
+        // Building
+        var bGid = item.id || item.gid || 0;
+        name = item.name || GID_NAMES[bGid] || ('GID ' + bGid);
+        level = item.level || 0;
+      }
+
+      return '<div class="tgt-row' + (enabled ? ' enabled' : '') + '" data-slot="' + slot + '">' +
+        '<input type="checkbox" class="tgt-chk" data-key="' + key + '"' + (enabled ? ' checked' : '') + '>' +
+        '<span class="tgt-name">' + escapeHtml(name) + ' <span class="tgt-slot">#' + slot + '</span></span>' +
+        '<span class="tgt-lvl">L' + level + (item.upgrading ? ' ↑' : '') + '</span>' +
+        '<span style="color:var(--txt-dim);font-size:9px">→</span>' +
+        '<input type="number" class="tgt-input" data-key="' + key + '" min="1" max="20" value="' + targetLvl + '" placeholder="--" title="Target level">' +
+        '</div>';
+    }).join('');
+    container.innerHTML = html;
+  },
+
+  _renderEmptySlots(container, items, targets) {
+    var html = items.map(function(item) {
+      var slot = item.slot || item.id;
+      var key = 'slot_' + slot;
+      var tgt = targets[key] || {};
+      var enabled = !!tgt.enabled;
+      var selectedGid = tgt.buildGid || '';
+      var targetLvl = tgt.targetLevel || '';
+
+      // Build GID select options
+      var opts = '<option value="">-- select --</option>';
+      BUILDABLE_GIDS.forEach(function(gid) {
+        var sel = (gid == selectedGid) ? ' selected' : '';
+        opts += '<option value="' + gid + '"' + sel + '>' + (GID_NAMES[gid] || 'GID ' + gid) + '</option>';
+      });
+
+      return '<div class="tgt-row' + (enabled ? ' enabled' : '') + '" data-slot="' + slot + '">' +
+        '<input type="checkbox" class="tgt-chk" data-key="' + key + '"' + (enabled ? ' checked' : '') + '>' +
+        '<span class="tgt-name">Slot <span class="tgt-slot">#' + slot + '</span></span>' +
+        '<select class="tgt-select" data-key="' + key + '">' + opts + '</select>' +
+        '<span style="color:var(--txt-dim);font-size:9px">→ L</span>' +
+        '<input type="number" class="tgt-input" data-key="' + key + '" min="1" max="20" value="' + targetLvl + '" placeholder="--">' +
+        '</div>';
+    }).join('');
+    container.innerHTML = html;
+  },
+
+  /** Collect upgradeTargets from the per-slot UI elements */
+  _collectUpgradeTargets() {
+    var targets = {};
+
+    // Collect from all three containers
+    var containers = ['targetResFields', 'targetBuildings', 'targetEmptySlots'];
+    var self = this;
+
+    containers.forEach(function(containerId) {
+      var container = document.getElementById(containerId);
+      if (!container) return;
+
+      container.querySelectorAll('.tgt-row').forEach(function(row) {
+        var slot = Number(row.dataset.slot);
+        if (!slot) return;
+        var key = 'slot_' + slot;
+
+        var chk = row.querySelector('.tgt-chk');
+        var inp = row.querySelector('.tgt-input');
+        var sel = row.querySelector('.tgt-select');
+
+        var entry = {
+          slot: slot,
+          enabled: chk ? chk.checked : false,
+          targetLevel: inp ? (Number(inp.value) || 0) : 0
+        };
+
+        // Empty slot with building selector
+        if (sel && sel.value) {
+          entry.isNewBuild = true;
+          entry.buildGid = Number(sel.value);
+        }
+
+        if (entry.enabled || entry.targetLevel > 0 || entry.buildGid) {
+          targets[key] = entry;
+        }
+      });
+    });
+
+    return targets;
   },
 
   /* ═══════════════════════════════════════════════ */

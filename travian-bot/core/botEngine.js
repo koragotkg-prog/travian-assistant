@@ -1304,6 +1304,8 @@ class BotEngine {
       nextActionTime: this.nextActionTime,
       lastAIAction: this.decisionEngine ? this.decisionEngine.lastAIAction : null,
       cooldowns: this.decisionEngine ? Object.fromEntries(this.decisionEngine.cooldowns) : {},
+      currentPhase: this.decisionEngine ? this.decisionEngine.currentPhase : null,
+      prereqResolutions: this.decisionEngine ? this.decisionEngine.lastPrereqResolutions : [],
       executionLocked: this._executionLocked,
       cycleLock: this._cycleLock,
       consecutiveFailures: this._consecutiveFailures

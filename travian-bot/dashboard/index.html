@@ -220,6 +220,14 @@
               <div class="empty-state">No active cooldowns</div>
             </div>
           </div>
+
+          <!-- Prerequisite Resolution Chain -->
+          <div class="card span-2">
+            <div class="card-hdr">PREREQUISITE RESOLUTION</div>
+            <div id="prereqList">
+              <div class="empty-state">No active prerequisite chains</div>
+            </div>
+          </div>
         </div>
       </section>
 
@@ -276,9 +284,9 @@
             </div>
           </div>
 
-          <!-- Building -->
+          <!-- Building Global -->
           <div class="card">
-            <div class="card-hdr">BUILDING</div>
+            <div class="card-hdr">BUILDING DEFAULTS</div>
             <div class="cfg-form">
               <div class="cfg-field">
                 <label>Max Building Level</label>
@@ -288,6 +296,32 @@
                 <label>Max Resource Level</label>
                 <input type="number" id="cfgResMaxLevel" class="cfg-input" min="1" max="20">
               </div>
+            </div>
+          </div>
+
+          <!-- Per-slot Upgrade Targets -->
+          <div class="card span-2">
+            <div class="card-hdr">
+              UPGRADE TARGETS
+              <span class="card-sub">Per-slot building &amp; resource targets</span>
+            </div>
+            <div class="targets-info" id="targetsInfo">
+              <span class="targets-empty">Start bot to scan building slots, or configure targets below</span>
+            </div>
+            <!-- Resource Fields Section -->
+            <div class="targets-section">
+              <div class="targets-section-hdr">Resource Fields (dorf1)</div>
+              <div class="targets-list" id="targetResFields"></div>
+            </div>
+            <!-- Buildings Section -->
+            <div class="targets-section">
+              <div class="targets-section-hdr">Buildings (dorf2)</div>
+              <div class="targets-list" id="targetBuildings"></div>
+            </div>
+            <!-- Empty Slots Section -->
+            <div class="targets-section" id="targetEmptySection" style="display:none">
+              <div class="targets-section-hdr">Empty Slots (build new)</div>
+              <div class="targets-list" id="targetEmptySlots"></div>
             </div>
           </div>
 

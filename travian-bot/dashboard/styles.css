@@ -738,6 +738,145 @@ input[type="range"]::-webkit-slider-thumb {
   cursor: pointer;
 }
 
+/* ── UPGRADE TARGETS ─────────────────────────── */
+.targets-info {
+  margin-bottom: 12px;
+}
+.targets-empty {
+  font-family: var(--font-data);
+  font-size: 11px;
+  color: var(--txt-dim);
+}
+.targets-section {
+  margin-bottom: 16px;
+}
+.targets-section-hdr {
+  font-family: var(--font-data);
+  font-size: 10px;
+  color: var(--cyan);
+  letter-spacing: .6px;
+  text-transform: uppercase;
+  margin-bottom: 8px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border-dim);
+}
+.targets-list {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+.tgt-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  background: var(--bg-inset);
+  border: 1px solid var(--border-dim);
+  border-radius: 4px;
+  font-family: var(--font-data);
+  font-size: 11px;
+  transition: border-color .15s;
+}
+.tgt-row:hover {
+  border-color: var(--border-lit);
+}
+.tgt-row.enabled {
+  border-color: rgba(0,230,118,.25);
+}
+.tgt-chk {
+  flex-shrink: 0;
+  accent-color: var(--green);
+}
+.tgt-name {
+  flex: 1;
+  color: var(--txt);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.tgt-name .tgt-slot {
+  color: var(--txt-dim);
+  font-size: 9px;
+}
+.tgt-lvl {
+  color: var(--txt-dim);
+  font-size: 10px;
+  white-space: nowrap;
+}
+.tgt-input {
+  width: 38px;
+  padding: 2px 4px;
+  background: var(--bg-void);
+  border: 1px solid var(--border-dim);
+  border-radius: 3px;
+  color: var(--cyan);
+  font-family: var(--font-data);
+  font-size: 11px;
+  text-align: center;
+}
+.tgt-input:focus {
+  outline: none;
+  border-color: var(--cyan);
+}
+.tgt-select {
+  width: 100px;
+  padding: 2px 4px;
+  background: var(--bg-void);
+  border: 1px solid var(--border-dim);
+  border-radius: 3px;
+  color: var(--cyan);
+  font-family: var(--font-data);
+  font-size: 10px;
+}
+.tgt-select:focus {
+  outline: none;
+  border-color: var(--cyan);
+}
+
+/* Prerequisite chain display */
+.prereq-chain {
+  margin-top: 16px;
+}
+.prereq-chain-hdr {
+  font-family: var(--font-data);
+  font-size: 10px;
+  color: var(--amber);
+  letter-spacing: .6px;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+.prereq-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  background: var(--bg-inset);
+  border-radius: 4px;
+  margin-bottom: 4px;
+  font-family: var(--font-data);
+  font-size: 11px;
+  border-left: 3px solid var(--amber);
+}
+.prereq-item.resolved {
+  border-left-color: var(--green);
+}
+.prereq-item.blocked {
+  border-left-color: var(--red);
+}
+.prereq-arrow {
+  color: var(--txt-dim);
+  font-size: 10px;
+}
+.prereq-status {
+  margin-left: auto;
+  font-size: 9px;
+  letter-spacing: .3px;
+}
+.prereq-status.ok { color: var(--green); }
+.prereq-status.pending { color: var(--amber); }
+.prereq-status.blocked { color: var(--red); }
+
 /* ── DIAGNOSTICS ──────────────────────────────── */
 .diag-grid {
   display: grid;

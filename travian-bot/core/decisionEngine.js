@@ -29,6 +29,9 @@ class DecisionEngine {
     /** @type {string} Detected game phase */
     this.currentPhase = 'early';
 
+    /** @type {Array<object>} Last prerequisite resolution results for UI display */
+    this.lastPrereqResolutions = [];
+
     // Initialize strategy modules (loaded via importScripts before this file)
     this.strategyEngine = null;
     this.buildOptimizer = null;
@@ -722,6 +725,8 @@ class DecisionEngine {
   _evaluateNewBuilds(gameState, config, taskQueue) {
     const targets = config.upgradeTargets || {};
     const buildings = gameState.buildings || [];
+    // Reset prereq resolution tracking for this cycle
+    this.lastPrereqResolutions = [];
     const villageId = gameState.currentVillageId || null;
     var GD = (typeof self !== 'undefined' && self.TravianGameData) ? self.TravianGameData : null;
     var getName = GD ? function (g) { return GD.getBuildingName(g); } : function (g) { return 'GID' + g; };
@@ -763,6 +768,27 @@ class DecisionEngine {
           var missingStr = prereqResult.missing.map(function (m) {
             return getName(m.gid) + ' need L' + m.need + ' (have L' + m.have + ')';
           }).join(', ');
+
+          // Store resolution for UI display
+          var resEntry = {
+            targetGid: target.buildGid,
+            targetName: getName(target.buildGid),
+            slot: target.slot,
+            missing: prereqResult.missing.map(function(m) {
+              return { gid: m.gid, name: getName(m.gid), need: m.need, have: m.have };
+            }),
+            chain: (resolveResult.chain || []).map(function(g) { return { gid: g, name: getName(g) }; }),
+            status: resolveResult.task ? 'resolving' : (resolveResult.blocked ? 'blocked' : 'waiting'),
+            reason: resolveResult.reason || null,
+            action: resolveResult.task ? {
+              type: resolveResult.task.type,
+              gid: resolveResult.task.params.gid,
+              name: getName(resolveResult.task.params.gid || 0),
+              slot: resolveResult.task.params.slot,
+              fieldId: resolveResult.task.params.fieldId
+            } : null
+          };
+          this.lastPrereqResolutions.push(resEntry);
 
           if (resolveResult.task) {
             var t = resolveResult.task;

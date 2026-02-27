@@ -217,7 +217,13 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
             status.activeTabId = inst.tabId;
             sendResponse({ success: true, data: status });
           } else {
-            // No instance for this server yet — return default idle status
+            // No instance for this server yet — load saved config from storage
+            var savedConfig = null;
+            if (serverKey) {
+              try {
+                savedConfig = await self.TravianStorage.getServerConfig(serverKey);
+              } catch (e) { console.warn(LOG_TAG, 'Failed to load config for idle status:', e); }
+            }
             sendResponse({
               success: true,
               data: {
@@ -225,7 +231,7 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
                 activeTabId: null, serverKey: serverKey,
                 stats: { tasksCompleted: 0, tasksFailed: 0, startTime: null, lastAction: null, farmRaidsSent: 0 },
                 actionsThisHour: 0, taskQueue: { total: 0, pending: 0, tasks: [] },
-                gameState: null, config: null, nextActionTime: null
+                gameState: null, config: savedConfig, nextActionTime: null
               }
             });
           }
