@@ -1980,6 +1980,16 @@
           return { action: 'no_button' };
         }
 
+        // Scroll the target building into view BEFORE checking button state.
+        // Travian lazy-renders button sections — buildings below the viewport
+        // show .upgradeBlocked as a default placeholder until scrolled into view,
+        // at which point Travian's JS updates to show the green build button.
+        var preScrollWrapper = qs('#contract_building' + gid);
+        if (preScrollWrapper) {
+          preScrollWrapper.scrollIntoView({ behavior: 'instant', block: 'center' });
+          await humanDelay(500, 800);
+        }
+
         // Check current tab only — do NOT switch tabs here!
         // Tab clicks cause page reload which destroys content script mid-function.
         // Tab switching is handled by botEngine as separate steps.
