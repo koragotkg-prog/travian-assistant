@@ -1151,7 +1151,7 @@ class BotEngine {
               // Re-queue the same task so it retries after hero item was used
               this.taskQueue.add(task.type, task.params, task.priority, task.villageId);
               this.decisionEngine.setCooldown(this._getCooldownKey(task), 15000); // 15 sec retry
-              console.log(`[BotEngine] Re-queued ${task.type} after hero resource claim`);
+              TravianLogger.log('INFO', '[BotEngine] Re-queued ' + task.type + ' after hero resource claim');
             }
           }
         } else {
@@ -1914,31 +1914,22 @@ class BotEngine {
       }
       TravianLogger.log('DEBUG', '[BotEngine] Resource deficit: ' + JSON.stringify(deficit));
 
-      // Step 1: Navigate to hero page (causes page reload)
-      await this.sendToContentScript({
-        type: 'EXECUTE', action: 'navigateTo', params: { page: 'hero' }
-      });
-      await this._randomDelay();
-      // Wait for hero page content script to be ready
-      var heroReady = await this._waitForContentScript(15000);
-      if (!heroReady) {
-        TravianLogger.log('WARN', '[BotEngine] Hero page did not load in time');
-        return false;
-      }
-
-      // Step 2: Navigate to inventory tab (causes page reload)
+      // Navigate directly to hero inventory (single step — old code did
+      // hero → heroInventory which wasted ~15s on a redundant page reload).
+      // navigateTo('heroInventory') tries a[href="/hero/inventory"] first (which
+      // won't match because hero tabs have no href), then falls back to
+      // window.location.href = '/hero/inventory' which works reliably.
       await this.sendToContentScript({
         type: 'EXECUTE', action: 'navigateTo', params: { page: 'heroInventory' }
       });
       await this._randomDelay();
-      // Wait for inventory page content script to be ready
       var invReady = await this._waitForContentScript(15000);
       if (!invReady) {
         TravianLogger.log('WARN', '[BotEngine] Hero inventory page did not load in time');
         return false;
       }
 
-      // Step 3: Scan inventory items (also detects UI version)
+      // Scan inventory items (also detects UI version)
       const scanResult = await this.sendToContentScript({
         type: 'EXECUTE', action: 'scanHeroInventory', params: {}
       });
@@ -2117,8 +2108,10 @@ class BotEngine {
     const gCap = cap.granary || wCap;
     if (wCap === 0) return false;
 
-    // Check if any resource is below 5% of capacity
-    var threshold = 0.05;
+    // Check if any resource is below 20% of capacity (raised from 5% —
+    // at 5% of 7800 = 390, resources rarely drop that low, so the old
+    // threshold almost never triggered proactive claiming).
+    var threshold = 0.20;
     return (res.wood || 0) < wCap * threshold ||
            (res.clay || 0) < wCap * threshold ||
            (res.iron || 0) < wCap * threshold ||
@@ -2128,7 +2121,7 @@ class BotEngine {
   /**
    * Proactively claim hero resources to fill low resource types.
    * Navigates to hero inventory, scans items, and transfers resources
-   * for any type below 25% of warehouse capacity.
+   * for any type below 50% of warehouse capacity.
    * @returns {boolean} true if any resources were claimed
    */
   async _proactiveHeroClaim() {
@@ -2137,7 +2130,8 @@ class BotEngine {
       const cap = this.gameState.resourceCapacity;
       const wCap = cap.warehouse || 800;
       const gCap = cap.granary || wCap;
-      const targetFill = 0.25; // fill to 25% of capacity
+      const targetFill = 0.50; // fill to 50% of capacity (raised from 25%
+      // so each proactive claim is substantial enough to fund upgrades)
 
       // Calculate how much of each resource we need to reach targetFill
       const deficit = {
@@ -2152,18 +2146,7 @@ class BotEngine {
 
       TravianLogger.log('DEBUG', '[BotEngine] Proactive hero claim deficit: ' + JSON.stringify(deficit));
 
-      // Step 1: Navigate to hero page
-      await this.sendToContentScript({
-        type: 'EXECUTE', action: 'navigateTo', params: { page: 'hero' }
-      });
-      await this._randomDelay();
-      var heroReady = await this._waitForContentScript(15000);
-      if (!heroReady) {
-        TravianLogger.log('WARN', '[BotEngine] Hero page did not load for proactive claim');
-        return false;
-      }
-
-      // Step 2: Navigate to inventory tab
+      // Navigate directly to hero inventory (single step)
       await this.sendToContentScript({
         type: 'EXECUTE', action: 'navigateTo', params: { page: 'heroInventory' }
       });
@@ -2174,7 +2157,7 @@ class BotEngine {
         return false;
       }
 
-      // Step 3: Scan inventory (also detects UI version)
+      // Scan inventory (also detects UI version)
       const scanResult = await this.sendToContentScript({
         type: 'EXECUTE', action: 'scanHeroInventory', params: {}
       });
@@ -2275,8 +2258,20 @@ class BotEngine {
       }
 
       if (!cost) {
-        console.log('[BotEngine] _calcResourceDeficit: could not determine cost for', task.type, JSON.stringify(task.params));
-        return null;
+        // Fallback: when we can't look up the exact cost, use a capacity-based
+        // deficit instead of returning null (which would block the claim entirely).
+        // Fill each resource to 50% of warehouse capacity — enough for most upgrades.
+        TravianLogger.log('WARN', '[BotEngine] _calcResourceDeficit: could not determine cost for ' + task.type + ' ' + JSON.stringify(task.params) + ' — using capacity-based fallback');
+        const cap = this.gameState.resourceCapacity || {};
+        const wCap = cap.warehouse || 8000;
+        const gCap = cap.granary || wCap;
+        const targetFill = 0.5;
+        return {
+          wood: Math.max(0, Math.floor(wCap * targetFill) - (current.wood || 0)),
+          clay: Math.max(0, Math.floor(wCap * targetFill) - (current.clay || 0)),
+          iron: Math.max(0, Math.floor(wCap * targetFill) - (current.iron || 0)),
+          crop: Math.max(0, Math.floor(gCap * targetFill) - (current.crop || 0))
+        };
       }
 
       const deficit = {
@@ -2285,11 +2280,25 @@ class BotEngine {
         iron: Math.max(0, (cost.iron || 0) - (current.iron || 0)),
         crop: Math.max(0, (cost.crop || 0) - (current.crop || 0))
       };
-      console.log('[BotEngine] _calcResourceDeficit: cost=' + JSON.stringify(cost) + ' current=' + JSON.stringify(current) + ' deficit=' + JSON.stringify(deficit));
+      TravianLogger.log('DEBUG', '[BotEngine] _calcResourceDeficit: cost=' + JSON.stringify(cost) + ' current=' + JSON.stringify(current) + ' deficit=' + JSON.stringify(deficit));
       return deficit;
     } catch (e) {
-      console.warn('[BotEngine] _calcResourceDeficit error:', e.message);
-      return null;
+      TravianLogger.log('WARN', '[BotEngine] _calcResourceDeficit error: ' + e.message);
+      // Even on exception, try capacity-based fallback
+      try {
+        const current2 = (this.gameState && this.gameState.resources) || {};
+        const cap2 = (this.gameState && this.gameState.resourceCapacity) || {};
+        const wCap2 = cap2.warehouse || 8000;
+        const gCap2 = cap2.granary || wCap2;
+        return {
+          wood: Math.max(0, Math.floor(wCap2 * 0.5) - (current2.wood || 0)),
+          clay: Math.max(0, Math.floor(wCap2 * 0.5) - (current2.clay || 0)),
+          iron: Math.max(0, Math.floor(wCap2 * 0.5) - (current2.iron || 0)),
+          crop: Math.max(0, Math.floor(gCap2 * 0.5) - (current2.crop || 0))
+        };
+      } catch (_) {
+        return null;
+      }
     }
   }
 

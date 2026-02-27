@@ -164,4 +164,6 @@ Tab switching uses `data-tab` attribute on buttons mapped to panel IDs via `TAB_
 - `_tryClaimHeroResources` in BotEngine MUST be awaited — fire-and-forget causes race conditions and task loss.
 - Hero resource dialog default transfers enough to fill warehouse to max capacity. Always set a specific amount, or cancel the dialog if amount is unknown.
 - `navigateTo('hero')` must use specific selectors (`#heroImageButton`, `a[href="/hero"]`) not `a[href*="/hero"]` which matches all hero sub-pages.
+- Hero inventory tab links (`<a class="tabItem">`) have NO `href` attribute — `navigateTo('heroInventory')` always falls back to direct URL (`window.location.href`). Navigate directly to `heroInventory` in one step, NOT hero→heroInventory (two page reloads).
+- **React form inputs**: Travian's hero dialog uses React-managed inputs. Use `nativeInputValueSetter` + `dispatchEvent('input')` to update values. `execCommand('insertText')` does NOT reliably trigger React state updates (Move button stays disabled).
 - Farm list tab click causes page reload — must be a separate execution step with delay before scanning farm lists.

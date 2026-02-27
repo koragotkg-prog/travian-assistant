@@ -1780,10 +1780,13 @@
         }
         await humanDelay(300, 500);
 
-        // ── Step 3: Fill in amounts using execCommand (FormV2 React-compatible) ──
-        // IMPORTANT: Travian's dialog inputs use React FormV2 — nativeSetter + dispatchEvent
-        // does NOT update React state. Must use focus() + select() + execCommand('insertText')
-        // which goes through the browser's native text insertion pipeline.
+        // ── Step 3: Fill in amounts using nativeInputValueSetter (React-compatible) ──
+        // Travian's dialog uses React-managed inputs. nativeInputValueSetter bypasses
+        // React's controlled component, then dispatching 'input' + 'change' events
+        // triggers React to pick up the new value and enable the Move button.
+        // (execCommand('insertText') was previously used but it does NOT reliably
+        // trigger React's state update, leaving the Move button disabled.)
+        var nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
         var transferred = { wood: 0, clay: 0, iron: 0, crop: 0 };
         var resTypes = ['wood', 'clay', 'iron', 'crop'];
         for (var i = 0; i < resTypes.length; i++) {
@@ -1804,11 +1807,11 @@
           }
 
           var useAmount = Math.ceil(amt);
-          // Focus + select all existing text, then replace via execCommand
+          // Set value via native setter, then dispatch events for React
           inputEl.focus();
-          inputEl.select();
-          document.execCommand('selectAll', false, null);
-          document.execCommand('insertText', false, String(useAmount));
+          nativeSetter.call(inputEl, String(useAmount));
+          inputEl.dispatchEvent(new Event('input', { bubbles: true }));
+          inputEl.dispatchEvent(new Event('change', { bubbles: true }));
 
           transferred[resType] = useAmount;
           Logger.log('useHeroItemBulk: set ' + resType + ' = ' + useAmount);
