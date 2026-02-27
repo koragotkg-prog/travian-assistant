@@ -1307,3 +1307,115 @@ input[type="text"]:focus {
   font-size: 10px;
   color: var(--text-muted);
 }
+
+/* ============================================================
+   STRATEGY: Phase Tips
+   ============================================================ */
+.strategy-tips {
+  background: var(--bg-input);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  margin-bottom: 8px;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.tips-group {
+  margin-bottom: 3px;
+  color: var(--text-secondary);
+}
+
+.tips-group:last-child {
+  margin-bottom: 0;
+}
+
+.tips-label {
+  font-weight: 700;
+  color: var(--primary-dim);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.tips-avoid {
+  color: var(--danger);
+}
+
+.tips-avoid .tips-label {
+  color: var(--danger);
+}
+
+.tips-info {
+  color: var(--text-muted);
+}
+
+.tips-info .tips-label {
+  color: var(--text-muted);
+}
+
+/* ============================================================
+   STRATEGY: Overflow Warning
+   ============================================================ */
+.strategy-overflow {
+  background: rgba(255, 170, 0, 0.08);
+  border: 1px solid rgba(255, 170, 0, 0.25);
+  border-radius: var(--radius-sm);
+  padding: 6px 10px;
+  margin-bottom: 8px;
+  font-size: 11px;
+  color: var(--warning);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.overflow-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: rgba(255, 170, 0, 0.2);
+  font-weight: 800;
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+/* ============================================================
+   STRATEGY: Farm badge
+   ============================================================ */
+.rec-badge.cat-farm {
+  background: rgba(255, 170, 0, 0.1);
+  color: var(--warning);
+}
+
+/* ============================================================
+   CONFIG: Textarea for enemies
+   ============================================================ */
+.cfg-textarea {
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  width: 100%;
+  font-family: 'Consolas', 'Cascadia Code', monospace;
+  font-size: 12px;
+  resize: vertical;
+  min-height: 36px;
+  max-height: 80px;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.cfg-textarea:focus {
+  border-color: var(--primary);
+  outline: none;
+  box-shadow: 0 0 8px var(--primary-glow);
+}
+
+.cfg-textarea::placeholder {
+  color: var(--text-muted);
+  font-size: 11px;
+}

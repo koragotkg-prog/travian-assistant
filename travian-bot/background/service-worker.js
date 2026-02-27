@@ -572,6 +572,31 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
           break;
         }
 
+        // ---- Switch Village (from popup) ----
+        case 'SWITCH_VILLAGE': {
+          var svInst = resolveInstance(message, sender);
+          var villageId = message.villageId || (data && data.villageId);
+          if (svInst && villageId) {
+            // Update config with active village
+            if (svInst.engine.config) {
+              svInst.engine.config.activeVillage = villageId;
+            }
+            // Save to storage
+            if (serverKey) {
+              var svCfg = await self.TravianStorage.getServerConfig(serverKey);
+              if (svCfg) {
+                svCfg.activeVillage = villageId;
+                await self.TravianStorage.saveServerConfig(serverKey, svCfg);
+              }
+            }
+            logger.info('Village switched to ' + villageId + ' for ' + (serverKey || 'unknown'));
+            sendResponse({ success: true });
+          } else {
+            sendResponse({ success: false, error: 'No instance or villageId' });
+          }
+          break;
+        }
+
         // ---- Content Script Ready ----
         case 'CONTENT_READY': {
           if (sender && sender.tab) {

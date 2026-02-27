@@ -52,8 +52,19 @@ const dom = {
   btnScanBuildings: document.getElementById('btnScanBuildings'),
   upgradeList: document.getElementById('upgradeList'),
 
+  // Game settings
+  cfgTribe: document.getElementById('cfgTribe'),
+  cfgServerSpeed: document.getElementById('cfgServerSpeed'),
+  cfgGameDay: document.getElementById('cfgGameDay'),
+  cfgThreatLevel: document.getElementById('cfgThreatLevel'),
+  cfgMaxResLevel: document.getElementById('cfgMaxResLevel'),
+  cfgMaxBuildLevel: document.getElementById('cfgMaxBuildLevel'),
+  cfgLoopActive: document.getElementById('cfgLoopActive'),
+  cfgLoopIdle: document.getElementById('cfgLoopIdle'),
+
   // Troop training
   troopType: document.getElementById('troopType'),
+  troopBuilding: document.getElementById('troopBuilding'),
   troopBatch: document.getElementById('troopBatch'),
   troopMinRes: document.getElementById('troopMinRes'),
 
@@ -240,16 +251,26 @@ function updateStatus(status) {
   // Update status dot class
   dom.statusDot.className = 'status-dot ' + state;
 
-  // Update status text
+  // Update status text — show FSM state when running for granular feedback
   const stateLabels = {
     running: 'Running',
     stopped: 'Stopped',
     paused: 'Paused',
   };
+  const fsmLabels = {
+    SCANNING: 'Scanning',
+    DECIDING: 'Deciding',
+    EXECUTING: 'Executing',
+    COOLDOWN: 'Cooldown',
+    IDLE: 'Idle',
+  };
   // SAF-5 FIX: Show emergency reason when stopped due to emergency
   if (state === 'stopped' && status.emergencyReason) {
     dom.statusText.textContent = 'Emergency: ' + status.emergencyReason;
     dom.statusText.title = status.emergencyReason; // full text on hover
+  } else if (state === 'running' && status.botState && fsmLabels[status.botState]) {
+    dom.statusText.textContent = 'Running: ' + fsmLabels[status.botState];
+    dom.statusText.title = 'FSM state: ' + status.botState;
   } else {
     dom.statusText.textContent = stateLabels[state] || state;
     dom.statusText.title = '';
@@ -1088,6 +1109,16 @@ function collectConfig() {
     useAIScoring: dom.togAIScoring ? dom.togAIScoring.checked : true,
     autoTrapTraining: dom.togTrapTraining ? dom.togTrapTraining.checked : false,
     activeVillage: dom.villageSelect.value,
+    tribe: dom.cfgTribe ? dom.cfgTribe.value : 'gaul',
+    serverSpeed: dom.cfgServerSpeed ? parseInt(dom.cfgServerSpeed.value, 10) || 1 : 1,
+    gameDay: dom.cfgGameDay && dom.cfgGameDay.value !== '' ? parseInt(dom.cfgGameDay.value, 10) : null,
+    threatLevel: dom.cfgThreatLevel ? parseInt(dom.cfgThreatLevel.value, 10) || 0 : 0,
+    resourceConfig: {
+      maxLevel: dom.cfgMaxResLevel ? parseInt(dom.cfgMaxResLevel.value, 10) || 10 : 10,
+    },
+    buildingConfig: {
+      maxLevel: dom.cfgMaxBuildLevel ? parseInt(dom.cfgMaxBuildLevel.value, 10) || 10 : 10,
+    },
     upgradeTargets: collectUpgradeTargets(),
     scannedItems: {
       resources: scannedResources,
@@ -1096,7 +1127,7 @@ function collectConfig() {
     troopConfig: {
       defaultTroopType: dom.troopType.value,
       trainCount: parseInt(dom.troopBatch.value, 10) || 5,
-      trainingBuilding: 'barracks',
+      trainingBuilding: dom.troopBuilding ? dom.troopBuilding.value : 'barracks',
       minResourceThreshold: {
         wood: parseInt(dom.troopMinRes.value, 10) || 1000,
         clay: parseInt(dom.troopMinRes.value, 10) || 1000,
@@ -1130,13 +1161,41 @@ function collectConfig() {
       batchSize: parseInt(dom.trapBatchSize ? dom.trapBatchSize.value : '10', 10) || 10,
     },
     delays: {
-      min: parseInt(dom.delayMin.value, 10) || 2000,
-      max: parseInt(dom.delayMax.value, 10) || 8000,
+      minActionDelay: parseInt(dom.delayMin.value, 10) || 2000,
+      maxActionDelay: parseInt(dom.delayMax.value, 10) || 8000,
+      loopActiveMs: dom.cfgLoopActive ? (parseInt(dom.cfgLoopActive.value, 10) || 45) * 1000 : 45000,
+      loopIdleMs: dom.cfgLoopIdle ? (parseInt(dom.cfgLoopIdle.value, 10) || 180) * 1000 : 180000,
     },
     safetyConfig: {
       maxActionsPerHour: parseInt(dom.maxActions.value, 10) || 60,
     },
+    // Derive origin from farm scanner's village coordinates (used for risk distance calc)
+    origin: (dom.scanMyX && dom.scanMyX.value !== '' && dom.scanMyY && dom.scanMyY.value !== '')
+      ? { x: parseInt(dom.scanMyX.value, 10), y: parseInt(dom.scanMyY.value, 10) }
+      : null,
+    // Parse enemies from textarea: one "x,y" per line
+    enemies: parseEnemiesList(),
   };
+}
+
+/**
+ * Parse enemies list from textarea. Each line is "x,y" or "x, y".
+ * Returns array of {x, y} objects.
+ */
+function parseEnemiesList() {
+  var el = document.getElementById('cfgEnemies');
+  if (!el || !el.value.trim()) return [];
+  return el.value.trim().split('\n')
+    .map(function(line) {
+      var parts = line.trim().split(/[,\s]+/);
+      if (parts.length >= 2) {
+        var x = parseInt(parts[0], 10);
+        var y = parseInt(parts[1], 10);
+        if (!isNaN(x) && !isNaN(y)) return { x: x, y: y };
+      }
+      return null;
+    })
+    .filter(Boolean);
 }
 
 /**
@@ -1173,6 +1232,18 @@ function populateForm(config) {
     dom.villageSelect.value = config.activeVillage;
   }
 
+  // Game settings
+  if (config.tribe && dom.cfgTribe) dom.cfgTribe.value = config.tribe;
+  if (config.serverSpeed && dom.cfgServerSpeed) dom.cfgServerSpeed.value = String(config.serverSpeed);
+  if (config.gameDay && dom.cfgGameDay) dom.cfgGameDay.value = config.gameDay;
+  if (config.threatLevel !== undefined && dom.cfgThreatLevel) dom.cfgThreatLevel.value = String(config.threatLevel);
+  if (config.resourceConfig && config.resourceConfig.maxLevel && dom.cfgMaxResLevel) {
+    dom.cfgMaxResLevel.value = config.resourceConfig.maxLevel;
+  }
+  if (config.buildingConfig && config.buildingConfig.maxLevel && dom.cfgMaxBuildLevel) {
+    dom.cfgMaxBuildLevel.value = config.buildingConfig.maxLevel;
+  }
+
   // Upgrade targets + scanned items
   if (config.scannedItems) {
     scannedResources = config.scannedItems.resources || [];
@@ -1189,6 +1260,7 @@ function populateForm(config) {
   if (config.troopConfig) {
     var tc = config.troopConfig;
     if (tc.defaultTroopType || tc.type) dom.troopType.value = tc.defaultTroopType || tc.type;
+    if (tc.trainingBuilding && dom.troopBuilding) dom.troopBuilding.value = tc.trainingBuilding;
     if (tc.trainCount || tc.trainBatchSize) dom.troopBatch.value = tc.trainCount || tc.trainBatchSize;
     if (tc.minResourceThreshold && tc.minResourceThreshold.wood) {
       dom.troopMinRes.value = tc.minResourceThreshold.wood;
@@ -1261,14 +1333,30 @@ function populateForm(config) {
 
   // Delay settings
   if (config.delays) {
-    if (config.delays.min) dom.delayMin.value = config.delays.min;
-    if (config.delays.max) dom.delayMax.value = config.delays.max;
+    if (config.delays.minActionDelay) dom.delayMin.value = config.delays.minActionDelay;
+    else if (config.delays.min) dom.delayMin.value = config.delays.min; // legacy compat
+    if (config.delays.maxActionDelay) dom.delayMax.value = config.delays.maxActionDelay;
+    else if (config.delays.max) dom.delayMax.value = config.delays.max; // legacy compat
+    if (config.delays.loopActiveMs && dom.cfgLoopActive) {
+      dom.cfgLoopActive.value = Math.round(config.delays.loopActiveMs / 1000);
+    }
+    if (config.delays.loopIdleMs && dom.cfgLoopIdle) {
+      dom.cfgLoopIdle.value = Math.round(config.delays.loopIdleMs / 1000);
+    }
   }
 
   // Safety config
   if (config.safetyConfig) {
     if (config.safetyConfig.maxActionsPerHour) {
       dom.maxActions.value = config.safetyConfig.maxActionsPerHour;
+    }
+  }
+
+  // Enemies list
+  if (config.enemies && config.enemies.length > 0) {
+    var enemiesEl = document.getElementById('cfgEnemies');
+    if (enemiesEl) {
+      enemiesEl.value = config.enemies.map(function(e) { return e.x + ',' + e.y; }).join('\n');
     }
   }
 }
@@ -1382,6 +1470,7 @@ function refreshStatus() {
 
         updateStatus({
           state: state,
+          botState: s.botState || null, // FSM granular state
           emergencyReason: s.emergencyReason || null, // SAF-5 FIX
           stats: {
             completed: s.stats ? s.stats.tasksCompleted : 0,
@@ -1548,6 +1637,30 @@ function renderStrategyDashboard(data) {
 
   html += '</div>';
 
+  // --- Phase Strategy Tips ---
+  if (strategyInfo.priorities || strategyInfo.avoid || strategyInfo.tips) {
+    html += '<div class="strategy-tips">';
+    if (strategyInfo.priorities && strategyInfo.priorities.length > 0) {
+      html += '<div class="tips-group"><span class="tips-label">Priorities:</span> ' + strategyInfo.priorities.map(escapeHtml).join(', ') + '</div>';
+    }
+    if (strategyInfo.avoid && strategyInfo.avoid.length > 0) {
+      html += '<div class="tips-group tips-avoid"><span class="tips-label">Avoid:</span> ' + strategyInfo.avoid.map(escapeHtml).join(', ') + '</div>';
+    }
+    if (strategyInfo.tips && strategyInfo.tips.length > 0) {
+      html += '<div class="tips-group tips-info"><span class="tips-label">Tips:</span> ' + strategyInfo.tips.map(escapeHtml).join(' | ') + '</div>';
+    }
+    html += '</div>';
+  }
+
+  // --- Resource Overflow Warning ---
+  var resOpt = analysis.resourceOptimization || {};
+  if (resOpt.overflow && resOpt.overflow.length > 0) {
+    html += '<div class="strategy-overflow">';
+    html += '<span class="overflow-icon">!</span> Overflow risk: ';
+    html += resOpt.overflow.map(function(o) { return escapeHtml(o.resource || o) + (o.timeToFull ? ' (~' + o.timeToFull + ')' : ''); }).join(', ');
+    html += '</div>';
+  }
+
   // --- AI Recommendations ---
   var recs = analysis.recommendations || [];
   if (recs.length > 0) {
@@ -1570,6 +1683,64 @@ function renderStrategyDashboard(data) {
       html += '</div>';
     }
 
+    html += '</div>';
+  }
+
+  // --- Build Order ---
+  var buildOrder = analysis.buildOrder || [];
+  if (buildOrder.length > 0) {
+    html += '<div class="strategy-recs">';
+    html += '<div class="strategy-recs-title">Build Order</div>';
+    var boCount = Math.min(buildOrder.length, 5);
+    for (var bi = 0; bi < boCount; bi++) {
+      var bo = buildOrder[bi];
+      html += '<div class="strategy-rec">';
+      html += '<span class="rec-rank">#' + (bi + 1) + '</span>';
+      html += '<span class="rec-badge cat-build">build</span>';
+      html += '<div class="rec-body">';
+      html += '<div class="rec-action">' + escapeHtml(bo.building || bo.action || bo.name || '') + (bo.level ? ' Lv.' + bo.level : '') + '</div>';
+      if (bo.roi) html += '<div class="rec-reason">ROI: ' + escapeHtml(String(bo.roi)) + 'h payback</div>';
+      else if (bo.reason) html += '<div class="rec-reason">' + escapeHtml(bo.reason) + '</div>';
+      html += '</div>';
+      html += '</div>';
+    }
+    html += '</div>';
+  }
+
+  // --- Troop Strategy ---
+  var troopStrat = analysis.troopStrategy || analysis.militaryAnalysis || {};
+  if (troopStrat.primaryUnit || troopStrat.recommendation) {
+    html += '<div class="strategy-recs">';
+    html += '<div class="strategy-recs-title">Troop Strategy</div>';
+    html += '<div class="strategy-rec">';
+    html += '<span class="rec-badge cat-military">military</span>';
+    html += '<div class="rec-body">';
+    if (troopStrat.primaryUnit) html += '<div class="rec-action">Primary: ' + escapeHtml(troopStrat.primaryUnit) + '</div>';
+    if (troopStrat.recommendation) html += '<div class="rec-reason">' + escapeHtml(troopStrat.recommendation) + '</div>';
+    if (troopStrat.defenseRating) html += '<div class="rec-reason">Defense: ' + escapeHtml(String(troopStrat.defenseRating)) + '</div>';
+    html += '</div>';
+    html += '</div>';
+    html += '</div>';
+  }
+
+  // --- Farming Analysis ---
+  var farmAnal = analysis.farmingAnalysis || {};
+  if (farmAnal.efficiency || farmAnal.topTargets) {
+    html += '<div class="strategy-recs">';
+    html += '<div class="strategy-recs-title">Farming Analysis</div>';
+    if (farmAnal.efficiency) {
+      html += '<div class="strategy-rec"><span class="rec-badge cat-farm">farm</span><div class="rec-body"><div class="rec-action">Efficiency: ' + escapeHtml(String(farmAnal.efficiency)) + '</div></div></div>';
+    }
+    if (farmAnal.topTargets && farmAnal.topTargets.length > 0) {
+      var ftCount = Math.min(farmAnal.topTargets.length, 3);
+      for (var fi = 0; fi < ftCount; fi++) {
+        var ft = farmAnal.topTargets[fi];
+        html += '<div class="strategy-rec"><span class="rec-rank">#' + (fi + 1) + '</span><span class="rec-badge cat-farm">target</span>';
+        html += '<div class="rec-body"><div class="rec-action">' + escapeHtml(ft.name || ('(' + ft.x + '|' + ft.y + ')')) + '</div>';
+        if (ft.score) html += '<div class="rec-reason">Score: ' + ft.score + '</div>';
+        html += '</div></div>';
+      }
+    }
     html += '</div>';
   }
 
@@ -1756,10 +1927,12 @@ function bindEvents() {
     dom.togTroopTraining,
     dom.togFarming,
     dom.togHeroAdventure,
+    dom.togAIScoring,
+    dom.togTrapTraining,
     dom.togUseFarmList,
     dom.togSmartFarming,
     dom.togSkipLosses,
-  ];
+  ].filter(Boolean);
 
   toggles.forEach((toggle) => {
     toggle.addEventListener('change', () => {
