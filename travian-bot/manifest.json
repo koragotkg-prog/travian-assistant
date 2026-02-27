@@ -16,7 +16,11 @@
     "*://*.travian.co.uk/*",
     "*://*.travian.de/*",
     "*://*.travian.us/*",
-    "*://*.travelian.net/*",
+    "*://*.travian.net/*",
+    "*://*.travian.cl/*",
+    "*://*.travian.com.br/*",
+    "*://*.travian.co.id/*",
+    "*://*.travian.asia/*",
     "*://*.kingdoms.com/*"
   ],
   "background": {
@@ -52,5 +56,18 @@
     "16": "icons/icon16.png",
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
-  }
+  },
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "dashboard/index.html", 
+        "dashboard/styles.css", 
+        "dashboard/dashboard.js", 
+        "shared/constants.js",
+        "shared/formatters.js",
+        "shared/ui-client.js"
+      ],
+      "matches": ["<all_urls>"]
+    }
+  ]
 }

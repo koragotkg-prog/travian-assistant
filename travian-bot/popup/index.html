@@ -1,472 +1,137 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
   <meta charset="UTF-8">
-  <link rel="stylesheet" href="styles.css">
+  <title>Travian Assistant</title>
+  <link rel="stylesheet" href="popup.css">
 </head>
 <body>
 
-  <!-- ===== FIXED HEADER ===== -->
-  <header>
-    <div class="header-brand">
-      <span class="header-icon">⚡</span>
-      <h1>TRAVIAN BOT</h1>
-    </div>
-    <div class="header-status">
-      <span class="status-dot" id="statusDot"></span>
-      <span id="statusText">Stopped</span>
-    </div>
-  </header>
+  <div class="popup">
 
-  <!-- Server Selector -->
-  <div class="server-bar">
-    <span class="server-label">Server:</span>
-    <select id="serverSelect"><option value="">No Server</option></select>
-  </div>
-
-  <!-- Village Selector (compact, inside header area) -->
-  <div class="village-bar">
-    <select id="villageSelect"><option value="">-- Select Village --</option></select>
-  </div>
-
-  <!-- ===== TAB BAR ===== -->
-  <nav class="tab-bar">
-    <button class="tab-btn active" data-tab="dash" id="tabDash">
-      <span class="tab-icon">🎮</span><span class="tab-label">Dash</span>
-    </button>
-    <button class="tab-btn" data-tab="config" id="tabConfig">
-      <span class="tab-icon">⚙️</span><span class="tab-label">Config</span>
-    </button>
-    <button class="tab-btn" data-tab="ai" id="tabAI">
-      <span class="tab-icon">🧠</span><span class="tab-label">AI</span>
-    </button>
-    <button class="tab-btn" data-tab="logs" id="tabLogs">
-      <span class="tab-icon">📋</span><span class="tab-label">Logs</span>
-    </button>
-  </nav>
-
-  <!-- ===== TAB CONTENT AREA (scrollable) ===== -->
-  <main class="tab-content">
-
-    <!-- ===== TAB: DASHBOARD ===== -->
-    <div class="tab-panel active" id="panelDash">
-
-      <!-- Stats Cards (2x2) -->
-      <section id="statsBar" class="stats-grid">
-        <div class="stat-card">
-          <span class="stat-icon">⚡</span>
-          <span class="stat-value" id="statCompleted">0</span>
-          <span class="stat-label">Completed</span>
-        </div>
-        <div class="stat-card stat-card--danger">
-          <span class="stat-icon">✕</span>
-          <span class="stat-value" id="statFailed">0</span>
-          <span class="stat-label">Failed</span>
-        </div>
-        <div class="stat-card">
-          <span class="stat-icon">⏱</span>
-          <span class="stat-value" id="statUptime">--</span>
-          <span class="stat-label">Uptime</span>
-        </div>
-        <div class="stat-card">
-          <span class="stat-icon">📊</span>
-          <span class="stat-value" id="statRate">0</span>
-          <span class="stat-label">Actions/hr</span>
-        </div>
-      </section>
-
-      <!-- Info Strip: Next Action + Farm Stats -->
-      <div class="info-strip" id="infoStrip">
-        <span class="info-strip-item"><span class="info-strip-icon">⏳</span> Next: <span id="nextActionTimer">--</span></span>
-        <span class="info-strip-item"><span class="info-strip-icon">⚔</span> Raids: <span id="farmRaidStats">0</span></span>
-          <span class="info-strip-item"><span class="info-strip-icon">🪤</span> Traps: <span id="trapperStatus">--</span></span>
+    <!-- ═══ HEADER ═══ -->
+    <header class="hdr">
+      <div class="hdr-brand">
+        <svg class="hdr-logo" viewBox="0 0 24 24" width="18" height="18">
+          <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <span class="hdr-title">TRAVIAN CTRL</span>
       </div>
+      <div class="hdr-right">
+        <span class="hdr-server" id="serverLabel">--</span>
+        <div class="hdr-dot" id="statusDot"></div>
+      </div>
+    </header>
 
-      <!-- Resource Overview -->
-      <section id="resourceSection" class="card">
-        <h3 class="section-title">Resources</h3>
-        <div class="resource-bars" id="resourceBars">
-          <div class="resource-row" data-res="wood">
-            <span class="res-label">Wood</span>
-            <div class="res-bar-track"><div class="res-bar-fill res-fill-wood" id="resBarWood"></div></div>
-            <span class="res-value" id="resValWood">--</span>
-            <span class="res-prod" id="resProdWood"></span>
-          </div>
-          <div class="resource-row" data-res="clay">
-            <span class="res-label">Clay</span>
-            <div class="res-bar-track"><div class="res-bar-fill res-fill-clay" id="resBarClay"></div></div>
-            <span class="res-value" id="resValClay">--</span>
-            <span class="res-prod" id="resProdClay"></span>
-          </div>
-          <div class="resource-row" data-res="iron">
-            <span class="res-label">Iron</span>
-            <div class="res-bar-track"><div class="res-bar-fill res-fill-iron" id="resBarIron"></div></div>
-            <span class="res-value" id="resValIron">--</span>
-            <span class="res-prod" id="resProdIron"></span>
-          </div>
-          <div class="resource-row" data-res="crop">
-            <span class="res-label">Crop</span>
-            <div class="res-bar-track"><div class="res-bar-fill res-fill-crop" id="resBarCrop"></div></div>
-            <span class="res-value" id="resValCrop">--</span>
-            <span class="res-prod" id="resProdCrop"></span>
-          </div>
-        </div>
-      </section>
+    <!-- ═══ HERO STATUS ═══ -->
+    <section class="hero" id="heroSection">
+      <div class="hero-state" id="heroState">OFFLINE</div>
+      <div class="hero-cycle" id="heroCycle">--</div>
+      <div class="hero-task" id="heroTask">No active task</div>
+      <div class="hero-ai" id="heroAI"></div>
+    </section>
 
-      <!-- Build Queue -->
-      <section id="buildQueueSection" class="card">
-        <h3 class="section-title">Build Queue</h3>
-        <div id="buildQueueDisplay" class="build-queue-list">
-          <span class="text-muted-italic">No active construction</span>
-        </div>
-      </section>
-
-      <!-- Troop Summary -->
-      <section id="troopSummary" class="card">
-        <h3 class="section-title">Troops</h3>
-        <div id="troopDisplay" class="troop-grid">
-          <span class="text-muted-italic">No troop data</span>
-        </div>
-      </section>
-
-        <!-- Quest Progress -->
-        <section id="questSection" class="card" style="display:none;">
-          <h3 class="section-title">Quests</h3>
-          <div id="questDisplay" class="quest-list"></div>
-        </section>
-
-      <!-- Current Task -->
-      <section id="currentTask" class="card">
-        <h3 class="section-title">Current Task</h3>
-        <div id="taskInfo" class="task-display">Idle</div>
-            <div id="taskAIReason" class="task-ai-reason"></div>
-        <div class="progress-bar-track" id="taskProgressTrack">
-          <div class="progress-bar-fill" id="taskProgressFill"></div>
-        </div>
-      </section>
-
-      <!-- Feature Toggles (compact pills) -->
-      <section id="features" class="card">
-        <h3 class="section-title">Features</h3>
-        <div class="toggle-grid">
-          <label class="toggle-pill"><input type="checkbox" id="togResourceUpgrade" checked><span>Resources</span></label>
-          <label class="toggle-pill"><input type="checkbox" id="togBuildingUpgrade" checked><span>Buildings</span></label>
-          <label class="toggle-pill"><input type="checkbox" id="togTroopTraining"><span>Troops</span></label>
-          <label class="toggle-pill"><input type="checkbox" id="togFarming" checked><span>Farming</span></label>
-          <label class="toggle-pill"><input type="checkbox" id="togHeroAdventure" checked><span>Adventure</span></label>
-          <label class="toggle-pill"><input type="checkbox" id="togAIScoring" checked><span>AI Scoring</span></label>
-          <label class="toggle-pill"><input type="checkbox" id="togTrapTraining"><span>Traps</span></label>
-        </div>
-      </section>
-
-      <!-- Task Queue -->
-      <section id="queueSection" class="card">
-        <div class="section-header">
-          <h3 class="section-title">Task Queue <span id="queueCount" class="badge">(0)</span></h3>
-          <button id="btnClearQueue" class="btn-icon btn-danger-subtle" title="Clear Queue">🗑</button>
-        </div>
-        <div id="taskQueueList" class="queue-list"></div>
-      </section>
-
+    <!-- ═══ ERROR BANNER (hidden by default) ═══ -->
+    <div class="err-banner hidden" id="errBanner">
+      <svg viewBox="0 0 24 24" width="14" height="14"><path d="M12 9v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      <span id="errText"></span>
     </div>
 
-    <!-- ===== TAB: CONFIG ===== -->
-    <div class="tab-panel" id="panelConfig">
+    <!-- ═══ RESOURCE BARS ═══ -->
+    <section class="res-section">
+      <div class="res-row" data-res="wood">
+        <span class="res-icon">W</span>
+        <div class="res-track"><div class="res-fill" id="barWood"></div></div>
+        <span class="res-pct" id="pctWood">--%</span>
+        <span class="res-prod" id="prodWood">--</span>
+      </div>
+      <div class="res-row" data-res="clay">
+        <span class="res-icon">C</span>
+        <div class="res-track"><div class="res-fill" id="barClay"></div></div>
+        <span class="res-pct" id="pctClay">--%</span>
+        <span class="res-prod" id="prodClay">--</span>
+      </div>
+      <div class="res-row" data-res="iron">
+        <span class="res-icon">I</span>
+        <div class="res-track"><div class="res-fill" id="barIron"></div></div>
+        <span class="res-pct" id="pctIron">--%</span>
+        <span class="res-prod" id="prodIron">--</span>
+      </div>
+      <div class="res-row" data-res="crop">
+        <span class="res-icon">K</span>
+        <div class="res-track"><div class="res-fill" id="barCrop"></div></div>
+        <span class="res-pct" id="pctCrop">--%</span>
+        <span class="res-prod" id="prodCrop">--</span>
+      </div>
+    </section>
 
-      <!-- Game Settings -->
-      <section id="gameSettingsSection" class="card">
-        <h3 class="section-title">Game Settings</h3>
-        <div class="form-row">
-          <div class="form-group form-group--third">
-            <label class="form-label">Tribe</label>
-            <select id="cfgTribe">
-              <option value="gaul">Gaul</option>
-              <option value="roman">Roman</option>
-              <option value="teuton">Teuton</option>
-            </select>
-          </div>
-          <div class="form-group form-group--third">
-            <label class="form-label">Server Speed</label>
-            <select id="cfgServerSpeed">
-              <option value="1">1x</option>
-              <option value="2">2x</option>
-              <option value="3">3x</option>
-              <option value="5">5x</option>
-              <option value="10">10x</option>
-            </select>
-          </div>
-          <div class="form-group form-group--third">
-            <label class="form-label">Game Day</label>
-            <input type="number" id="cfgGameDay" value="" min="1" max="365" placeholder="auto">
-          </div>
-        </div>
-        <div class="form-row">
-          <div class="form-group form-group--third">
-            <label class="form-label">Threat Level</label>
-            <select id="cfgThreatLevel">
-              <option value="0">0 - None</option>
-              <option value="1">1 - Low</option>
-              <option value="2">2</option>
-              <option value="3">3 - Medium</option>
-              <option value="5">5 - High</option>
-              <option value="8">8 - Critical</option>
-              <option value="10">10 - Max</option>
-            </select>
-          </div>
-          <div class="form-group form-group--third">
-            <label class="form-label">Max Res Lvl</label>
-            <input type="number" id="cfgMaxResLevel" value="10" min="1" max="20">
-          </div>
-          <div class="form-group form-group--third">
-            <label class="form-label">Max Bld Lvl</label>
-            <input type="number" id="cfgMaxBuildLevel" value="10" min="1" max="20">
-          </div>
-        </div>
-        <div class="form-group" style="margin-top:4px">
-          <label class="form-label">Enemy Positions <span class="text-muted">(one x,y per line)</span></label>
-          <textarea id="cfgEnemies" class="cfg-textarea" rows="2" placeholder="e.g. -50,30&#10;100,-20"></textarea>
-        </div>
-      </section>
+    <!-- ═══ STATS STRIP ═══ -->
+    <section class="stats-strip">
+      <div class="stat-cell">
+        <span class="stat-num" id="statTasks">0</span>
+        <span class="stat-lbl">DONE</span>
+      </div>
+      <div class="stat-div"></div>
+      <div class="stat-cell">
+        <span class="stat-num" id="statFarms">0</span>
+        <span class="stat-lbl">FARMS</span>
+      </div>
+      <div class="stat-div"></div>
+      <div class="stat-cell">
+        <span class="stat-num" id="statQueue">0</span>
+        <span class="stat-lbl">QUEUE</span>
+      </div>
+      <div class="stat-div"></div>
+      <div class="stat-cell">
+        <span class="stat-num" id="statUptime">--</span>
+        <span class="stat-lbl">UP</span>
+      </div>
+    </section>
 
-      <!-- Upgrade Targets -->
-      <section id="upgradeSection" class="card">
-        <div class="section-header">
-          <h3 class="section-title">Upgrade Targets</h3>
-          <button id="btnScanBuildings" class="btn-small btn-glow">Scan</button>
-        </div>
-        <div id="upgradeList" class="upgrade-list">
-          <div class="upgrade-empty">Click "Scan" while on a Travian page to load buildings.</div>
-        </div>
-      </section>
+    <!-- ═══ NEXT ACTION ═══ -->
+    <section class="next-action">
+      <span class="next-label">NEXT</span>
+      <span class="next-task" id="nextTask">--</span>
+      <span class="next-timer" id="nextTimer">--:--</span>
+    </section>
 
-      <!-- Troop Training -->
-      <section id="troopSection" class="card">
-        <h3 class="section-title">Troop Training</h3>
-        <div class="form-group">
-          <label class="form-label">Troop Type</label>
-          <select id="troopType">
-            <option value="">-- Select --</option>
-            <option value="t1">Legionnaire/Phalanx/Clubswinger</option>
-            <option value="t2">Praetorian/Swordsman/Spearfighter</option>
-            <option value="t3">Imperian/Pathfinder/Axefighter</option>
-            <option value="t4">Scout</option>
-            <option value="t5">Cavalry</option>
-          </select>
-        </div>
-        <div class="form-row">
-          <div class="form-group form-group--half">
-            <label class="form-label">Building</label>
-            <select id="troopBuilding">
-              <option value="barracks">Barracks</option>
-              <option value="stable">Stable</option>
-              <option value="workshop">Workshop</option>
-              <option value="great_barracks">Great Barracks</option>
-              <option value="great_stable">Great Stable</option>
-            </select>
-          </div>
-          <div class="form-group form-group--half">
-            <label class="form-label">Batch Size</label>
-            <input type="number" id="troopBatch" value="5" min="1" max="100">
-          </div>
-        </div>
-        <div class="form-group">
-          <label class="form-label">Min Resources</label>
-          <input type="number" id="troopMinRes" value="1000" min="0" step="100">
-        </div>
-      </section>
+    <!-- ═══ CONTROLS ═══ -->
+    <section class="ctrl-bar">
+      <button class="ctrl-btn ctrl--start" id="btnStart" title="Start">
+        <svg viewBox="0 0 24 24" width="16" height="16"><polygon points="6,4 20,12 6,20" fill="currentColor"/></svg>
+        <span>Start</span>
+      </button>
+      <button class="ctrl-btn ctrl--pause hidden" id="btnPause" title="Pause">
+        <svg viewBox="0 0 24 24" width="16" height="16"><rect x="5" y="4" width="4" height="16" rx="1" fill="currentColor"/><rect x="15" y="4" width="4" height="16" rx="1" fill="currentColor"/></svg>
+        <span>Pause</span>
+      </button>
+      <button class="ctrl-btn ctrl--resume hidden" id="btnResume" title="Resume">
+        <svg viewBox="0 0 24 24" width="16" height="16"><polygon points="6,4 20,12 6,20" fill="currentColor"/></svg>
+        <span>Resume</span>
+      </button>
+      <button class="ctrl-btn ctrl--stop hidden" id="btnStop" title="Stop">
+        <svg viewBox="0 0 24 24" width="16" height="16"><rect x="5" y="5" width="14" height="14" rx="2" fill="currentColor"/></svg>
+        <span>Stop</span>
+      </button>
+      <button class="ctrl-btn ctrl--emg" id="btnEmergency" title="Emergency Stop">
+        <svg viewBox="0 0 24 24" width="16" height="16"><path d="M12 9v4m0 4h.01M12 3l9.5 16.5H2.5L12 3z" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+    </section>
 
-        <!-- Trap Training (Gaul) -->
-        <section id="trapSection" class="card">
-          <h3 class="section-title">Trap Training</h3>
-          <div class="form-row">
-            <div class="form-group form-group--half">
-              <label class="form-label">Batch Size</label>
-              <input type="number" id="trapBatchSize" value="10" min="1" max="99">
-            </div>
-          </div>
-        </section>
+    <!-- ═══ FOOTER ═══ -->
+    <footer class="ftr">
+      <button class="ftr-btn" id="btnDashboard">
+        <svg viewBox="0 0 24 24" width="14" height="14"><rect x="3" y="3" width="7" height="7" rx="1" fill="none" stroke="currentColor" stroke-width="2"/><rect x="14" y="3" width="7" height="7" rx="1" fill="none" stroke="currentColor" stroke-width="2"/><rect x="3" y="14" width="7" height="7" rx="1" fill="none" stroke="currentColor" stroke-width="2"/><rect x="14" y="14" width="7" height="7" rx="1" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+        Open Dashboard
+        <svg viewBox="0 0 24 24" width="12" height="12"><path d="M7 17l9.2-9.2M17 17V8H8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+    </footer>
 
-      <!-- Farming Configuration -->
-      <section id="farmSection" class="card">
-        <h3 class="section-title">Farming</h3>
-        <div class="form-row">
-          <div class="form-group form-group--half">
-            <label class="form-label">Interval (sec)</label>
-            <input type="number" id="farmInterval" value="300" min="60" max="3600">
-          </div>
-          <div class="form-group form-group--half">
-            <label class="form-label">Min Troops</label>
-            <input type="number" id="farmMinTroops" value="10" min="1">
-          </div>
-        </div>
-        <label class="toggle-pill toggle-pill--wide"><input type="checkbox" id="togUseFarmList" checked><span>Use Rally Point Farm Lists</span></label>
-        <label class="toggle-pill toggle-pill--wide"><input type="checkbox" id="togSmartFarming" checked><span>Smart Farming (skip low-loot targets)</span></label>
-        <div id="smartFarmConfig" class="form-row" style="margin-top:4px">
-          <div class="form-group form-group--half">
-            <label class="form-label">Min Loot</label>
-            <input type="number" id="farmMinLoot" value="30" min="0" max="500">
-          </div>
-          <div class="form-group form-group--half">
-            <label class="toggle-pill"><input type="checkbox" id="togSkipLosses" checked><span>Skip Losses</span></label>
-          </div>
-        </div>
-        <div id="farmListInfo" class="info-text">
-          Smart Farming selectively sends only to profitable targets. Disable for legacy send-all.
-        </div>
-        <div class="farm-scanner-section" style="margin-top:8px; padding-top:8px; border-top:1px solid rgba(255,255,255,0.06);">
-          <h4 class="section-subtitle">Farm Target Scanner</h4>
-          <div class="form-row">
-            <div class="form-group form-group--half">
-              <label class="form-label">My Village X</label>
-              <input type="number" id="scanMyX" placeholder="X" min="-400" max="400">
-            </div>
-            <div class="form-group form-group--half">
-              <label class="form-label">My Village Y</label>
-              <input type="number" id="scanMyY" placeholder="Y" min="-400" max="400">
-            </div>
-          </div>
-          <div class="form-row">
-            <div class="form-group form-group--half">
-              <label class="form-label">Scan Radius</label>
-              <input type="number" id="scanRadius" value="20" min="1" max="100">
-            </div>
-            <div class="form-group form-group--half">
-              <label class="form-label">Max Population</label>
-              <input type="number" id="scanMaxPop" value="50" min="1" max="500">
-            </div>
-          </div>
-          <div class="form-row" style="margin-top:4px">
-            <div class="form-group form-group--half">
-              <label class="toggle-pill"><input type="checkbox" id="togScanOases" checked><span>Include Oases</span></label>
-            </div>
-            <div class="form-group form-group--half">
-              <label class="toggle-pill"><input type="checkbox" id="togScanSkipAlliance" checked><span>Skip Alliance</span></label>
-            </div>
-          </div>
-          <div class="form-row" style="margin-top:4px">
-            <div class="form-group">
-              <label class="toggle-pill"><input type="checkbox" id="togScanEmptyOases" checked><span>Empty Oases Only (no animals)</span></label>
-            </div>
-          </div>
-          <div class="form-row" style="margin-top:4px">
-            <div class="form-group form-group--half">
-              <label class="form-label">Troop Slot (t1-t10)</label>
-              <select id="scanTroopSlot">
-                <option value="t1">t1 (default raider)</option>
-                <option value="t2">t2</option>
-                <option value="t3">t3</option>
-                <option value="t4">t4</option>
-                <option value="t5">t5</option>
-                <option value="t6">t6</option>
-              </select>
-            </div>
-            <div class="form-group form-group--half">
-              <label class="form-label">Troops per target</label>
-              <input type="number" id="scanTroopCount" value="1" min="1" max="1000">
-            </div>
-          </div>
-          <button id="btnScanFarmTargets" class="btn-small btn-glow" style="margin-top:6px; width:100%;">Scan Map for Targets</button>
-          <div id="scanFarmResult" class="info-text" style="margin-top:4px">--</div>
-        </div>
-        <div id="farmTargets" class="farm-targets-section">
-          <h4 class="section-subtitle">Manual Targets <span class="text-muted">(used when Farm Lists disabled)</span></h4>
-          <div id="farmTargetList"></div>
-          <div class="farm-add">
-            <input type="number" id="farmX" placeholder="X" class="input-sm">
-            <input type="number" id="farmY" placeholder="Y" class="input-sm">
-            <input type="text" id="farmName" placeholder="Name" class="input-sm input-name">
-            <button id="btnAddFarm" class="btn-small btn-glow">Add</button>
-          </div>
-        </div>
-      </section>
+  </div>
 
-      <!-- Timing & Safety -->
-      <section id="delaySection" class="card">
-        <h3 class="section-title">Timing & Safety</h3>
-        <div class="form-row">
-          <div class="form-group form-group--third">
-            <label class="form-label">Min Delay (ms)</label>
-            <input type="number" id="delayMin" value="2000" min="500" step="500">
-          </div>
-          <div class="form-group form-group--third">
-            <label class="form-label">Max Delay (ms)</label>
-            <input type="number" id="delayMax" value="8000" min="1000" step="500">
-          </div>
-          <div class="form-group form-group--third">
-            <label class="form-label">Max Act/hr</label>
-            <input type="number" id="maxActions" value="60" min="10" max="200">
-          </div>
-        </div>
-        <div class="form-row">
-          <div class="form-group form-group--half">
-            <label class="form-label">Loop Active (sec)</label>
-            <input type="number" id="cfgLoopActive" value="45" min="10" max="300">
-          </div>
-          <div class="form-group form-group--half">
-            <label class="form-label">Loop Idle (sec)</label>
-            <input type="number" id="cfgLoopIdle" value="180" min="30" max="600">
-          </div>
-        </div>
-      </section>
-
-      <!-- Hero Adventure -->
-      <section id="heroSection" class="card">
-        <h3 class="section-title">Hero Adventure</h3>
-        <div class="form-group">
-          <label class="form-label">Min Health (%)</label>
-          <input type="number" id="heroMinHealth" value="30" min="0" max="100">
-        </div>
-      </section>
-
-      <!-- Save Button (sticky) -->
-      <section id="saveSection" class="save-section save-section--sticky">
-        <button id="btnSaveAll" class="btn-primary btn-glow-primary">💾 Save All Settings</button>
-      </section>
-
-    </div>
-
-    <!-- ===== TAB: AI STRATEGY ===== -->
-    <div class="tab-panel" id="panelAI">
-      <section id="strategySection" class="card">
-        <div class="section-header">
-          <h3 class="section-title">AI Strategy</h3>
-          <button id="btnRefreshStrategy" class="btn-small btn-glow">Refresh</button>
-        </div>
-        <div id="strategyDashboard" class="strategy-dashboard">
-          <div class="strategy-placeholder">Bot not running — start bot to see AI analysis.</div>
-        </div>
-      </section>
-    </div>
-
-    <!-- ===== TAB: LOGS ===== -->
-    <div class="tab-panel" id="panelLogs">
-      <section id="logsSection" class="card">
-        <div class="section-header">
-          <h3 class="section-title">Activity Log</h3>
-          <button id="btnClearLogs" class="btn-icon btn-danger-subtle" title="Clear Logs">🗑</button>
-        </div>
-        <div class="log-filters">
-          <select id="logLevel">
-            <option value="all">All Levels</option>
-            <option value="INFO">Info</option>
-            <option value="WARN">Warnings</option>
-            <option value="ERROR">Errors</option>
-          </select>
-        </div>
-        <div id="logViewer" class="log-area"></div>
-      </section>
-    </div>
-
-  </main>
-
-  <!-- ===== FIXED CONTROL BAR ===== -->
-  <footer class="control-bar">
-    <button id="btnStart" class="ctrl-btn ctrl-btn--start">▶ Start</button>
-    <button id="btnPause" class="ctrl-btn ctrl-btn--pause" disabled>⏸ Pause</button>
-    <button id="btnStop" class="ctrl-btn ctrl-btn--stop" disabled>⏹ Stop</button>
-    <button id="btnEmergency" class="ctrl-btn ctrl-btn--emergency" title="Emergency Stop">⚠</button>
-  </footer>
-
+  <script src="../shared/constants.js"></script>
+  <script src="../shared/formatters.js"></script>
+  <script src="../shared/ui-client.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

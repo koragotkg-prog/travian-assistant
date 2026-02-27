@@ -354,6 +354,38 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
           break;
         }
 
+        case 'ADD_TASK': {
+          var atInst = resolveInstance(message, sender);
+          if (atInst && atInst.engine.taskQueue) {
+            var tType = message.taskType || (data && data.taskType);
+            var tParams = message.params || (data && data.params) || {};
+            var tPrio = message.priority || (data && data.priority) || 5;
+            var tVid = message.villageId || (data && data.villageId) || null;
+            
+            if (tType) {
+              var newId = atInst.engine.taskQueue.add(tType, tParams, tPrio, tVid);
+              sendResponse({ success: true, data: { taskId: newId } });
+            } else {
+              sendResponse({ success: false, error: 'Missing taskType' });
+            }
+          } else {
+            sendResponse({ success: false, error: 'No instance found' });
+          }
+          break;
+        }
+
+        case 'REMOVE_TASK': {
+          var rtInst = resolveInstance(message, sender);
+          var rTaskId = message.taskId || (data && data.taskId);
+          if (rtInst && rtInst.engine.taskQueue && rTaskId) {
+            var removed = rtInst.engine.taskQueue.remove(rTaskId);
+            sendResponse({ success: removed });
+          } else {
+            sendResponse({ success: false, error: 'No instance or taskId' });
+          }
+          break;
+        }
+
         case 'CLEAR_QUEUE': {
           var cqInst = resolveInstance(message, sender);
           if (cqInst && cqInst.engine.taskQueue) cqInst.engine.taskQueue.clear();

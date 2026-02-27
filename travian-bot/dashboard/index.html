@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TRAVIAN CTRL — Mission Control</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+  <div class="mc">
+
+    <!-- ═══ SIDEBAR ═══ -->
+    <aside class="sidebar">
+      <div class="sb-brand">
+        <svg viewBox="0 0 24 24" width="20" height="20">
+          <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <span>TRAVIAN CTRL</span>
+      </div>
+
+      <nav class="sb-nav">
+        <a href="#" class="sb-link active" data-view="overview">
+          <span class="sb-ico">&#x25C8;</span> Overview
+        </a>
+        <a href="#" class="sb-link" data-view="tasks">
+          <span class="sb-ico">&#x25A3;</span> Task Queue
+          <span class="sb-badge" id="navQueueCount">0</span>
+        </a>
+        <a href="#" class="sb-link" data-view="strategy">
+          <span class="sb-ico">&#x25B2;</span> AI Strategy
+        </a>
+        <a href="#" class="sb-link" data-view="config">
+          <span class="sb-ico">&#x2699;</span> Config
+        </a>
+        <a href="#" class="sb-link" data-view="diagnostics">
+          <span class="sb-ico">&#x2665;</span> Diagnostics
+        </a>
+        <a href="#" class="sb-link" data-view="logs">
+          <span class="sb-ico">&#x2261;</span> Logs
+        </a>
+        <a href="#" class="sb-link" data-view="debug">
+          <span class="sb-ico">{}</span> Debug
+        </a>
+      </nav>
+
+      <div class="sb-footer">
+        <span class="sb-ver">v2.1.0 — Mission Control</span>
+      </div>
+    </aside>
+
+    <!-- ═══ MAIN CONTENT ═══ -->
+    <main class="main">
+
+      <!-- Top Command Bar -->
+      <header class="cmd-bar">
+        <div class="cmd-left">
+          <div class="cmd-server">
+            <span class="cmd-label">SERVER</span>
+            <select id="serverSelect">
+              <option value="">Detecting...</option>
+            </select>
+          </div>
+          <div class="cmd-status" id="globalStatus">
+            <div class="cmd-dot"></div>
+            <span class="cmd-state">Connecting...</span>
+          </div>
+        </div>
+        <div class="cmd-right">
+          <button class="cmd-btn cmd-btn--start" id="btnStart">START</button>
+          <button class="cmd-btn cmd-btn--stop hidden" id="btnStop">STOP</button>
+          <button class="cmd-btn cmd-btn--pause hidden" id="btnPause">PAUSE</button>
+          <button class="cmd-btn cmd-btn--resume hidden" id="btnResume">RESUME</button>
+          <button class="cmd-btn cmd-btn--emg" id="btnEmergency" title="Emergency Stop">EMG STOP</button>
+        </div>
+      </header>
+
+      <!-- Fatal Error Banner -->
+      <div id="fatalBanner" class="fatal-banner hidden">
+        <strong>CRITICAL:</strong> <span id="fatalMsg"></span>
+      </div>
+
+      <!-- ═══ VIEW: OVERVIEW ═══ -->
+      <section id="view-overview" class="view active">
+        <div class="ov-grid">
+
+          <!-- Hero Card -->
+          <div class="card card--hero">
+            <div class="hero-top">
+              <div class="hero-icon-wrap">
+                <div class="hero-pulse"></div>
+                <div class="hero-icon" id="heroIcon">&#x2B22;</div>
+              </div>
+              <div class="hero-info">
+                <h2 id="ovHeroTitle">Bot is Idle</h2>
+                <p id="ovHeroDesc">Waiting for commands...</p>
+                <div class="hero-fsm" id="ovHeroFSM"></div>
+              </div>
+            </div>
+            <div class="hero-stats">
+              <div class="hs-cell">
+                <span class="hs-num" id="ovUptime">--</span>
+                <span class="hs-lbl">UPTIME</span>
+              </div>
+              <div class="hs-cell">
+                <span class="hs-num" id="ovTasksDone">0</span>
+                <span class="hs-lbl">COMPLETED</span>
+              </div>
+              <div class="hs-cell">
+                <span class="hs-num" id="ovFarmsSent">0</span>
+                <span class="hs-lbl">FARMS</span>
+              </div>
+              <div class="hs-cell">
+                <span class="hs-num" id="ovActionsHr">0</span>
+                <span class="hs-lbl">ACT/HR</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Next Action -->
+          <div class="card card--next">
+            <div class="card-hdr">NEXT ACTION</div>
+            <div class="next-circle">
+              <svg viewBox="0 0 36 36" class="next-svg">
+                <path class="next-bg" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"/>
+                <path class="next-ring" id="nextRing" stroke-dasharray="0, 100" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"/>
+              </svg>
+              <span class="next-time" id="ovNextTimer">--:--</span>
+            </div>
+            <p class="next-desc" id="ovNextDesc">No tasks scheduled</p>
+          </div>
+
+          <!-- Resources -->
+          <div class="card card--resources">
+            <div class="card-hdr">RESOURCES <span class="card-sub" id="ovVillageName">--</span></div>
+            <div class="res-grid">
+              <div class="res-item" data-res="wood">
+                <span class="ri-label">WOOD</span>
+                <div class="ri-bar"><div class="ri-fill" id="ovBarWood"></div></div>
+                <span class="ri-val" id="ovValWood">--</span>
+                <span class="ri-prod" id="ovProdWood">--</span>
+              </div>
+              <div class="res-item" data-res="clay">
+                <span class="ri-label">CLAY</span>
+                <div class="ri-bar"><div class="ri-fill" id="ovBarClay"></div></div>
+                <span class="ri-val" id="ovValClay">--</span>
+                <span class="ri-prod" id="ovProdClay">--</span>
+              </div>
+              <div class="res-item" data-res="iron">
+                <span class="ri-label">IRON</span>
+                <div class="ri-bar"><div class="ri-fill" id="ovBarIron"></div></div>
+                <span class="ri-val" id="ovValIron">--</span>
+                <span class="ri-prod" id="ovProdIron">--</span>
+              </div>
+              <div class="res-item" data-res="crop">
+                <span class="ri-label">CROP</span>
+                <div class="ri-bar"><div class="ri-fill" id="ovBarCrop"></div></div>
+                <span class="ri-val" id="ovValCrop">--</span>
+                <span class="ri-prod" id="ovProdCrop">--</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- AI Decision -->
+          <div class="card card--ai">
+            <div class="card-hdr">LAST AI DECISION</div>
+            <div class="ai-block">
+              <div class="ai-score" id="ovAiScore">--</div>
+              <div class="ai-detail">
+                <span class="ai-type" id="ovAiType">--</span>
+                <span class="ai-reason" id="ovAiReason">No decision yet</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Recent Activity -->
+          <div class="card card--activity span-2">
+            <div class="card-hdr">RECENT ACTIVITY <a href="#" class="card-link" data-nav="logs">View All</a></div>
+            <div class="activity-list" id="ovActivityList">
+              <div class="activity-empty">No activity yet</div>
+            </div>
+          </div>
+
+        </div>
+      </section>
+
+      <!-- ═══ VIEW: TASKS ═══ -->
+      <section id="view-tasks" class="view">
+        <div class="section-hdr">
+          <h2>Task Queue</h2>
+          <button class="cmd-btn cmd-btn--stop" id="btnClearQueue">CLEAR ALL</button>
+        </div>
+        <div class="task-list" id="taskList">
+          <div class="empty-state">No tasks queued</div>
+        </div>
+      </section>
+
+      <!-- ═══ VIEW: AI STRATEGY ═══ -->
+      <section id="view-strategy" class="view">
+        <div class="section-hdr"><h2>AI Strategy Engine</h2></div>
+        <div class="strat-grid">
+          <div class="card">
+            <div class="card-hdr">CURRENT PHASE</div>
+            <div class="strat-phase" id="stratPhase">--</div>
+            <p class="strat-desc" id="stratPhaseDesc">Phase not detected</p>
+          </div>
+          <div class="card">
+            <div class="card-hdr">LAST DECISION</div>
+            <div class="strat-decision">
+              <span class="sd-score" id="stratScore">--</span>
+              <div class="sd-info">
+                <span class="sd-type" id="stratType">--</span>
+                <span class="sd-reason" id="stratReason">No decision</span>
+              </div>
+            </div>
+          </div>
+          <div class="card span-2">
+            <div class="card-hdr">ACTIVE COOLDOWNS</div>
+            <div class="cooldown-list" id="cooldownList">
+              <div class="empty-state">No active cooldowns</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ═══ VIEW: CONFIG ═══ -->
+      <section id="view-config" class="view">
+        <div class="section-hdr">
+          <h2>Configuration</h2>
+          <button class="cmd-btn cmd-btn--start" id="btnSaveConfig">SAVE ALL</button>
+        </div>
+        <div class="cfg-grid">
+          <!-- Feature Toggles -->
+          <div class="card span-2">
+            <div class="card-hdr">FEATURE TOGGLES</div>
+            <div class="toggle-grid">
+              <label class="tgl-item">
+                <input type="checkbox" id="cfgAutoFarm">
+                <span class="tgl-slider"></span>
+                <span class="tgl-text">Auto Farming</span>
+              </label>
+              <label class="tgl-item">
+                <input type="checkbox" id="cfgAutoBuildings">
+                <span class="tgl-slider"></span>
+                <span class="tgl-text">Auto Buildings</span>
+              </label>
+              <label class="tgl-item">
+                <input type="checkbox" id="cfgAutoResources">
+                <span class="tgl-slider"></span>
+                <span class="tgl-text">Auto Resources</span>
+              </label>
+              <label class="tgl-item">
+                <input type="checkbox" id="cfgAutoTroops">
+                <span class="tgl-slider"></span>
+                <span class="tgl-text">Auto Troops</span>
+              </label>
+            </div>
+          </div>
+
+          <!-- Farming -->
+          <div class="card">
+            <div class="card-hdr">FARMING</div>
+            <div class="cfg-form">
+              <div class="cfg-field">
+                <label>Farm Interval (min)</label>
+                <input type="range" min="5" max="60" step="1" id="cfgFarmInterval">
+                <span class="cfg-range-val" id="cfgFarmIntervalVal">5 min</span>
+              </div>
+              <div class="cfg-field">
+                <label>Min Loot %</label>
+                <input type="number" id="cfgFarmMinLoot" class="cfg-input" placeholder="30">
+              </div>
+              <label class="cfg-check">
+                <input type="checkbox" id="cfgFarmSkipLosses"> Skip targets with losses
+              </label>
+            </div>
+          </div>
+
+          <!-- Building -->
+          <div class="card">
+            <div class="card-hdr">BUILDING</div>
+            <div class="cfg-form">
+              <div class="cfg-field">
+                <label>Max Building Level</label>
+                <input type="number" id="cfgBuildMaxLevel" class="cfg-input" min="1" max="20">
+              </div>
+              <div class="cfg-field">
+                <label>Max Resource Level</label>
+                <input type="number" id="cfgResMaxLevel" class="cfg-input" min="1" max="20">
+              </div>
+            </div>
+          </div>
+
+          <!-- Troops -->
+          <div class="card">
+            <div class="card-hdr">TROOPS</div>
+            <div class="cfg-form">
+              <div class="cfg-field">
+                <label>Train Batch Size</label>
+                <input type="number" id="cfgTroopCount" class="cfg-input">
+              </div>
+              <div class="cfg-field">
+                <label>Troop Type</label>
+                <input type="text" id="cfgTroopType" class="cfg-input" placeholder="t1">
+              </div>
+            </div>
+          </div>
+
+          <!-- Safety & Delays -->
+          <div class="card">
+            <div class="card-hdr">SAFETY &amp; TIMING</div>
+            <div class="cfg-form">
+              <div class="cfg-field">
+                <label>Max Actions/Hour</label>
+                <input type="number" id="cfgMaxActions" class="cfg-input">
+              </div>
+              <div class="cfg-field">
+                <label>Min Delay (ms)</label>
+                <input type="number" id="cfgMinDelay" class="cfg-input">
+              </div>
+              <div class="cfg-field">
+                <label>Max Delay (ms)</label>
+                <input type="number" id="cfgMaxDelay" class="cfg-input">
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ═══ VIEW: DIAGNOSTICS ═══ -->
+      <section id="view-diagnostics" class="view">
+        <div class="section-hdr"><h2>Diagnostics</h2></div>
+        <div class="diag-grid">
+          <div class="card">
+            <div class="card-hdr">CIRCUIT BREAKER</div>
+            <div class="diag-metric">
+              <span class="dm-val" id="diagFailures">0</span>
+              <span class="dm-lbl">Consecutive Failures</span>
+            </div>
+            <div class="diag-bar">
+              <div class="diag-fill" id="diagFailBar" style="width:0%"></div>
+            </div>
+            <span class="diag-sub" id="diagCBStatus">OK — No failures</span>
+          </div>
+
+          <div class="card">
+            <div class="card-hdr">RATE LIMITER</div>
+            <div class="diag-metric">
+              <span class="dm-val" id="diagActionsHr">0</span>
+              <span class="dm-lbl">Actions This Hour</span>
+            </div>
+            <div class="diag-bar">
+              <div class="diag-fill diag-fill--cyan" id="diagRateBar" style="width:0%"></div>
+            </div>
+            <span class="diag-sub" id="diagRateStatus">--</span>
+          </div>
+
+          <div class="card">
+            <div class="card-hdr">SCHEDULER</div>
+            <div id="diagScheduler" class="sched-list">
+              <div class="empty-state">No scheduled items</div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-hdr">EXECUTION LOCKS</div>
+            <div class="lock-grid">
+              <div class="lock-item">
+                <span class="lock-label">Execution Lock</span>
+                <span class="lock-val" id="diagExecLock">--</span>
+              </div>
+              <div class="lock-item">
+                <span class="lock-label">Cycle Lock</span>
+                <span class="lock-val" id="diagCycleLock">--</span>
+              </div>
+              <div class="lock-item">
+                <span class="lock-label">Not-Logged-In Count</span>
+                <span class="lock-val" id="diagNotLoggedIn">--</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ═══ VIEW: LOGS ═══ -->
+      <section id="view-logs" class="view">
+        <div class="section-hdr">
+          <h2>System Logs</h2>
+          <div class="log-controls">
+            <input type="text" placeholder="Search logs..." class="cfg-input log-search" id="logSearch">
+            <select class="cfg-input log-filter" id="logFilter">
+              <option value="">All</option>
+              <option value="INFO">Info</option>
+              <option value="WARN">Warn</option>
+              <option value="ERROR">Error</option>
+            </select>
+            <button class="cmd-btn cmd-btn--pause" id="btnRefreshLogs">REFRESH</button>
+          </div>
+        </div>
+        <div class="log-viewer" id="logContainer"></div>
+      </section>
+
+      <!-- ═══ VIEW: DEBUG ═══ -->
+      <section id="view-debug" class="view">
+        <div class="section-hdr"><h2>Raw State</h2></div>
+        <pre class="debug-json" id="debugJson">Loading...</pre>
+      </section>
+
+    </main>
+  </div>
+
+  <script src="../shared/constants.js"></script>
+  <script src="../shared/formatters.js"></script>
+  <script src="../shared/ui-client.js"></script>
+  <script src="dashboard.js"></script>
+</body>
+</html>

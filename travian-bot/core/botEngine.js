@@ -1298,6 +1298,7 @@ class BotEngine {
       config: this.config,
       nextActionTime: this.nextActionTime,
       lastAIAction: this.decisionEngine ? this.decisionEngine.lastAIAction : null,
+      cooldowns: this.decisionEngine ? Object.fromEntries(this.decisionEngine.cooldowns) : {},
       executionLocked: this._executionLocked,
       cycleLock: this._cycleLock,
       consecutiveFailures: this._consecutiveFailures

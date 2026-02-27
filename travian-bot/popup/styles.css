@@ -1,6 +1,6 @@
 /* ============================================================
-   Travian Bot - Gaming Dashboard v2
-   Dark theme with neon glow effects, tab navigation
+   Travian Bot - Gaming Dashboard v3
+   Dark theme with neon glow effects, 4-tab navigation
    420px × 580px Chrome popup
    ============================================================ */
 
@@ -144,62 +144,39 @@ header h1 {
   color: var(--text-secondary);
 }
 
-/* --- Server Bar --- */
-.server-bar {
-  padding: 4px 16px;
+/* ============================================================
+   SELECTOR BAR (merged Server + Village)
+   ============================================================ */
+.selector-bar {
+  display: flex;
+  gap: 6px;
+  padding: 5px 16px;
   background: var(--bg-surface);
   border-bottom: 1px solid var(--border-subtle);
   flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  gap: 8px;
 }
 
-.server-label {
-  font-size: 11px;
-  color: var(--text-dim, #666);
-  white-space: nowrap;
-}
-
-.server-bar select {
+.selector-bar select {
   flex: 1;
+  min-width: 0;
   background: var(--bg-input);
-  border: 1px solid var(--primary);
-  color: var(--primary);
-  padding: 3px 6px;
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 4px 6px;
   border-radius: var(--radius-sm);
   font-size: 11px;
   font-family: inherit;
   cursor: pointer;
   font-weight: 600;
+  transition: border-color 0.2s, box-shadow 0.2s;
 }
 
-.server-bar select:focus {
-  outline: none;
-  box-shadow: 0 0 8px var(--primary-glow);
+.selector-bar select:first-child {
+  border-color: var(--primary-dim);
+  color: var(--primary);
 }
 
-/* --- Village Bar --- */
-.village-bar {
-  padding: 6px 16px;
-  background: var(--bg-base);
-  border-bottom: 1px solid var(--border-subtle);
-  flex-shrink: 0;
-}
-
-.village-bar select {
-  width: 100%;
-  background: var(--bg-input);
-  border: 1px solid var(--border);
-  color: var(--text);
-  padding: 5px 8px;
-  border-radius: var(--radius-sm);
-  font-size: 12px;
-  font-family: inherit;
-  cursor: pointer;
-}
-
-.village-bar select:focus {
+.selector-bar select:focus {
   border-color: var(--primary);
   outline: none;
   box-shadow: 0 0 8px var(--primary-glow);
@@ -213,18 +190,20 @@ header h1 {
   background: var(--bg-surface);
   border-bottom: 2px solid var(--border);
   flex-shrink: 0;
+  padding: 0 2px;
 }
 
 .tab-btn {
   flex: 1;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 4px;
-  padding: 8px 4px;
+  gap: 2px;
+  padding: 10px 4px 8px;
   background: transparent;
   border: none;
-  border-bottom: 2px solid transparent;
+  border-bottom: 3px solid transparent;
   margin-bottom: -2px;
   color: var(--text-muted);
   font-size: 12px;
@@ -236,22 +215,26 @@ header h1 {
 
 .tab-btn:hover {
   color: var(--text-secondary);
-  background: var(--bg-surface-hover);
+  background: rgba(255,255,255,0.04);
 }
 
 .tab-btn.active {
   color: var(--primary);
   border-bottom-color: var(--primary);
+  background: rgba(0,255,255,0.04);
   text-shadow: 0 0 10px var(--primary-glow-strong);
 }
 
 .tab-icon {
-  font-size: 14px;
+  font-size: 16px;
+  line-height: 1;
 }
 
 .tab-label {
   font-size: 11px;
-  letter-spacing: 0.5px;
+  font-weight: 700;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
 }
 
 /* ============================================================
@@ -288,6 +271,12 @@ header h1 {
   padding: 12px;
   margin-bottom: 10px;
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.3), 0 0 1px var(--primary-glow);
+}
+
+.card--highlight {
+  border-color: var(--primary-dim);
+  background: linear-gradient(135deg, var(--bg-surface) 0%, rgba(0, 229, 255, 0.04) 100%);
+  box-shadow: 0 2px 16px rgba(0, 0, 0, 0.4), 0 0 8px var(--primary-glow);
 }
 
 .section-title {
@@ -427,6 +416,101 @@ header h1 {
   border-radius: 2px;
   transition: width 0.5s ease;
   box-shadow: 0 0 8px var(--primary-glow);
+}
+
+/* ============================================================
+   ACTIVITY TAB: Countdown Display
+   ============================================================ */
+.activity-countdown {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 0;
+}
+
+.countdown-label {
+  font-size: 10px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  font-weight: 700;
+}
+
+.countdown-value {
+  font-size: 36px;
+  font-weight: 800;
+  color: var(--primary);
+  text-shadow: 0 0 16px var(--primary-glow-strong), 0 0 32px var(--primary-glow);
+  font-family: 'Consolas', 'Cascadia Code', monospace;
+  line-height: 1.1;
+}
+
+.countdown-state {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--text-secondary);
+  padding: 2px 12px;
+  border-radius: 10px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-subtle);
+}
+
+.countdown-state.state-running {
+  color: var(--success);
+  border-color: var(--success-dim);
+  background: rgba(0, 255, 136, 0.06);
+}
+
+.countdown-state.state-paused {
+  color: var(--warning);
+  border-color: rgba(255, 170, 0, 0.3);
+  background: rgba(255, 170, 0, 0.06);
+}
+
+.countdown-state.state-stopped {
+  color: var(--danger);
+  border-color: var(--danger-dim);
+  background: rgba(255, 51, 102, 0.06);
+}
+
+/* ============================================================
+   ACTIVITY TAB: Cooldown Timers
+   ============================================================ */
+.cooldown-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.cooldown-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 5px 8px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+}
+
+.cooldown-name {
+  color: var(--text-secondary);
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cooldown-timer {
+  color: var(--warning);
+  font-weight: 700;
+  font-family: 'Consolas', 'Cascadia Code', monospace;
+  font-size: 12px;
+  flex-shrink: 0;
+  margin-left: 8px;
 }
 
 /* ============================================================
@@ -589,7 +673,7 @@ header h1 {
   position: sticky;
   bottom: 0;
   z-index: 10;
-  background: var(--bg-card);
+  background: var(--bg-surface);
   padding: 8px 0;
   margin: 0 -10px;
   padding-left: 10px;
@@ -751,6 +835,122 @@ input[type="text"]:focus {
 }
 
 /* ============================================================
+   COLLAPSIBLE CONFIG SECTIONS  (<details>/<summary>)
+   ============================================================ */
+.cfg-section {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: 8px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.3), 0 0 1px var(--primary-glow);
+  overflow: hidden;
+}
+
+.cfg-section[open] {
+  border-color: var(--primary-dim);
+}
+
+.cfg-section-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  user-select: none;
+  list-style: none;         /* remove default triangle */
+  transition: background 0.2s, color 0.2s;
+}
+
+.cfg-section-header::-webkit-details-marker { display: none; }
+.cfg-section-header::marker { content: ''; }
+
+/* Chevron arrow */
+.cfg-section-header::after {
+  content: '\25B6';          /* right-pointing triangle */
+  margin-left: auto;
+  font-size: 9px;
+  color: var(--text-muted);
+  transition: transform 0.2s;
+}
+.cfg-section[open] > .cfg-section-header::after {
+  transform: rotate(90deg);
+}
+
+.cfg-section-header:hover {
+  background: rgba(255,255,255,0.04);
+  color: var(--text-primary);
+}
+
+.cfg-section[open] > .cfg-section-header {
+  color: var(--primary);
+  border-bottom: 1px solid var(--border);
+}
+
+.cfg-section-icon {
+  font-size: 14px;
+  line-height: 1;
+}
+
+.cfg-section-body {
+  padding: 10px 12px;
+}
+
+/* Nested sub-sections (Farm Scanner, Manual Targets) */
+.cfg-subsection {
+  margin-top: 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.cfg-subsection-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  user-select: none;
+  list-style: none;
+  transition: background 0.2s, color 0.2s;
+}
+
+.cfg-subsection-header::-webkit-details-marker { display: none; }
+.cfg-subsection-header::marker { content: ''; }
+
+.cfg-subsection-header::after {
+  content: '\25B6';
+  margin-left: auto;
+  font-size: 8px;
+  color: var(--text-muted);
+  transition: transform 0.2s;
+}
+.cfg-subsection[open] > .cfg-subsection-header::after {
+  transform: rotate(90deg);
+}
+
+.cfg-subsection-header:hover {
+  background: rgba(255,255,255,0.03);
+  color: var(--text-secondary);
+}
+
+.cfg-subsection[open] > .cfg-subsection-header {
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.cfg-subsection-body {
+  padding: 8px 10px;
+}
+
+/* ============================================================
    FARM TARGETS
    ============================================================ */
 .farm-targets-section {
@@ -794,73 +994,14 @@ input[type="text"]:focus {
 /* ============================================================
    UPGRADE LIST
    ============================================================ */
+/* ── Upgrade List Container ── */
 .upgrade-list {
-  max-height: 240px;
+  max-height: 280px;
   overflow-y: auto;
   background: var(--bg-input);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-sm);
-  padding: 4px;
-}
-
-.upgrade-group-title {
-  font-size: 10px;
-  color: var(--primary);
-  text-transform: uppercase;
-  letter-spacing: 1px;
-  padding: 6px 4px 2px 4px;
-  border-bottom: 1px solid var(--border-subtle);
-}
-
-.upgrade-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px;
-  border-bottom: 1px solid rgba(255,255,255,0.03);
-  font-size: 12px;
-}
-
-.upgrade-row:last-child {
-  border-bottom: none;
-}
-
-.upgrade-row input[type="checkbox"] {
-  accent-color: var(--primary);
-  width: 14px;
-  height: 14px;
-  margin: 0;
-  flex-shrink: 0;
-}
-
-.upgrade-row .upgrade-name {
-  flex: 1;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  color: var(--text);
-}
-
-.upgrade-row .upgrade-level {
-  color: var(--text-muted);
-  font-size: 11px;
-  flex-shrink: 0;
-  width: 32px;
-  text-align: center;
-}
-
-.upgrade-row .upgrade-arrow {
-  color: var(--text-muted);
-  flex-shrink: 0;
-}
-
-.upgrade-row input[type="number"].upgrade-target {
-  width: 42px;
-  padding: 2px 4px;
-  margin: 0;
-  font-size: 12px;
-  text-align: center;
-  flex-shrink: 0;
+  padding: 2px;
 }
 
 .upgrade-empty {
@@ -871,14 +1012,167 @@ input[type="text"]:focus {
   font-style: italic;
 }
 
-.upgrade-row-empty {
-  background: rgba(255, 170, 0, 0.03);
+/* ── Group Header ── */
+.upgrade-group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 6px 4px 6px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.upgrade-group-header:not(:first-child) {
+  border-top: 1px solid var(--border-subtle);
+  margin-top: 2px;
+}
+
+.upgrade-group-title {
+  font-size: 10px;
+  color: var(--primary);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  font-weight: 700;
+}
+
+.upgrade-group-toggle {
+  font-size: 9px;
+  color: var(--text-muted);
+  background: none;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 1px 6px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.upgrade-group-toggle:hover {
+  color: var(--primary);
+  border-color: var(--primary-dim);
+}
+
+/* ── Upgrade Row (grid layout) ── */
+.upgrade-row {
+  display: grid;
+  grid-template-columns: 18px 8px 1fr auto 14px 40px;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 6px;
+  border-bottom: 1px solid rgba(255,255,255,0.03);
+  font-size: 12px;
+  transition: background 0.1s;
+}
+
+.upgrade-row:hover {
+  background: rgba(255,255,255,0.02);
+}
+
+.upgrade-row:last-child {
+  border-bottom: none;
+}
+
+/* Checkbox */
+.upgrade-row input[type="checkbox"] {
+  accent-color: var(--primary);
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  cursor: pointer;
+}
+
+/* Color dot — resource type indicator */
+.upgrade-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.upgrade-dot--wood { background: #b8860b; box-shadow: 0 0 4px rgba(184,134,11,0.4); }
+.upgrade-dot--clay { background: #cc6633; box-shadow: 0 0 4px rgba(204,102,51,0.4); }
+.upgrade-dot--iron { background: #999;    box-shadow: 0 0 4px rgba(153,153,153,0.3); }
+.upgrade-dot--crop { background: #7cb342; box-shadow: 0 0 4px rgba(124,179,66,0.4); }
+.upgrade-dot--bld  { background: var(--primary-dim); box-shadow: 0 0 4px var(--primary-glow); }
+
+/* Name */
+.upgrade-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text);
+  line-height: 1.2;
+}
+
+/* Level badge */
+.upgrade-level {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-secondary);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 3px;
+  padding: 1px 5px;
+  white-space: nowrap;
+  text-align: center;
+}
+
+.upgrade-level--upgrading {
+  color: var(--warning);
+  border-color: var(--warning);
+  animation: upgradePulse 2s ease-in-out infinite;
+}
+
+@keyframes upgradePulse {
+  0%, 100% { box-shadow: none; }
+  50% { box-shadow: 0 0 6px var(--warning-glow); }
+}
+
+/* Arrow */
+.upgrade-arrow {
+  color: var(--text-muted);
+  font-size: 10px;
+  text-align: center;
+}
+
+/* Target level input */
+.upgrade-target {
+  width: 40px;
+  padding: 2px 4px;
+  margin: 0;
+  font-size: 11px;
+  text-align: center;
+  background: var(--bg-surface);
+  color: var(--text);
+  border: 1px solid var(--border-subtle);
+  border-radius: 3px;
+  transition: border-color 0.15s;
+}
+
+.upgrade-target:focus {
+  border-color: var(--primary-dim);
+  outline: none;
+}
+
+.upgrade-target:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+/* ── Empty Slot Row ── */
+.upgrade-row--empty {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 6px;
+  border-bottom: 1px solid rgba(255,255,255,0.03);
+  background: rgba(255,170,0,0.02);
   border-left: 2px solid var(--warning);
 }
 
-.upgrade-row-empty .upgrade-name {
+.upgrade-row--empty .upgrade-slot-label {
+  font-size: 11px;
   color: var(--text-muted);
   font-style: italic;
+  white-space: nowrap;
 }
 
 .upgrade-building-select {
@@ -889,19 +1183,21 @@ input[type="text"]:focus {
   font-size: 11px;
   padding: 2px 4px;
   flex: 1;
-  max-width: 160px;
 }
 
 /* ============================================================
    LOG VIEWER
    ============================================================ */
-.log-filters {
-  margin-bottom: 8px;
-}
-
-.log-filters select {
-  font-size: 12px;
-  padding: 4px 8px;
+.log-level-select {
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 3px 6px;
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  font-family: inherit;
+  cursor: pointer;
+  width: auto;
 }
 
 .log-area {
@@ -914,6 +1210,13 @@ input[type="text"]:focus {
   font-family: 'Consolas', 'Cascadia Code', monospace;
   font-size: 11px;
   line-height: 1.6;
+}
+
+.log-area--compact {
+  max-height: 160px;
+  font-size: 10px;
+  line-height: 1.5;
+  padding: 6px;
 }
 
 .log-entry {
@@ -1062,13 +1365,14 @@ input[type="text"]:focus {
 .rec-badge.cat-defense { background: rgba(102,102,204,0.15); color: #8888dd; }
 .rec-badge.cat-economy { background: rgba(255,255,0,0.08); color: #cccc66; }
 .rec-badge.cat-expansion { background: var(--primary-glow); color: var(--primary); }
+.rec-badge.cat-farm { background: rgba(255, 170, 0, 0.1); color: var(--warning); }
 
 .rec-body { flex: 1; }
 .rec-action { color: var(--text); }
 .rec-reason { color: var(--text-muted); font-size: 10px; margin-top: 1px; }
 
 /* ============================================================
-   INFO STRIP (Next Action + Farm Stats)
+   INFO STRIP (Next Action + Farm Stats + Trapper)
    ============================================================ */
 .info-strip {
   display: flex;
@@ -1381,14 +1685,6 @@ input[type="text"]:focus {
   font-weight: 800;
   font-size: 11px;
   flex-shrink: 0;
-}
-
-/* ============================================================
-   STRATEGY: Farm badge
-   ============================================================ */
-.rec-badge.cat-farm {
-  background: rgba(255, 170, 0, 0.1);
-  color: var(--warning);
 }
 
 /* ============================================================
