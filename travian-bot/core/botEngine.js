@@ -526,7 +526,13 @@ class BotEngine {
       }
 
       if (this.gameState.error) {
-        this.emergencyStop('Game error detected');
+        // Log details before stopping — helps debug false positives
+        var errorDetail = typeof this.gameState.error === 'string'
+          ? this.gameState.error : 'isErrorPage=true';
+        TravianLogger.log('ERROR', '[BotEngine] Error page detected: ' + errorDetail +
+          ' | page=' + (this.gameState.page || 'unknown') +
+          ' | url=' + (this.gameState.url || 'unknown'));
+        this.emergencyStop('Game error detected: ' + errorDetail);
         return;
       }
 

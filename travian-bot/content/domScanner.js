@@ -938,18 +938,26 @@
      */
     isErrorPage: function () {
       try {
-        // Check for common error indicators
+        // Check for actual error pages — NOT generic .error class which Travian
+        // uses on normal pages (form validation, cost indicators, input styling).
+        // Only match selectors specific to full-page error states.
         var errorSelectors = [
-          '.error',
-          '.errorMessage',
-          '#error',
-          '.systemMessage.error',
-          '.errorPage'
+          '.systemMessage.error',   // Travian system-level error banner
+          '.errorPage',             // Dedicated error page wrapper
+          '#error',                 // Legacy error container
+          '.errorMessage'           // Explicit error message block
+          // NOTE: '.error' alone is intentionally EXCLUDED — it matches
+          // dozens of normal UI elements (resource cost spans, form fields,
+          // validation hints) causing false emergency stops.
         ];
 
         for (var i = 0; i < errorSelectors.length; i++) {
           var el = qs(errorSelectors[i]);
           if (el && el.textContent.trim().length > 0) {
+            // Extra safety: ignore if the element is tiny or deeply nested in
+            // a building/resource panel (likely a cost indicator, not a page error)
+            var rect = el.getBoundingClientRect();
+            if (rect.width < 50 && rect.height < 20) continue;
             return true;
           }
         }

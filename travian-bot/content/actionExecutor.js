@@ -487,6 +487,23 @@
         var clicked = await clickElement(targetSelectors);
 
         if (!clicked) {
+          // Fallback: some pages (heroInventory, hero tabs) only have nav links
+          // when already on the parent page. Use direct URL navigation instead.
+          var directUrls = {
+            heroInventory: '/hero/inventory',
+            heroAdventures: '/hero/adventures',
+            hero: '/hero',
+            dorf1: '/dorf1.php',
+            resources: '/dorf1.php',
+            dorf2: '/dorf2.php',
+            village: '/dorf2.php'
+          };
+          if (directUrls[page]) {
+            Logger.log('navigateTo: selector not found, using direct URL for', page);
+            window.location.href = directUrls[page];
+            return true;
+          }
+
           Logger.warn('navigateTo: could not find nav link for', page);
           // FIX 13: snapshot on navigation failure
           if (window.DomHelpers) {
@@ -617,6 +634,19 @@
         var clicked = await clickElement(selectors);
 
         if (!clicked) {
+          // Fallback: empty building slots often have <a> with width:0/height:0
+          // (Travian renders them via CSS background on parent, not <a> size).
+          // Try finding the zero-size <a> and navigating via its href directly.
+          var zeroSizeLink = trySelectors([
+            '.buildingSlot[data-aid="' + slotId + '"] a',
+            'a[href*="build.php?id=' + slotId + '"]'
+          ]);
+          if (zeroSizeLink && zeroSizeLink.href) {
+            Logger.log('clickBuildingSlot: zero-size element found, using direct navigation for slot', slotId);
+            window.location.href = zeroSizeLink.href;
+            return true;
+          }
+
           Logger.warn('clickBuildingSlot: slot not found:', slotId);
           return false;
         }
