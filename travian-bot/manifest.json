@@ -33,7 +33,11 @@
         "*://*.travian.co.uk/*",
         "*://*.travian.de/*",
         "*://*.travian.us/*",
-        "*://*.travelian.net/*",
+        "*://*.travian.net/*",
+        "*://*.travian.cl/*",
+        "*://*.travian.com.br/*",
+        "*://*.travian.co.id/*",
+        "*://*.travian.asia/*",
         "*://*.kingdoms.com/*"
       ],
       "js": [

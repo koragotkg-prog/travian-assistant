@@ -137,6 +137,18 @@
     });
   }
 
+  /**
+   * Simple promise-based delay for exact millisecond waits.
+   * Unlike humanDelay (which uses Gaussian randomization), this waits the exact duration.
+   * @param {number} ms - Milliseconds to wait
+   * @returns {Promise<void>}
+   */
+  function wait(ms) {
+    return new Promise(function (resolve) {
+      setTimeout(resolve, ms);
+    });
+  }
+
   // ── Expose globally (works in both content script and service worker) ──
   const _global = typeof window !== 'undefined' ? window : self;
   _global.TravianDelay = {
@@ -146,5 +158,6 @@
     jitter,
     randomBetween,
     waitForElement,
+    wait,
   };
 })();

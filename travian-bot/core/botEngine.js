@@ -1596,8 +1596,11 @@ class BotEngine {
     // Top-level booleans
     cfg.autoUpgradeResources = ensureBool(cfg.autoUpgradeResources || cfg.autoResourceUpgrade, defaults.autoUpgradeResources);
     cfg.autoUpgradeBuildings = ensureBool(cfg.autoUpgradeBuildings || cfg.autoBuildingUpgrade, defaults.autoUpgradeBuildings);
-    cfg.autoTrainTroops = ensureBool(cfg.autoTrainTroops, defaults.autoTrainTroops);
+    cfg.autoTrainTroops = ensureBool(cfg.autoTrainTroops || cfg.autoTroopTraining, defaults.autoTrainTroops);
     cfg.autoFarm = ensureBool(cfg.autoFarm || cfg.autoFarming, defaults.autoFarm);
+    cfg.autoHeroAdventure = ensureBool(cfg.autoHeroAdventure, false);
+    cfg.useAIScoring = ensureBool(cfg.useAIScoring, true);
+    cfg.autoTrapTraining = ensureBool(cfg.autoTrapTraining, false);
 
     // Safety config
     if (!cfg.safetyConfig || typeof cfg.safetyConfig !== 'object') cfg.safetyConfig = {};

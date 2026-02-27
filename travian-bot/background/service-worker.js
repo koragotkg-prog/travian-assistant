@@ -410,13 +410,10 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
           break;
         }
 
-        // ---- Scan Result (from content script) ----
+        // ---- Scan Result (legacy placeholder — scan data handled internally by BotEngine._cycle) ----
         case 'SCAN_RESULT': {
-          var scanInst = resolveInstance(message, sender);
-          if (scanInst && data && typeof scanInst.engine.updateGameState === 'function') {
-            scanInst.engine.updateGameState(data);
-            logger.debug('Game state updated for ' + scanInst.serverKey);
-          }
+          // No-op: content scripts never send SCAN_RESULT; BotEngine processes scan responses
+          // directly during its cycle. Kept as a safe no-op for forward compatibility.
           sendResponse({ success: true });
           break;
         }
