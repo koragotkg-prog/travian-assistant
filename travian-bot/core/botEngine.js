@@ -93,11 +93,24 @@ class BotEngine {
     // detect and discard duplicate requests from timeout→retry sequences.
     this._requestIdCounter = 0;
 
-    // Mutex: prevents concurrent mainLoop execution
-    this._mainLoopRunning = false;
+    // FIX-P3: Unified cycle lock replaces _mainLoopRunning + _executionLocked.
+    // Values: null (free), 'scanning', 'deciding', 'executing', 'returning'
+    // Any non-null value blocks concurrent mainLoop entry.
+    this._cycleLock = null;
 
-    // Tab lock: prevents tab reassignment during task execution
-    this._executionLocked = false;
+    // Backward compat aliases (read-only, derived from _cycleLock)
+    // _mainLoopRunning: true when any cycle phase is active
+    // _executionLocked: true only during executing/returning phases
+    Object.defineProperty(this, '_mainLoopRunning', {
+      get: () => this._cycleLock !== null,
+      set: (v) => { if (!v) this._cycleLock = null; }, // legacy clear
+      configurable: true
+    });
+    Object.defineProperty(this, '_executionLocked', {
+      get: () => this._cycleLock === 'executing' || this._cycleLock === 'returning',
+      set: (v) => { /* no-op, controlled by _cycleLock */ },
+      configurable: true
+    });
 
     // Circuit breaker: consecutive failure protection
     this._consecutiveFailures = 0;
@@ -145,7 +158,14 @@ class BotEngine {
     // Sync backward-compatible flags
     this._running = newState !== BOT_STATES.STOPPED && newState !== BOT_STATES.EMERGENCY;
     this._paused = newState === BOT_STATES.PAUSED;
-    this._emergencyStopped = newState === BOT_STATES.EMERGENCY;
+    // FIX-P1: Preserve _emergencyStopped when transitioning EMERGENCY → STOPPED.
+    // Previously, emergencyStop() called stop() which set _emergencyStopped=false,
+    // making the emergency invisible to popup getStatus() within ~0ms.
+    if (newState === BOT_STATES.EMERGENCY) {
+      this._emergencyStopped = true;
+    } else if (!(newState === BOT_STATES.STOPPED && oldState === BOT_STATES.EMERGENCY)) {
+      this._emergencyStopped = false;
+    }
 
     console.log(`[BotEngine][SM] ${oldState} → ${newState}` + (reason ? ` (${reason})` : ''));
     return true;
@@ -193,6 +213,11 @@ class BotEngine {
    * @param {number} tabId - The Chrome tab ID running the Travian content script
    */
   async start(tabId) {
+    // FIX-P1: Allow restart after emergency stop by clearing emergency state first
+    if (this._emergencyStopped && this._botState === BOT_STATES.STOPPED) {
+      this.clearEmergency();
+    }
+
     if (this._botState !== BOT_STATES.STOPPED) {
       console.warn('[BotEngine] Cannot start — current state: ' + this._botState);
       return;
@@ -272,8 +297,14 @@ class BotEngine {
 
     // Periodic state persistence: save state every 60s as a safety net.
     // If the service worker is killed, at most 1 minute of state is lost.
+    // FIX-P5: Also flushes immediately when taskQueue reports dirty mutations.
     this.scheduler.scheduleCycle('state_persistence', () => {
-      this.saveState();
+      this.saveState().then(() => {
+        // Mark task queue clean after successful persistence
+        if (this.taskQueue && this.taskQueue.dirtyAt > 0) {
+          this.taskQueue.markClean();
+        }
+      });
     }, 60000, 5000); // 60s base, +/-5s jitter
 
     // Schedule the main decision/execution loop
@@ -426,6 +457,20 @@ class BotEngine {
     }).catch(() => {});
   }
 
+  /**
+   * FIX-P1: Clear the emergency stop state so the bot can be restarted.
+   * Called when user clicks "Start" after an emergency stop.
+   */
+  clearEmergency() {
+    if (!this._emergencyStopped) return;
+    this._emergencyStopped = false;
+    this._emergencyReason = null;
+    this._consecutiveFailures = 0;
+    this._circuitBreakerTrips = 0;
+    this._notLoggedInCount = 0;
+    console.log('[BotEngine] Emergency state cleared — ready to restart');
+  }
+
   // ---------------------------------------------------------------------------
   // Main Loop
   // ---------------------------------------------------------------------------
@@ -449,21 +494,13 @@ class BotEngine {
       return;
     }
 
-    // Mutex: skip if another mainLoop is already executing
-    if (this._mainLoopRunning) {
-      console.log('[BotEngine] mainLoop already running, skipping concurrent call');
+    // FIX-P3: Unified lock check — replaces separate _mainLoopRunning + _executionLocked guards
+    if (this._cycleLock) {
+      console.log('[BotEngine] Cycle locked (' + this._cycleLock + '), skipping concurrent call');
       return;
     }
 
-    // RC-4 FIX: Skip if task execution is still in progress.
-    // The heartbeat can trigger mainLoop while a multi-step EXECUTE is still running.
-    // Without this check, we'd scan + decide + queue while a task is mid-execution.
-    if (this._executionLocked) {
-      console.log('[BotEngine] Execution in progress, skipping cycle');
-      return;
-    }
-
-    this._mainLoopRunning = true;
+    this._cycleLock = 'scanning';
 
     // FIX 8: Cycle tracking for structured logging
     this._cycleCounter++;
@@ -510,7 +547,19 @@ class BotEngine {
 
       this.gameState = scanResponse.data;
 
+      // FIX-P4: Detect game version changes that may break DOM selectors
+      if (this.gameState.gameVersion) {
+        if (!this._knownGameVersion) {
+          this._knownGameVersion = this.gameState.gameVersion;
+          this._slog('INFO', 'Travian version detected: ' + this._knownGameVersion);
+        } else if (this._knownGameVersion !== this.gameState.gameVersion) {
+          this._slog('WARN', 'Travian version CHANGED: ' + this._knownGameVersion + ' → ' + this.gameState.gameVersion + ' — DOM selectors may break');
+          this._knownGameVersion = this.gameState.gameVersion;
+        }
+      }
+
       // State: DECIDING (scan complete)
+      this._cycleLock = 'deciding';
       this._transition(BOT_STATES.DECIDING, 'scan complete');
 
       // Enrich gameState with cached extras
@@ -640,13 +689,21 @@ class BotEngine {
       if (s === BOT_STATES.SCANNING || s === BOT_STATES.DECIDING || s === BOT_STATES.COOLDOWN) {
         this._transition(BOT_STATES.IDLE, 'cycle end');
       }
-      this._mainLoopRunning = false;
+      this._cycleLock = null; // FIX-P3: Release unified cycle lock
       this._currentCycleId = null;
 
       // ST-5/PERF-4 FIX: Flush logs after each cycle to minimize loss on SW death.
       // This replaces sole reliance on the 30s setInterval which doesn't keep SW alive.
       if (typeof self.TravianLogger !== 'undefined' && typeof self.TravianLogger.flush === 'function') {
         self.TravianLogger.flush();
+      }
+
+      // FIX-P5: Eager state flush when task queue has pending mutations.
+      // Don't wait for the 60s persistence cycle — save immediately.
+      if (this.taskQueue && this.taskQueue.dirtyAt > 0) {
+        this.saveState().then(() => {
+          this.taskQueue.markClean();
+        }).catch(() => {});
       }
     }
   }
@@ -663,8 +720,8 @@ class BotEngine {
   async executeTask(task) {
     this._slog('INFO', 'Executing task: ' + task.type, { taskId: task.id, taskPriority: task.priority });
 
-    // Lock tab reassignment during execution
-    this._executionLocked = true;
+    // FIX-P3: Set unified lock to 'executing' phase
+    this._cycleLock = 'executing';
     this._transition(BOT_STATES.EXECUTING, task.type + ':' + task.id);
     const _taskStart = Date.now();
 
@@ -1016,7 +1073,9 @@ class BotEngine {
         // Smart handling: some failures should NOT retry
         if (this._isHopelessFailure(reason, task.type)) {
           // Force permanent failure — don't waste 3 cycles retrying
-          task.retries = task.maxRetries;
+          // FIX-P7: Set to maxRetries - 1 because markFailed() will increment once more.
+          // This ensures final retries === maxRetries (not maxRetries + 1).
+          task.retries = task.maxRetries - 1;
           this.taskQueue.markFailed(task.id, errorMsg);
           this.stats.tasksFailed++;
 
@@ -1070,12 +1129,13 @@ class BotEngine {
 
     // Navigate back to dorf1 (resource overview) after every task
     // so the next scan gets fresh data and the page looks natural.
-    // NOTE: _executionLocked is still true here — _returnHome navigates
-    // the tab, so we must prevent tab reassignment during this step.
+    // FIX-P3: _cycleLock='returning' keeps tab locked during navigation.
     try {
+      this._cycleLock = 'returning';
       await this._returnHome(task.type);
     } finally {
-      this._executionLocked = false;
+      // _cycleLock is cleared in mainLoop's finally — NOT here.
+      // This ensures the entire cycle (scan→decide→execute→return) is atomic.
     }
   }
 
@@ -1239,6 +1299,7 @@ class BotEngine {
       nextActionTime: this.nextActionTime,
       lastAIAction: this.decisionEngine ? this.decisionEngine.lastAIAction : null,
       executionLocked: this._executionLocked,
+      cycleLock: this._cycleLock,
       consecutiveFailures: this._consecutiveFailures
     };
   }

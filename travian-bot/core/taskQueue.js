@@ -18,7 +18,22 @@ class TaskQueue {
     // If a task exceeds this, it's assumed the service worker died mid-execution
     // and the task is reset to 'pending' for retry.
     this._maxRunningAgeMs = 2 * 60 * 1000; // 2 minutes
+
+    // FIX-P5: Dirty tracking for persistence.
+    // When _dirtyAt > 0, BotEngine's persistence cycle should flush immediately.
+    // Prevents lost tasks when SW dies between scheduled 60s persistence cycles.
+    this._dirtyAt = 0;
+
+    // FIX-P6: Throttle recoverStuckTasks to avoid O(n) scan every getNext()
+    this._lastRecoveryCheck = 0;
+    this._recoveryCheckIntervalMs = 30000; // 30 seconds
   }
+
+  /** @returns {number} Timestamp when queue was last mutated, or 0 if clean */
+  get dirtyAt() { return this._dirtyAt; }
+
+  /** Mark queue as persisted (clean) */
+  markClean() { this._dirtyAt = 0; }
 
   /**
    * Generate a unique task ID
@@ -84,6 +99,7 @@ class TaskQueue {
     };
 
     this.queue.push(task);
+    this._dirtyAt = Date.now(); // FIX-P5
     return task.id;
   }
 
@@ -96,6 +112,7 @@ class TaskQueue {
     const index = this.queue.findIndex(t => t.id === taskId);
     if (index === -1) return false;
     this.queue.splice(index, 1);
+    this._dirtyAt = Date.now(); // FIX-P5
     return true;
   }
 
@@ -183,6 +200,7 @@ class TaskQueue {
     if (!task) return false;
     task.status = 'completed';
     task.error = null;
+    this._dirtyAt = Date.now(); // FIX-P5
     this.cleanup(); // Auto-remove stale terminal tasks
     return true;
   }
@@ -209,6 +227,7 @@ class TaskQueue {
       // Put back to pending for retry
       task.status = 'pending';
     }
+    this._dirtyAt = Date.now(); // FIX-P5
     return true;
   }
 
@@ -243,6 +262,7 @@ class TaskQueue {
    */
   clear() {
     this.queue = [];
+    this._dirtyAt = Date.now(); // FIX-P5
   }
 
   /**
@@ -287,6 +307,14 @@ class TaskQueue {
    */
   recoverStuckTasks() {
     const now = Date.now();
+
+    // FIX-P6: Throttle to avoid O(n) scan every getNext() call.
+    // Stuck tasks only happen on SW death (rare), so 30s intervals are fine.
+    if (now - this._lastRecoveryCheck < this._recoveryCheckIntervalMs) {
+      return 0;
+    }
+    this._lastRecoveryCheck = now;
+
     let recovered = 0;
 
     for (const task of this.queue) {

@@ -20,6 +20,35 @@
     FARM_TARGETS: 'farm_targets',
   };
 
+  // ── FIX-P2: Write Serialization ────────────────────────────────────
+  // Prevents read-merge-write race conditions when multiple callers
+  // (popup SAVE_CONFIG + BotEngine state_persistence) write the same key.
+  // Each key gets its own promise chain so writes to different keys run in parallel.
+
+  /** @type {Map<string, Promise<void>>} */
+  const _writeChains = new Map();
+
+  /**
+   * Execute a read-merge-write cycle atomically for a given storage key.
+   * Concurrent calls for the same key are serialized; different keys run in parallel.
+   * @param {string} key - Storage key
+   * @param {function(Object): Object} mergeFn - Receives current value, returns updated value
+   * @returns {Promise<Object>} The updated value after write
+   */
+  function atomicMerge(key, mergeFn) {
+    const prev = _writeChains.get(key) || Promise.resolve();
+    const next = prev.then(async () => {
+      const current = await get(key, {});
+      const updated = mergeFn(current);
+      await set(key, updated);
+      return updated;
+    }).catch(err => {
+      console.warn('[TravianStorage] atomicMerge failed for ' + key + ':', err);
+    });
+    _writeChains.set(key, next);
+    return next;
+  }
+
   // ── Default Configuration ────────────────────────────────────────────
 
   /**
@@ -172,18 +201,24 @@
    * @returns {Promise<void>}
    */
   async function saveConfig(config) {
-    // Always merge with current stored config so partial saves work
-    const current = await getConfig();
-    const updated = { ...current, ...config };
+    // FIX-P2: Use atomicMerge to prevent lost updates from concurrent saves
+    return atomicMerge(KEYS.CONFIG, (stored) => {
+      const defaults = getDefaultConfig();
+      const current = { ...defaults, ...stored };
+      current.troopConfig  = { ...defaults.troopConfig,  ...(stored.troopConfig  || {}) };
+      current.farmConfig   = { ...defaults.farmConfig,   ...(stored.farmConfig   || {}) };
+      current.delays       = { ...defaults.delays,       ...(stored.delays       || {}) };
+      current.safetyConfig = { ...defaults.safetyConfig, ...(stored.safetyConfig || {}) };
+      current.villages     = { ...defaults.villages,     ...(stored.villages     || {}) };
 
-    // Deep-merge nested objects if they were provided
-    if (config.troopConfig)  updated.troopConfig  = { ...current.troopConfig,  ...config.troopConfig };
-    if (config.farmConfig)   updated.farmConfig   = { ...current.farmConfig,   ...config.farmConfig };
-    if (config.delays)       updated.delays       = { ...current.delays,       ...config.delays };
-    if (config.safetyConfig) updated.safetyConfig = { ...current.safetyConfig, ...config.safetyConfig };
-    if (config.villages)     updated.villages     = { ...current.villages,     ...config.villages };
-
-    return set(KEYS.CONFIG, updated);
+      const updated = { ...current, ...config };
+      if (config.troopConfig)  updated.troopConfig  = { ...current.troopConfig,  ...config.troopConfig };
+      if (config.farmConfig)   updated.farmConfig   = { ...current.farmConfig,   ...config.farmConfig };
+      if (config.delays)       updated.delays       = { ...current.delays,       ...config.delays };
+      if (config.safetyConfig) updated.safetyConfig = { ...current.safetyConfig, ...config.safetyConfig };
+      if (config.villages)     updated.villages     = { ...current.villages,     ...config.villages };
+      return updated;
+    });
   }
 
   // ── Per-village configuration ────────────────────────────────────────
@@ -270,24 +305,35 @@
    * @returns {Promise<void>}
    */
   async function saveServerConfig(serverKey, config) {
-    const current = await getServerConfig(serverKey);
-    const updated = { ...current, ...config };
+    const configKey = KEYS.CONFIG_PREFIX + serverKey;
 
-    if (config.troopConfig)  updated.troopConfig  = { ...current.troopConfig,  ...config.troopConfig };
-    if (config.farmConfig)   updated.farmConfig   = { ...current.farmConfig,   ...config.farmConfig };
-    if (config.delays)       updated.delays       = { ...current.delays,       ...config.delays };
-    if (config.safetyConfig) updated.safetyConfig = { ...current.safetyConfig, ...config.safetyConfig };
-    if (config.villages)     updated.villages     = { ...current.villages,     ...config.villages };
+    // FIX-P2: Use atomicMerge for both config and registry to prevent lost updates
+    await atomicMerge(configKey, (stored) => {
+      const defaults = getDefaultConfig();
+      const current = { ...defaults, ...stored };
+      current.troopConfig  = { ...defaults.troopConfig,  ...(stored.troopConfig  || {}) };
+      current.farmConfig   = { ...defaults.farmConfig,   ...(stored.farmConfig   || {}) };
+      current.delays       = { ...defaults.delays,       ...(stored.delays       || {}) };
+      current.safetyConfig = { ...defaults.safetyConfig, ...(stored.safetyConfig || {}) };
+      current.villages     = { ...defaults.villages,     ...(stored.villages     || {}) };
 
-    await set(KEYS.CONFIG_PREFIX + serverKey, updated);
+      const updated = { ...current, ...config };
+      if (config.troopConfig)  updated.troopConfig  = { ...current.troopConfig,  ...config.troopConfig };
+      if (config.farmConfig)   updated.farmConfig   = { ...current.farmConfig,   ...config.farmConfig };
+      if (config.delays)       updated.delays       = { ...current.delays,       ...config.delays };
+      if (config.safetyConfig) updated.safetyConfig = { ...current.safetyConfig, ...config.safetyConfig };
+      if (config.villages)     updated.villages     = { ...current.villages,     ...config.villages };
+      return updated;
+    });
 
-    // Update registry
-    var registry = await get(KEYS.REGISTRY, { servers: {}, version: 2 });
-    if (!registry.servers) registry.servers = {};
-    registry.servers[serverKey] = registry.servers[serverKey] || {};
-    registry.servers[serverKey].lastUsed = Date.now();
-    registry.servers[serverKey].label = registry.servers[serverKey].label || serverKey;
-    await set(KEYS.REGISTRY, registry);
+    // Update registry (also serialized to prevent concurrent overwrites)
+    await atomicMerge(KEYS.REGISTRY, (registry) => {
+      if (!registry.servers) registry = { servers: {}, version: 2 };
+      registry.servers[serverKey] = registry.servers[serverKey] || {};
+      registry.servers[serverKey].lastUsed = Date.now();
+      registry.servers[serverKey].label = registry.servers[serverKey].label || serverKey;
+      return registry;
+    });
   }
 
   /**

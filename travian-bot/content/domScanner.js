@@ -1413,6 +1413,28 @@
       });
     },
 
+    /**
+     * FIX-P4: Detect Travian game version from CDN/gpack URLs.
+     * Returns version string (e.g. "4.6.2.1") or null if not detected.
+     * Used to warn when Travian pushes UI updates that may break selectors.
+     */
+    getGameVersion: function () {
+      try {
+        var links = qsa('link[href*="gpack/"]');
+        for (var i = 0; i < links.length; i++) {
+          var match = links[i].href.match(/gpack\/([0-9.]+)\//);
+          if (match) return match[1];
+        }
+        // Fallback: check script tags
+        var scripts = qsa('script[src*="gpack/"]');
+        for (var j = 0; j < scripts.length; j++) {
+          var m2 = scripts[j].src.match(/gpack\/([0-9.]+)\//);
+          if (m2) return m2[1];
+        }
+      } catch (_) {}
+      return null;
+    },
+
     getFullState: function () {
       var state = {
         timestamp: Date.now(),
@@ -1449,6 +1471,9 @@
       try { state.villages = this.getVillageList(); } catch (e) { console.warn('[TravianScanner] getFullState - getVillageList error:', e); }
       try { state.hero = this.getHeroStatus(); } catch (e) { console.warn('[TravianScanner] getFullState - getHeroStatus error:', e); }
       try { state.farmLists = this.getFarmLists(); } catch (e) { console.warn('[TravianScanner] getFullState - getFarmLists error:', e); }
+
+      // FIX-P4: Detect Travian game version from CDN URLs for selector breakage warning
+      try { state.gameVersion = this.getGameVersion(); } catch (e) { /* non-critical */ }
 
       // Quest scanning (only on tasks page)
       if (state.page === 'tasks' || window.location.pathname.indexOf('/tasks') !== -1) {
