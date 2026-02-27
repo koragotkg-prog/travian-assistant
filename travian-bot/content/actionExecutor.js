@@ -1924,23 +1924,31 @@
       try {
         Logger.log('buildNewByGid: building GID', gid);
 
-        // Wait for the build page to be ready (may have just navigated here).
-        // IMPORTANT: Wait specifically for .buildingWrapper (= building list loaded).
-        // Don't resolve early on .contentNavi .tabItem (tabs load before buildings).
+        // ── Page type check ──────────────────────────────────────
+        // build.php?id=XX serves BOTH build-new (empty slot) and upgrade (occupied slot).
+        // Build-new pages have .contentNavi .tabItem tabs; upgrade pages don't.
+        // If the slot was already occupied, we land on an upgrade page → wrong page type.
+        var tabsExist = await awaitSelector('.contentNavi .tabItem', 4000);
+        if (!tabsExist) {
+          // No tab navigation → likely an upgrade page (slot already occupied) or page not loaded.
+          // Double-check: upgrade pages have .upgradeButtonsContainer directly.
+          var upgradeContainer = qs('.upgradeButtonsContainer');
+          if (upgradeContainer) {
+            Logger.warn('buildNewByGid: landed on UPGRADE page (slot already occupied), not build-new page');
+            return { success: false, reason: 'slot_occupied', message: 'Slot already has a building (upgrade page detected)' };
+          }
+          Logger.warn('buildNewByGid: build page not ready (no tabs, no upgrade container)');
+          return { success: false, reason: 'button_not_found', message: 'Build page did not load' };
+        }
+
+        // ── Wait for building wrappers to load ───────────────────
         var targetWrapper = await awaitSelector('#contract_building' + gid, 5000);
         if (!targetWrapper) {
           // Target not found — try waiting for ANY .buildingWrapper to confirm the page loaded
           var anyWrapper = await awaitSelector('.buildingWrapper', 3000);
           if (!anyWrapper) {
-            // Page might not be a build page at all, or still loading
-            var tabsExist = qs('.contentNavi .tabItem');
-            if (tabsExist) {
-              // Tabs exist but no buildings → building is in a different tab
-              Logger.log('buildNewByGid: tabs visible but no .buildingWrapper — may be in different tab');
-            } else {
-              Logger.warn('buildNewByGid: build page not ready (no tabs, no wrappers)');
-              return { success: false, reason: 'button_not_found', message: 'Build page did not load' };
-            }
+            // Tabs exist but no buildings → building is in a different tab
+            Logger.log('buildNewByGid: tabs visible but no .buildingWrapper — may be in different tab');
           }
         }
         await humanDelay(300, 600);
@@ -1985,6 +1993,12 @@
                         qs('.section1 button.gold', wrapper);
           if (goldBtn) return { action: 'queue_full' };
 
+          // Check if the wrapper has a .section1 at all — if empty, likely prerequisites not met
+          var section1 = qs('.section1', wrapper);
+          if (!section1 || section1.innerHTML.trim() === '') {
+            return { action: 'prerequisites_not_met' };
+          }
+
           return { action: 'no_button' };
         }
 
@@ -1995,7 +2009,7 @@
         var preScrollWrapper = qs('#contract_building' + gid);
         if (preScrollWrapper) {
           preScrollWrapper.scrollIntoView({ behavior: 'instant', block: 'center' });
-          await humanDelay(500, 800);
+          await humanDelay(800, 1200); // Increased from 500-800 for lazy rendering
         }
 
         // Check current tab only — do NOT switch tabs here!
@@ -2031,8 +2045,20 @@
             Logger.log('buildNewByGid: insufficient resources for GID', gid);
             return { success: false, reason: 'insufficient_resources', message: 'Not enough resources to build' };
 
+          case 'prerequisites_not_met':
+            Logger.log('buildNewByGid: prerequisites not met for GID', gid, '(section1 empty)');
+            return { success: false, reason: 'prerequisites_not_met', message: 'Building prerequisites not met' };
+
           default:
+            // Diagnostic: capture what the wrapper actually contains
             Logger.warn('buildNewByGid: build button not found for GID', gid);
+            if (window.DomHelpers) {
+              window.DomHelpers.captureAndLog({
+                action: 'buildNewByGid',
+                selector: '#contract_building' + gid,
+                reason: 'no_button'
+              });
+            }
             return { success: false, reason: 'button_not_found', message: 'Build button not found' };
         }
       } catch (e) {

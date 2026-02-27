@@ -982,6 +982,11 @@ class BotEngine {
           response = await this.sendToContentScript({
             type: 'EXECUTE', action: 'buildNewByGid', params: { gid: task.params.gid }
           });
+          // If slot is occupied or prerequisites not met, no point trying other tabs
+          if (response && (response.reason === 'slot_occupied' || response.reason === 'prerequisites_not_met')) {
+            console.log('[BotEngine] build_new: ' + response.reason + ' — skipping tab switching');
+            break;
+          }
           // If building not in current tab, try switching tabs (each click causes page reload)
           // Tab switching must happen at botEngine level because page reloads kill content script
           if (response && response.reason === 'building_not_in_tab') {
@@ -1768,16 +1773,17 @@ class BotEngine {
       'queue_full',         // Build queue full — must wait for current build
       'building_not_available', // Building doesn't exist for this tribe/level
       'no_items',           // No hero items to use
-      'page_mismatch'       // FIX 9: page assertion failed — navigation problem
+      'page_mismatch',      // FIX 9: page assertion failed — navigation problem
+      'slot_occupied',      // Slot already has building — can't build new
+      'prerequisites_not_met' // Building prereqs unmet — DFS resolver should handle
     ];
     if (hopeless.indexOf(reason) !== -1) return true;
 
-    // Task-type-specific hopeless cases:
-    // For build_new, button_not_found means the slot doesn't exist or the GID
-    // isn't available in any build tab — retrying the same slot is pointless.
-    // For upgrades, button_not_found can be a transient page load race, so
-    // we allow normal retries there.
-    if (taskType === 'build_new' && reason === 'button_not_found') return true;
+    // NOTE: build_new + button_not_found is NO LONGER hopeless.
+    // Previously this was treated as permanent failure, but it can be:
+    // - Transient page load / lazy rendering issue
+    // - Tab switching race condition
+    // Allow normal retries (3 attempts) before giving up.
 
     return false;
   }
@@ -1805,6 +1811,10 @@ class BotEngine {
         return 30000;    // 30 sec — navigation issue, retry soon
       case 'button_not_found':
         return 300000;   // 5 min — slot/building genuinely not found
+      case 'slot_occupied':
+        return 600000;   // 10 min — slot already built, decision engine will rescan
+      case 'prerequisites_not_met':
+        return 300000;   // 5 min — DFS resolver should create prereq tasks
       default:
         return 60000;    // 1 min default
     }
