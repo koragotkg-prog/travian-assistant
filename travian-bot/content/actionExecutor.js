@@ -677,21 +677,41 @@
         Logger.log('clickUpgradeButton');
         await humanDelay(300, 700);
 
-        // Step 1: Try to find the GREEN upgrade button first (happy path)
-        var greenBtn = trySelectors([
-          '.upgradeButtonsContainer .section1 button.textButtonV1.green',
-          '.upgradeButtonsContainer button.textButtonV1.green',
-          '.section1 button.green.build',
-          'button.green.build',
-          '.upgradeButtonsContainer .section1 button.green',
-          '.contractLink button.green',
-          'button[value*="Upgrade"]',
-          'button[value*="upgrade"]',
-          '.build_details .section1 .green',
-          '.section1 a.green',
-          '#build button.green',
-          '.upgradeButtonsContainer button.green'
-        ]);
+        // Step 1: Try to find the GREEN upgrade button.
+        // IMPORTANT: Some building pages (e.g., Armoury, Smithy) have TWO green
+        // buttons — one for building upgrade and one for troop research.
+        // We MUST scope to .upgradeButtonsContainer first to avoid clicking
+        // the research button by mistake.
+
+        // Strategy: First try within the FIRST .upgradeButtonsContainer (building upgrade),
+        // then broader selectors only if that container doesn't exist at all.
+        var upgradeContainer = qs('.upgradeButtonsContainer');
+        var greenBtn = null;
+
+        if (upgradeContainer) {
+          // Scope search within the upgrade container to avoid research buttons
+          greenBtn = trySelectors([
+            '.section1 button.textButtonV1.green',
+            'button.textButtonV1.green',
+            '.section1 button.green',
+            'button.green'
+          ], upgradeContainer);
+        }
+
+        // If not found in container, try page-wide selectors (legacy/fallback)
+        if (!greenBtn) {
+          greenBtn = trySelectors([
+            '.upgradeButtonsContainer .section1 button.textButtonV1.green',
+            '.upgradeButtonsContainer button.textButtonV1.green',
+            '.upgradeButtonsContainer .section1 button.green',
+            '.contractLink button.green',
+            'button[value*="Upgrade"]',
+            'button[value*="upgrade"]',
+            '.build_details .section1 .green',
+            '#build button.green',
+            '.upgradeButtonsContainer button.green'
+          ]);
+        }
 
         if (greenBtn) {
           // Green button found — click it
@@ -704,13 +724,22 @@
           return true;
         }
 
-        // Also try link-based green buttons
-        var greenLink = trySelectors([
-          '.section1 a.green.build',
-          'a.green.build',
-          '.contractLink a.green',
-          '.build_details a.green'
-        ]);
+        // Also try link-based green buttons (scoped to upgrade container first)
+        var greenLink = null;
+        if (upgradeContainer) {
+          greenLink = trySelectors([
+            '.section1 a.green',
+            'a.green'
+          ], upgradeContainer);
+        }
+        if (!greenLink) {
+          greenLink = trySelectors([
+            '.section1 a.green.build',
+            'a.green.build',
+            '.contractLink a.green',
+            '.build_details a.green'
+          ]);
+        }
         if (greenLink) {
           if (typeof greenLink.scrollIntoView === 'function') {
             greenLink.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -1565,36 +1594,32 @@
         dialogCancel: '.heroConsumablesPopup button.grey, .dialog button.grey, button.textButtonV2.grey'
       },
 
-      // ── V2 selectors (post-Changelog-367 bulk transfer UI) ────────────
-      // TODO: Fill these in after MCP DOM inspection of the new hero inventory.
-      // The new UI allows transferring all 4 resources at once with:
-      //   - individual amount inputs per resource (or drag-to-select)
-      //   - a "transfer max" button
-      //   - a single confirm button for all resources
+      // ── V2 selectors (unified 4-resource transfer dialog, Feb 2026) ───
+      // Clicking any consumable heroItem opens a dialog with ALL 4 resources.
+      // Dialog: #dialogContent with .resourceRow per resource, inputs by name.
       v2: {
-        // Container for the new bulk transfer panel (inspect DOM to find)
-        bulkPanel:       null, // e.g. '.heroResourceTransfer', '.resourceTransferPanel'
-        // Individual resource input fields inside the bulk panel
-        // Keys: wood/clay/iron/crop, values: CSS selectors for input elements
+        // Dialog container (appears AFTER clicking any resource heroItem)
+        bulkPanel:       '#dialogContent',
+        // Individual resource input fields inside the dialog
         resourceInputs:  {
-          wood: null, // e.g. '.resourceTransfer input[data-resource="wood"]'
-          clay: null,
-          iron: null,
-          crop: null
+          wood: 'input[name="lumber"]',
+          clay: 'input[name="clay"]',
+          iron: 'input[name="iron"]',
+          crop: 'input[name="crop"]'
         },
-        // "Transfer max" / "Transfer all" button (per-resource or global)
-        maxButton:       null, // e.g. '.transferMax', 'button.maxTransfer'
-        // Green confirm/submit button for the bulk transfer
-        confirmButton:   null, // e.g. '.resourceTransfer button.green', 'button.transferConfirm'
-        // Cancel / close button
-        cancelButton:    null, // e.g. '.resourceTransfer button.grey'
-        // Item list (may be same as V1 or changed)
-        itemList:        null, // e.g. same as v1.itemList or new selector
-        // Resource count display (may have moved)
-        countChild:      null, // e.g. same as v1.countChild or new selector
-        // Item child class for resource type detection
-        itemChild:       null,
-        resourceIdPattern: null // may be same regex or new pattern
+        // "Transfer max" button = first .actionButton child of #dialogContent
+        // "Move/Transfer" button = second .actionButton child (has CSS class 'disabled' until input > 0)
+        // Note: NO .buttonsWrapper exists — buttons are in .actionButton divs inside #dialogContent
+        actionButtonSelector: '#dialogContent > .actionButton button.textButtonV2',
+        // Close dialog button (X in top right)
+        cancelButton:    '.dialogCancelButton',
+        // Item list (same selectors as V1 — items at bottom of inventory page)
+        itemList:        '.heroItems .heroItem, .heroInventory .heroItem, #itemsToSale .heroItem, .inventoryContent .item',
+        // Resource count display (same as V1)
+        countChild:      '.count',
+        // Item child class for resource type detection (same as V1)
+        itemChild:       '[class*="item item"]',
+        resourceIdPattern: /item14[5678]|item17[6789]/
       }
     },
 
@@ -1608,40 +1633,29 @@
      * @returns {string} 'v1' or 'v2'
      */
     detectHeroUIVersion: function () {
-      var sel = this._heroSelectors;
-
-      // V2 detection: check for the new bulk transfer panel
-      // TODO: Update these markers after MCP DOM inspection
-      if (sel.v2.bulkPanel) {
-        var bulkEl = qs(sel.v2.bulkPanel);
-        if (bulkEl) {
-          Logger.log('detectHeroUIVersion: V2 (bulk transfer) detected');
+      // V2 detection: the new unified dialog opens on-demand (not a static panel).
+      // We detect V2 by checking if consumable heroItems exist AND the page has
+      // the new-style heroItem structure (heroItemV1 class = new Travian UI).
+      // The actual dialog (#dialogContent with .resourceRow) only appears AFTER clicking an item.
+      var consumables = qsa('.heroItem[data-tier="consumable"]');
+      if (consumables && consumables.length > 0) {
+        // Check for new-style heroItem class (present in Feb 2026 Travian)
+        var firstItem = consumables[0];
+        if (firstItem.classList.contains('heroItemV1') || firstItem.classList.contains('consumable')) {
+          Logger.log('detectHeroUIVersion: V2 (unified transfer dialog) detected');
           return 'v2';
         }
       }
 
-      // Heuristic fallback: look for common new-UI markers
-      // Changelog says: "transfer all four resources at once", "drag with mouse to select amounts"
-      // These hints suggest a multi-input panel (not a per-item popup dialog)
-      var heuristicSelectors = [
-        '.resourceTransferPanel',
-        '.heroResourceTransfer',
-        '.bulkTransfer',
-        '.transferAll',
-        '.resourceTransfer',
-        '[class*="resourceTransfer"]',
-        '[class*="bulkTransfer"]',
-        '.heroConsumablesV2'
-      ];
-      for (var i = 0; i < heuristicSelectors.length; i++) {
-        if (qs(heuristicSelectors[i])) {
-          Logger.log('detectHeroUIVersion: V2 detected via heuristic (' + heuristicSelectors[i] + ')');
-          return 'v2';
-        }
+      // If a dialog is already open, check for the V2 multi-resource layout
+      var resourceRows = qsa('#dialogContent .resourceRow');
+      if (resourceRows && resourceRows.length >= 4) {
+        Logger.log('detectHeroUIVersion: V2 detected via open dialog (.resourceRow)');
+        return 'v2';
       }
 
       // Default: V1 (legacy)
-      Logger.log('detectHeroUIVersion: V1 (legacy) — no bulk transfer markers found');
+      Logger.log('detectHeroUIVersion: V1 (legacy)');
       return 'v1';
     },
 
@@ -1749,20 +1763,27 @@
         Logger.log('useHeroItemBulk: transferring', JSON.stringify(amounts));
         await humanDelay(300, 600);
 
-        // ── Guard: V2 selectors must be configured ──
-        if (!sel.bulkPanel) {
-          Logger.warn('useHeroItemBulk: V2 selectors not configured — cannot proceed');
-          return { success: false, reason: 'button_not_found', message: 'V2 hero selectors not configured. Run MCP inspection and update _heroSelectors.v2.' };
+        // ── Step 1: Click any consumable heroItem to open the unified dialog ──
+        var consumables = qsa('.heroItem[data-tier="consumable"]');
+        if (!consumables || consumables.length === 0) {
+          Logger.warn('useHeroItemBulk: no consumable hero items on page');
+          return { success: false, reason: 'no_items', message: 'No consumable hero items found' };
         }
+        await simulateHumanClick(consumables[0]);
+        Logger.log('useHeroItemBulk: clicked first consumable to open dialog');
 
-        // ── Step 1: Verify bulk panel is visible ──
-        var panel = await awaitSelector(sel.bulkPanel, 3000);
-        if (!panel) {
-          Logger.warn('useHeroItemBulk: bulk transfer panel not found');
-          return { success: false, reason: 'button_not_found', message: 'Bulk transfer panel not found' };
+        // ── Step 2: Wait for the unified transfer dialog to appear ──
+        var dialog = await awaitSelector(sel.bulkPanel, 5000);
+        if (!dialog) {
+          Logger.warn('useHeroItemBulk: transfer dialog did not appear');
+          return { success: false, reason: 'button_not_found', message: 'Transfer dialog did not open' };
         }
+        await humanDelay(300, 500);
 
-        // ── Step 2: Fill in amounts for each resource type ──
+        // ── Step 3: Fill in amounts using execCommand (FormV2 React-compatible) ──
+        // IMPORTANT: Travian's dialog inputs use React FormV2 — nativeSetter + dispatchEvent
+        // does NOT update React state. Must use focus() + select() + execCommand('insertText')
+        // which goes through the browser's native text insertion pipeline.
         var transferred = { wood: 0, clay: 0, iron: 0, crop: 0 };
         var resTypes = ['wood', 'clay', 'iron', 'crop'];
         for (var i = 0; i < resTypes.length; i++) {
@@ -1776,58 +1797,67 @@
             continue;
           }
 
-          var inputEl = qs(inputSel, panel);
+          var inputEl = qs(inputSel);
           if (!inputEl) {
-            // Try outside panel scope
-            inputEl = qs(inputSel);
-          }
-          if (!inputEl) {
-            Logger.warn('useHeroItemBulk: input element not found for ' + resType);
+            Logger.warn('useHeroItemBulk: input not found for ' + resType);
             continue;
           }
 
-          // Clear existing value and type new amount
           var useAmount = Math.ceil(amt);
-          // Use nativeSetter for React-controlled inputs
-          var nativeSetter = Object.getOwnPropertyDescriptor(
-            window.HTMLInputElement.prototype, 'value'
-          );
-          if (nativeSetter && nativeSetter.set) {
-            nativeSetter.set.call(inputEl, String(useAmount));
-          } else {
-            inputEl.value = String(useAmount);
-          }
-          inputEl.dispatchEvent(new Event('input', { bubbles: true }));
-          inputEl.dispatchEvent(new Event('change', { bubbles: true }));
+          // Focus + select all existing text, then replace via execCommand
+          inputEl.focus();
+          inputEl.select();
+          document.execCommand('selectAll', false, null);
+          document.execCommand('insertText', false, String(useAmount));
+
           transferred[resType] = useAmount;
           Logger.log('useHeroItemBulk: set ' + resType + ' = ' + useAmount);
           await humanDelay(100, 250);
         }
 
-        // ── Step 3: Click confirm button ──
+        // ── Step 4: Click confirm button ──
         var hasAny = transferred.wood + transferred.clay + transferred.iron + transferred.crop > 0;
         if (!hasAny) {
-          Logger.warn('useHeroItemBulk: no amounts to transfer');
+          Logger.warn('useHeroItemBulk: no amounts to transfer — closing dialog');
+          var cancelBtn = qs(sel.cancelButton);
+          if (cancelBtn) cancelBtn.click();
           return { success: false, reason: 'no_amount', message: 'All transfer amounts are zero' };
         }
         await humanDelay(200, 400);
 
-        var confirmBtn = qs(sel.confirmButton, panel) || qs(sel.confirmButton);
-        if (!confirmBtn) {
-          Logger.warn('useHeroItemBulk: confirm button not found');
-          // Try to cancel to avoid stuck state
-          var cancelBtn = qs(sel.cancelButton, panel) || qs(sel.cancelButton);
-          if (cancelBtn) cancelBtn.click();
-          return { success: false, reason: 'button_not_found', message: 'No confirm button in bulk transfer panel' };
+        // Buttons are in .actionButton divs inside #dialogContent (no .buttonsWrapper):
+        //   actionButtons[0] = "โอนสูงสุด" (Transfer Max)
+        //   actionButtons[1] = "ย้าย" (Move) — has CSS class 'disabled' until input > 0
+        var actionBtns = qsa(sel.actionButtonSelector);
+        var maxBtn = (actionBtns && actionBtns.length >= 1) ? actionBtns[0] : null;
+        var moveBtn = (actionBtns && actionBtns.length >= 2) ? actionBtns[1] : null;
+
+        // Prefer "ย้าย" (Move) if enabled, fall back to "โอนสูงสุด" (Transfer Max)
+        if (moveBtn && !moveBtn.classList.contains('disabled')) {
+          await simulateHumanClick(moveBtn);
+          Logger.log('useHeroItemBulk: confirmed via Move button');
+          await humanDelay(500, 1000);
+          return { success: true, transferred: transferred };
         }
 
-        await simulateHumanClick(confirmBtn);
-        Logger.log('useHeroItemBulk: confirmed bulk transfer');
-        await humanDelay(500, 1000);
+        // Move still disabled — execCommand may have failed, try Transfer Max
+        if (maxBtn && !maxBtn.classList.contains('disabled')) {
+          Logger.log('useHeroItemBulk: Move button disabled, using Transfer Max fallback');
+          await simulateHumanClick(maxBtn);
+          Logger.log('useHeroItemBulk: confirmed via Transfer Max');
+          await humanDelay(500, 1000);
+          return { success: true, transferred: transferred };
+        }
 
-        return { success: true, transferred: transferred };
+        Logger.warn('useHeroItemBulk: no usable confirm button found');
+        var cancelBtn2 = qs(sel.cancelButton);
+        if (cancelBtn2) cancelBtn2.click();
+        return { success: false, reason: 'button_not_found', message: 'Confirm button not found or disabled' };
+
       } catch (e) {
         Logger.error('useHeroItemBulk error:', e);
+        // Try to close dialog if still open
+        try { var cb = qs('.dialogCancelButton'); if (cb) cb.click(); } catch(_) {}
         return { success: false, reason: 'button_not_found', message: e.message };
       }
     },

@@ -129,6 +129,13 @@ class BotEngine {
     // Structured logging: cycle counter
     this._cycleCounter = 0;
     this._currentCycleId = null;
+
+    // Cached buildings data from dorf2 scans.
+    // getBuildings() only works on dorf2 but the bot rests on dorf1.
+    // We cache the last dorf2 scan and refresh every N cycles.
+    this._cachedBuildings = null;
+    this._buildingsScanCycle = 0;       // last cycle that scanned dorf2
+    this._buildingsScanInterval = 3;    // rescan dorf2 every N cycles
   }
 
   // ---------------------------------------------------------------------------
@@ -558,6 +565,47 @@ class BotEngine {
         }
       }
 
+      // ── Dorf2 buildings scan (cached, refreshed every N cycles) ──
+      // getBuildings() only returns data on dorf2 pages. Since the bot rests
+      // on dorf1, buildings[] is always empty unless we navigate to dorf2.
+      // We do this periodically (every _buildingsScanInterval cycles) and
+      // cache the result so the decision engine can create upgrade_building tasks.
+      var needBuildingScan = (this.config.autoUpgradeBuildings || this.config.autoBuildingUpgrade) &&
+        (!this._cachedBuildings || (this._cycleCounter - this._buildingsScanCycle) >= this._buildingsScanInterval);
+
+      if (needBuildingScan) {
+        try {
+          this._slog('DEBUG', 'Scanning dorf2 for buildings data');
+          await this.sendToContentScript({
+            type: 'EXECUTE', action: 'navigateTo', params: { page: 'dorf2' }
+          });
+          await this._randomDelay();
+          await this._waitForContentScript(15000);
+          var dorf2Scan = await this.sendToContentScript({ type: 'SCAN' });
+          if (dorf2Scan && dorf2Scan.success && dorf2Scan.data && dorf2Scan.data.buildings && dorf2Scan.data.buildings.length > 0) {
+            this._cachedBuildings = dorf2Scan.data.buildings;
+            this._buildingsScanCycle = this._cycleCounter;
+            this._slog('INFO', 'Cached ' + this._cachedBuildings.length + ' buildings from dorf2');
+            // Also update construction queue from dorf2 (more accurate)
+            if (dorf2Scan.data.constructionQueue) {
+              this.gameState.constructionQueue = dorf2Scan.data.constructionQueue;
+            }
+          }
+          // Navigate back to dorf1
+          await this.sendToContentScript({
+            type: 'EXECUTE', action: 'navigateTo', params: { page: 'dorf1' }
+          });
+          await this._waitForContentScript(10000);
+        } catch (e) {
+          this._slog('WARN', 'Dorf2 buildings scan failed: ' + e.message);
+        }
+      }
+
+      // Merge cached buildings into gameState if current scan didn't get them
+      if (this._cachedBuildings && (!this.gameState.buildings || this.gameState.buildings.length === 0)) {
+        this.gameState.buildings = this._cachedBuildings;
+      }
+
       // State: DECIDING (scan complete)
       this._cycleLock = 'deciding';
       this._transition(BOT_STATES.DECIDING, 'scan complete');
@@ -798,11 +846,13 @@ class BotEngine {
             response = { success: false, reason: 'page_mismatch', message: 'Not on dorf1 after navigation' };
             break;
           }
-          // Step 2: Click the resource field
+          // Step 2: Click the resource field (navigates to /build.php?id=XX)
           await this.sendToContentScript({
             type: 'EXECUTE', action: 'clickResourceField', params: { fieldId: task.params.fieldId }
           });
           await this._randomDelay();
+          // Step 2b: Wait for content script re-injection after page navigation
+          await this._waitForContentScript(15000);
           // Step 3: Click upgrade button
           response = await this.sendToContentScript({
             type: 'EXECUTE', action: 'clickUpgradeButton', params: {}
@@ -822,11 +872,13 @@ class BotEngine {
             response = { success: false, reason: 'page_mismatch', message: 'Not on dorf2 after navigation' };
             break;
           }
-          // Step 2: Click the building slot (use slot number, not gid)
+          // Step 2: Click the building slot (navigates to /build.php?id=XX)
           await this.sendToContentScript({
             type: 'EXECUTE', action: 'clickBuildingSlot', params: { slotId: task.params.slot }
           });
           await this._randomDelay();
+          // Step 2b: Wait for content script re-injection after page navigation
+          await this._waitForContentScript(15000);
           // Step 3: Click upgrade button (green = affordable, no button = can't afford)
           response = await this.sendToContentScript({
             type: 'EXECUTE', action: 'clickUpgradeButton', params: {}
@@ -1751,6 +1803,20 @@ class BotEngine {
     }
 
     try {
+      // For building tasks, detour through dorf2 to refresh cached buildings
+      if (taskType === 'upgrade_building' || taskType === 'build_new') {
+        await this._randomDelay();
+        await this.sendToContentScript({
+          type: 'EXECUTE', action: 'navigateTo', params: { page: 'dorf2' }
+        });
+        await this._waitForContentScript(10000);
+        var dorf2Resp = await this.sendToContentScript({ type: 'SCAN' });
+        if (dorf2Resp && dorf2Resp.success && dorf2Resp.data && dorf2Resp.data.buildings && dorf2Resp.data.buildings.length > 0) {
+          this._cachedBuildings = dorf2Resp.data.buildings;
+          this._buildingsScanCycle = this._cycleCounter;
+        }
+      }
+
       await this._randomDelay();
       await this.sendToContentScript({
         type: 'EXECUTE', action: 'navigateTo', params: { page: 'dorf1' }
@@ -2022,9 +2088,11 @@ class BotEngine {
       TravianLogger.log('INFO', '[BotEngine] V2 bulk hero resource claim successful');
       return true;
     } else {
-      // Fallback: if V2 fails (e.g. selectors not configured), try V1
-      TravianLogger.log('WARN', '[BotEngine] V2 bulk transfer failed, falling back to V1');
-      return await this._claimHeroResourcesV1(deficit, usableResources);
+      // V2 detected but bulk transfer failed — V1 won't work on the new UI either
+      // (old .heroConsumablesPopup dialog no longer exists on V2 servers)
+      const reason = (bulkResult && bulkResult.reason) || 'unknown';
+      TravianLogger.log('WARN', '[BotEngine] V2 bulk transfer failed: ' + reason);
+      return false;
     }
   }
 

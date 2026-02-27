@@ -205,7 +205,9 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
         case 'GET_SERVERS': {
           var servers = manager.listActive();
           var registry = await self.TravianStorage.getServerRegistry();
-          sendResponse({ success: true, data: { instances: servers, registry: registry } });
+          // Send registry.servers (the actual server map), not the full registry wrapper
+          var serverMap = (registry && registry.servers) ? registry.servers : {};
+          sendResponse({ success: true, data: { instances: servers, registry: serverMap } });
           break;
         }
 

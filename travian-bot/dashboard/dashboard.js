@@ -103,11 +103,17 @@ const App = {
       if (!resp || !resp.success || !resp.data) return;
 
       var instances = resp.data.instances || [];
-      var registry = resp.data.registry || {};
+      var rawRegistry = resp.data.registry || {};
+      // Defensive: handle both shapes — flat server map OR { servers: {...}, version }
+      var registry = (rawRegistry.servers && typeof rawRegistry.servers === 'object')
+        ? rawRegistry.servers : rawRegistry;
       var select = document.getElementById('serverSelect');
       select.innerHTML = '';
 
-      var keys = Object.keys(registry);
+      var keys = Object.keys(registry).filter(function(k) {
+        // Exclude internal wrapper keys like 'version', 'servers'
+        return k !== 'version' && k !== 'servers';
+      });
       if (keys.length === 0 && instances.length === 0) {
         select.innerHTML = '<option value="">No servers — open a Travian tab</option>';
         return;
