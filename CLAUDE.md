@@ -71,18 +71,37 @@ Chrome alarm heartbeat (1 min) → BotEngine cycle (configurable interval)
 
 | Module | Export | Role |
 |--------|--------|------|
-| `core/botEngine.js` | `self.TravianBotEngine` | Main orchestrator: start/stop/pause, rate limiting, content script communication, hero resource claiming |
-| `core/decisionEngine.js` | `self.TravianDecisionEngine` | Rule-based decisions from game state (safety → build → troops → farm) |
-| `core/taskQueue.js` | `self.TravianTaskQueue` | Priority queue with retry logic; task types: `upgrade_resource`, `upgrade_building`, `train_troops`, `send_farm`, `build_new`, etc. |
+| `core/botEngine.js` | `self.TravianBotEngine` | Main orchestrator: start/stop/pause, FSM state machine, rate limiting, content script communication, hero resource claiming |
+| `core/decisionEngine.js` | `self.TravianDecisionEngine` | Rule-based decisions from game state (safety → build → troops → farm). Has cooldown tracking per action type. |
+| `core/taskQueue.js` | `self.TravianTaskQueue` | Priority queue with retry logic, `dirtyAt` tracking for immediate persistence, stuck task recovery (2 min timeout) |
 | `core/scheduler.js` | `self.TravianScheduler` | Timing with jitter for human-like behavior |
 | `core/instanceManager.js` | `self.TravianInstanceManager` | Multi-server: `Map<serverKey, {engine, tabId}>`, routes by tabId or serverKey |
+| `core/gameStateCollector.js` | `self.TravianGameStateCollector` | Full-scan cycle manager: caches quests, trap info, farm list status, hero inventory |
+| `core/actionScorer.js` | `self.TravianActionScorer` | Hybrid AI scoring engine: scores all possible actions with ROI/efficiency metrics. Falls back to simple heuristics when strategy modules unavailable. |
+| `core/mapScanner.js` | `self.TravianMapScanner` | Fetches/parses `/map.sql` for automated farm target discovery |
+
+### Content Scripts
+
+| Module | Global | Role |
+|--------|--------|------|
+| `content/domScanner.js` | `window.TravianDomScanner` | Read-only DOM scanning: resources, buildings, troops, hero, quests. Returns `null`/`[]` on failure, never throws. |
+| `content/actionExecutor.js` | `window.TravianActionExecutor` | DOM mutations: click upgrade, train troops, navigate. Has `isDemolishElement()` safety guard to block accidental demolish clicks. |
+| `content/domHelpers.js` | `window.TravianDomHelpers` | DOM resilience layer: `waitForElement`, `safeClick`, `safeQuery`, `withTimeout`, self-healing selectors, `retryAction` with exponential backoff |
+
+### Shared Modules
+
+| Module | Global | Role |
+|--------|--------|------|
+| `shared/constants.js` | `TravianConstants` | GID names, state labels, `TAB_PANEL_MAP`, task type names, buildable GIDs |
+| `shared/formatters.js` | `TravianFormatters` | Time/resource formatting utilities for popup and dashboard |
+| `shared/ui-client.js` | `TravianUIClient` | Shared messaging logic: wraps `chrome.runtime.sendMessage` with polling, used by both popup and dashboard |
 
 ### Utilities
 
 | Module | Global | Notes |
 |--------|--------|-------|
 | `utils/logger.js` | `TravianLogger` | `log(level, message, data)` — first arg MUST be a level string: DEBUG/INFO/WARN/ERROR |
-| `utils/storage.js` | `TravianStorage` | Per-server config via `getServerConfig(key)` / `saveServerConfig(key, cfg)`. Legacy key `bot_config` for backward compat. |
+| `utils/storage.js` | `TravianStorage` | Per-server config via `getServerConfig(key)` / `saveServerConfig(key, cfg)`. Uses `atomicMerge` with per-key write chains to prevent race conditions. Legacy key `bot_config` for backward compat. |
 | `utils/delay.js` | `TravianDelay` | `humanDelay(min, max)`, `waitForElement(selector, timeout)`, `jitter(base, variance)` |
 
 ## Key Conventions
@@ -92,7 +111,8 @@ Chrome alarm heartbeat (1 min) → BotEngine cycle (configurable interval)
 - **Human-like behavior**: Action execution uses random delays and simulated mouse events (`mousedown` → delay → `mouseup` → `click`). Preserve this pattern.
 - **Service worker mortality**: Chrome can kill the service worker at any time. State recovery is handled via `bot_state__<serverKey>` in chrome.storage. Any persistent data must go through `TravianStorage`, not in-memory variables.
 - **Content script lifecycle**: Content scripts are destroyed on page navigation. Any multi-step action involving `<a>` link clicks that cause navigation MUST be split into separate EXECUTE commands from the service worker. Never do multiple awaits after a navigation click in a content script.
-- **Structured error responses**: `actionExecutor.js` returns `{success: false, reason: 'code', message: '...'}` with reason codes: `no_adventure`, `hero_unavailable`, `insufficient_resources`, `queue_full`, `button_not_found`, `building_not_available`, `no_items`, `no_amount`.
+- **Structured error responses**: `actionExecutor.js` returns `{success: false, reason: 'code', message: '...'}` with reason codes: `no_adventure`, `hero_unavailable`, `insufficient_resources`, `queue_full`, `button_not_found`, `building_not_available`, `no_items`, `no_amount`, `input_not_found`, `input_disabled`, `invalid_count`, `wrong_page`, `nav_link_not_found`, `duplicate`, `save_failed`. Hopeless failures (`input_not_found`, `input_disabled`, `building_not_available`, etc.) skip retries in BotEngine.
+- **Demolish safety guard**: `isDemolishElement()` in actionExecutor blocks any click on elements inside `.demolish_building`. The global guard in `clickElement()` is the last line of defense — never bypass it.
 
 ## Data Shape Gotchas
 
@@ -102,6 +122,8 @@ These inconsistencies between modules have caused bugs — be aware of them:
 - **`domScanner.getResourceFields()`** returns `{id, type, level, upgrading, position}` — NO `gid` field. The `type` is a string: `"wood"`, `"clay"`, `"iron"`, `"crop"`. Map to gid: wood=1, clay=2, iron=3, crop=4.
 - **`domScanner.getBuildings()`** returns `{id, slot, name, level, upgrading}` where `id` IS the building type GID (not a unique slot ID). Match buildings by `slot`, read type from `id`.
 - **Hero resource items** are resource POOLS, not individual crates. `item.count` = total resource amount stored (e.g., 21909 wood). The dialog input asks for resource amount to transfer. Default fills warehouse to capacity — dangerous if not overridden.
+- **Troop tN mapping**: DOM inputs use `t1`–`t10` per tribe, where the index maps to `TravianGameData.TROOP_ORDER[tribe]`. Use `TravianGameData.getInputName(tribe, unitKey)` to convert strategy names (e.g., `'theutatesThunder'`) to input names (e.g., `'t4'`). The `troopConfig.slots` array stores `{troopType: 't4', building: 'stable', batchSize: 10}`.
+- **Troop config format (v2)**: `troopConfig.slots` is an array of slot objects. Old format with `defaultTroopType`/`trainCount`/`trainingBuilding` is auto-migrated to one slot on first load.
 
 ## Verified DOM Selectors (Travian Legends, Feb 2025)
 
@@ -120,7 +142,26 @@ These inconsistencies between modules have caused bugs — be aware of them:
 - Hero item dialog: `.heroConsumablesPopup` with input for transfer amount, confirm `.button.green`, cancel `.button.grey`
 - Build new page: buildings by `#contract_building{GID}` wrapper (NO `a[href*="gid="]` links)
 - Build new tabs: `.contentNavi a.tabItem`
+- Demolish section (Main Building 10+): `.demolish_building` parent with `button.textButtonV1.green[type=submit]` — **same green class as upgrade button!** Never select green buttons outside `.upgradeButtonsContainer`.
 - Farm list tab: `build.php?id=39&tt=99`
+
+### BotEngine State Machine
+
+BotEngine uses a formal FSM with guarded transitions:
+
+```
+STOPPED → IDLE → SCANNING → DECIDING → EXECUTING → COOLDOWN → IDLE
+                                                         ↗
+Any state → PAUSED (via PAUSE_BOT) → IDLE (via START_BOT)
+Any state → STOPPED (via STOP_BOT)
+Any state → STOPPED (via EMERGENCY_STOP, clears queue)
+```
+
+State is persisted to `bot_state__<serverKey>` on every transition. Invalid transitions are silently rejected.
+
+### Dashboard (`dashboard/`)
+
+Full-page "Mission Control" dashboard — an alternative to the popup for monitoring. Registered as a web-accessible resource in `manifest.json`. Polls service worker every 1s via `TravianUIClient`. Same message types as popup.
 
 ### Strategy Engine (`strategy/`)
 
@@ -148,7 +189,7 @@ The popup uses a **tab-based layout** (Gaming Dashboard v2) with 4 tabs:
 
 Layout structure: fixed header (with server selector) → fixed tab bar → scrollable tab content → fixed control bar (Start/Pause/Stop/Emergency).
 
-**Critical**: All popup element IDs are referenced by `popup.js` via the `dom` object (~44 refs). When modifying HTML, preserve all `id=""` attributes or update the `dom` object to match.
+**Critical**: All popup element IDs are referenced by `popup.js` via the `dom` object (80+ refs). When modifying HTML, preserve all `id=""` attributes or update the `dom` object to match.
 
 Tab switching uses `data-tab` attribute on buttons mapped to panel IDs via `TAB_PANEL_MAP`.
 
