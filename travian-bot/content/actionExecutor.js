@@ -249,6 +249,14 @@
       return;
     }
 
+    // Ensure element is visible in viewport before interacting.
+    // On small screens (e.g. MacBook Air 13") elements are often below the fold,
+    // and Travian lazy-renders some sections only when scrolled into view.
+    if (typeof element.scrollIntoView === 'function') {
+      element.scrollIntoView({ behavior: 'instant', block: 'center' });
+      await delay(randomInt(80, 150));
+    }
+
     // RND-2 FIX: Center-biased click position using Gaussian distribution.
     // Real users tend to click near the center of elements, not uniformly random.
     var rect = element.getBoundingClientRect();
