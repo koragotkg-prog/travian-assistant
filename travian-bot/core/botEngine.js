@@ -1014,7 +1014,7 @@ class BotEngine {
         this._consecutiveFailures++; // Circuit breaker: increment on failure
 
         // Smart handling: some failures should NOT retry
-        if (this._isHopelessFailure(reason)) {
+        if (this._isHopelessFailure(reason, task.type)) {
           // Force permanent failure — don't waste 3 cycles retrying
           task.retries = task.maxRetries;
           this.taskQueue.markFailed(task.id, errorMsg);
@@ -1345,7 +1345,21 @@ class BotEngine {
       state: this._botState
     };
     if (meta) Object.assign(entry, meta);
-    TravianLogger.log(level, message, entry);
+
+    // Serialize meta into message string so logs don't show "[object Object]".
+    // Chrome extension log viewers and the popup log panel stringify the data arg
+    // as [object Object]. Appending key fields to the message ensures readability.
+    var suffix = '';
+    if (meta) {
+      var parts = [];
+      for (var k in meta) {
+        if (meta.hasOwnProperty(k) && meta[k] != null) {
+          parts.push(k + '=' + meta[k]);
+        }
+      }
+      if (parts.length) suffix = ' {' + parts.join(', ') + '}';
+    }
+    TravianLogger.log(level, message + suffix, entry);
   }
 
   // ---------------------------------------------------------------------------
@@ -1684,7 +1698,7 @@ class BotEngine {
    * @param {string} reason - Error reason code from content script
    * @returns {boolean}
    */
-  _isHopelessFailure(reason) {
+  _isHopelessFailure(reason, taskType) {
     const hopeless = [
       'no_adventure',       // No adventures available, won't change by retrying
       'hero_unavailable',   // Hero is away/dead
@@ -1694,7 +1708,16 @@ class BotEngine {
       'no_items',           // No hero items to use
       'page_mismatch'       // FIX 9: page assertion failed — navigation problem
     ];
-    return hopeless.indexOf(reason) !== -1;
+    if (hopeless.indexOf(reason) !== -1) return true;
+
+    // Task-type-specific hopeless cases:
+    // For build_new, button_not_found means the slot doesn't exist or the GID
+    // isn't available in any build tab — retrying the same slot is pointless.
+    // For upgrades, button_not_found can be a transient page load race, so
+    // we allow normal retries there.
+    if (taskType === 'build_new' && reason === 'button_not_found') return true;
+
+    return false;
   }
 
   /**
@@ -1718,6 +1741,8 @@ class BotEngine {
         return 300000;   // 5 min — might be timing issue, retry
       case 'page_mismatch':
         return 30000;    // 30 sec — navigation issue, retry soon
+      case 'button_not_found':
+        return 300000;   // 5 min — slot/building genuinely not found
       default:
         return 60000;    // 1 min default
     }
