@@ -197,6 +197,32 @@
     },
 
     // =========================================================================
+    // Building Names (for logging / observability)
+    // =========================================================================
+    BUILDING_NAMES: {
+      1: 'Woodcutter', 2: 'Clay Pit', 3: 'Iron Mine', 4: 'Cropland',
+      5: 'Sawmill', 6: 'Brickyard', 7: 'Iron Foundry', 8: 'Grain Mill',
+      9: 'Bakery', 10: 'Warehouse', 11: 'Granary', 13: 'Smithy',
+      14: 'Tournament Square', 15: 'Main Building', 16: 'Rally Point',
+      17: 'Marketplace', 18: 'Embassy', 19: 'Barracks', 20: 'Stable',
+      21: 'Workshop', 22: 'Academy', 23: 'Cranny', 24: 'Town Hall',
+      25: 'Residence', 26: 'Palace', 27: 'Treasury', 28: 'Trade Office',
+      29: 'Great Barracks', 30: 'Great Stable', 34: 'Stonemason',
+      35: 'Brewery', 36: 'Trapper', 37: 'Hero Mansion', 38: 'Great Warehouse',
+      39: 'Great Granary', 40: 'Wonder of the World', 41: 'Horse Drinking Trough',
+      42: 'Water Ditch', 43: 'Natarian Wall', 44: 'City Wall'
+    },
+
+    /**
+     * Get human-readable building name for a GID.
+     * @param {number} gid
+     * @returns {string}
+     */
+    getBuildingName: function (gid) {
+      return this.BUILDING_NAMES[gid] || ('GID' + gid);
+    },
+
+    // =========================================================================
     // Building Prerequisites (Travian Legends)
     // Each entry: array of {gid, level} — ALL must be satisfied to build.
     // Only buildings with non-trivial prerequisites are listed.

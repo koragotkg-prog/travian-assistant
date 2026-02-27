@@ -722,6 +722,9 @@ class DecisionEngine {
   _evaluateNewBuilds(gameState, config, taskQueue) {
     const targets = config.upgradeTargets || {};
     const buildings = gameState.buildings || [];
+    const villageId = gameState.currentVillageId || null;
+    var GD = (typeof self !== 'undefined' && self.TravianGameData) ? self.TravianGameData : null;
+    var getName = GD ? function (g) { return GD.getBuildingName(g); } : function (g) { return 'GID' + g; };
 
     for (const key in targets) {
       const target = targets[key];
@@ -742,36 +745,296 @@ class DecisionEngine {
       if (this.isSlotCoolingDown('build_new', slot)) continue;
 
       // Check building prerequisites (e.g., Stable needs Academy 5 + Barracks 3)
-      var GameData = typeof self !== 'undefined' && self.TravianGameData
-        ? self.TravianGameData : null;
-      if (GameData && typeof GameData.checkPrerequisites === 'function') {
-        var prereqResult = GameData.checkPrerequisites(
+      if (GD && typeof GD.checkPrerequisites === 'function') {
+        var prereqResult = GD.checkPrerequisites(
           target.buildGid, buildings, gameState.resourceFields
         );
         if (!prereqResult.met) {
+          // --- AUTO-RESOLVE PREREQUISITES ---
+          // Instead of skipping, walk the dependency tree and return the first
+          // actionable prerequisite task (build or upgrade).
+          var stateReader = this._makeStateReader(gameState);
+          var resolveResult = this._resolveFirstActionable(
+            target.buildGid, stateReader, taskQueue, villageId,
+            new Set(), 0, [target.buildGid]
+          );
+
+          // Log the resolution result with readable names
           var missingStr = prereqResult.missing.map(function (m) {
-            return 'GID' + m.gid + ' need L' + m.need + ' (have L' + m.have + ')';
+            return getName(m.gid) + ' need L' + m.need + ' (have L' + m.have + ')';
           }).join(', ');
-          console.log('[DecisionEngine] Skipping build_new GID ' + target.buildGid +
-            ' — prerequisites not met: ' + missingStr);
+
+          if (resolveResult.task) {
+            var t = resolveResult.task;
+            var chainStr = resolveResult.chain.map(getName).join(' → ');
+            console.log('[DecisionEngine] Prereq resolution for ' + getName(target.buildGid) +
+              ': missing [' + missingStr + '] → action: ' + t.type + ' ' +
+              getName(t.params.gid || 0) + (t.params.slot ? ' slot ' + t.params.slot : '') +
+              (t.params.fieldId ? ' field ' + t.params.fieldId : '') +
+              ' | chain: ' + chainStr);
+            return t;
+          } else if (resolveResult.blocked) {
+            console.log('[DecisionEngine] Prereq BLOCKED for ' + getName(target.buildGid) +
+              ': ' + resolveResult.reason + ' | missing [' + missingStr + ']');
+          } else {
+            // reason = 'already_queued' or 'awaiting_upgrade' — silent wait
+            console.log('[DecisionEngine] Prereq wait for ' + getName(target.buildGid) +
+              ': ' + resolveResult.reason);
+          }
           continue;
         }
       }
 
-      // Check if we already have this task queued
+      // All prereqs met — queue the target build itself
       if (taskQueue.hasTaskOfType('build_new', null) ||
-          taskQueue.hasTaskOfType('build_new', gameState.currentVillageId)) continue;
+          taskQueue.hasTaskOfType('build_new', villageId)) continue;
 
-      console.log(`[DecisionEngine] New build: GID ${target.buildGid} in slot ${slot}`);
+      console.log('[DecisionEngine] New build: ' + getName(target.buildGid) +
+        ' (GID ' + target.buildGid + ') in slot ' + slot);
       return {
         type: 'build_new',
-        params: { slot: slot, gid: target.buildGid },
+        params: { slot: slot, gid: target.buildGid, buildingName: getName(target.buildGid) },
         priority: 3,
-        villageId: gameState.currentVillageId || null
+        villageId: villageId
       };
     }
 
     return null;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Build Prerequisite Resolution (auto-queue missing dependencies)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Create a normalized StateReader from raw gameState for efficient lookups.
+   * Memoizes building/resource levels so repeated DFS lookups are O(1).
+   * @param {Object} gameState - Raw scan snapshot
+   * @returns {Object} StateReader with lookup methods
+   */
+  _makeStateReader(gameState) {
+    const buildings = gameState.buildings || [];
+    const resourceFields = gameState.resourceFields || [];
+    const resTypeToGid = { wood: 1, clay: 2, iron: 3, crop: 4 };
+
+    // Build lookup: gid → {maxLevel, slot, upgrading}
+    // Takes highest-level instance if multiple exist (e.g., multiple crannies)
+    const buildingMap = new Map();
+    for (const b of buildings) {
+      const gid = Number(b.gid || b.id || 0);
+      if (gid === 0 || b.empty) continue;
+      const level = b.level || 0;
+      const existing = buildingMap.get(gid);
+      if (!existing || level > existing.level) {
+        buildingMap.set(gid, { level, slot: b.slot, upgrading: !!b.upgrading });
+      }
+    }
+
+    // Resource field lookup: gid → {maxLevel, bestFieldId}
+    const resFieldMap = new Map();
+    for (const rf of resourceFields) {
+      const gid = Number(rf.gid || resTypeToGid[rf.type] || 0);
+      if (gid === 0) continue;
+      const level = rf.level || 0;
+      const existing = resFieldMap.get(gid);
+      if (!existing || level > existing.level) {
+        resFieldMap.set(gid, { level, fieldId: rf.id || rf.position });
+      }
+    }
+
+    // Collect empty slots
+    const emptySlots = buildings
+      .filter(b => b.empty || (b.gid || b.id) === 0)
+      .map(b => b.slot)
+      .filter(s => s != null);
+
+    return {
+      /** Get max level of a building by GID (0 if not built) */
+      getBuildingLevel(gid) {
+        if (gid <= 4) {
+          // Resource fields live in dorf1, not dorf2
+          const rf = resFieldMap.get(gid);
+          return rf ? rf.level : 0;
+        }
+        const b = buildingMap.get(gid);
+        return b ? b.level : 0;
+      },
+      /** Get building info by GID (null if not built) */
+      getBuilding(gid) {
+        return buildingMap.get(gid) || null;
+      },
+      /** Get resource field info by GID (null if not exists) */
+      getResourceField(gid) {
+        return resFieldMap.get(gid) || null;
+      },
+      /** Is a building currently being upgraded? */
+      isBuildingUpgrading(gid) {
+        const b = buildingMap.get(gid);
+        return b ? b.upgrading : false;
+      },
+      /** Get all empty building slots in dorf2 */
+      getEmptySlots() {
+        return emptySlots;
+      }
+    };
+  }
+
+  /**
+   * DFS resolver: find the FIRST actionable task to make progress toward building targetGid.
+   *
+   * Walks the prerequisite tree depth-first. For each unmet prereq:
+   *   - If the prereq building doesn't exist → recurse to check ITS prereqs, then build_new
+   *   - If the prereq building exists but level too low → upgrade_building / upgrade_resource
+   *   - If the prereq building is currently upgrading → wait (return null task)
+   *
+   * @param {number} targetGid - Building GID we ultimately want
+   * @param {Object} stateReader - Normalized state from _makeStateReader()
+   * @param {Object} taskQueue - For dedup checks
+   * @param {string|null} villageId - Current village
+   * @param {Set<number>} visited - Cycle detection set (GIDs already in this DFS path)
+   * @param {number} depth - Current recursion depth
+   * @param {Array<number>} chain - Debug trace of GIDs walked
+   * @returns {Object} ResolveResult: {blocked, reason, task, targetGid, chain}
+   */
+  _resolveFirstActionable(targetGid, stateReader, taskQueue, villageId, visited, depth, chain) {
+    var MAX_DEPTH = 5;
+    var GD = (typeof self !== 'undefined' && self.TravianGameData) ? self.TravianGameData : null;
+    var getName = GD ? function (g) { return GD.getBuildingName(g); } : function (g) { return 'GID' + g; };
+
+    // Safety: depth limit
+    if (depth > MAX_DEPTH) {
+      return { blocked: true, reason: 'max_depth_exceeded', task: null, targetGid: targetGid, chain: chain };
+    }
+
+    // Safety: cycle detection
+    if (visited.has(targetGid)) {
+      return { blocked: true, reason: 'circular_dependency', task: null, targetGid: targetGid, chain: chain };
+    }
+    visited.add(targetGid);
+
+    var prereqs = (GD && GD.PREREQUISITES) ? GD.PREREQUISITES[targetGid] : null;
+    if (!prereqs) prereqs = [];
+
+    // Check each prerequisite in order (deterministic — array is ordered)
+    for (var i = 0; i < prereqs.length; i++) {
+      var req = prereqs[i]; // {gid, level}
+      var currentLevel = stateReader.getBuildingLevel(req.gid);
+
+      if (currentLevel >= req.level) continue; // This prereq is satisfied
+
+      // --- This prereq is NOT met ---
+
+      var isResourceField = req.gid <= 4;
+
+      // Case A: Building/field doesn't exist at all (level 0)
+      if (currentLevel === 0 && !isResourceField) {
+        // Before we can build this prereq, check if ITS prereqs are met
+        var subChain = chain.concat(req.gid);
+        var subVisited = new Set(visited);
+        var subResult = this._resolveFirstActionable(
+          req.gid, stateReader, taskQueue, villageId, subVisited, depth + 1, subChain
+        );
+
+        if (subResult.blocked) return subResult; // Propagate impossibility
+        if (subResult.task) return subResult;     // Deeper dependency found — do that first
+
+        // All sub-prereqs met → this is the building to construct
+        var emptySlots = stateReader.getEmptySlots();
+        if (emptySlots.length === 0) {
+          return { blocked: true, reason: 'no_empty_slot', task: null, targetGid: targetGid, chain: subChain };
+        }
+
+        // Dedup: don't queue if already queued
+        if (taskQueue.hasTaskOfType('build_new', villageId) ||
+            taskQueue.hasTaskOfType('build_new', null) ||
+            taskQueue.hasAnyTaskOfType('build_new')) {
+          return { blocked: false, reason: 'already_queued', task: null, targetGid: targetGid, chain: subChain };
+        }
+
+        return {
+          blocked: false,
+          reason: null,
+          task: {
+            type: 'build_new',
+            params: {
+              slot: emptySlots[0],
+              gid: req.gid,
+              buildingName: getName(req.gid),
+              _prereqFor: targetGid,
+              _resolveChain: subChain
+            },
+            priority: 2,
+            villageId: villageId
+          },
+          targetGid: targetGid,
+          chain: subChain
+        };
+      }
+
+      // Case B: Building/field exists but level too low → upgrade
+      if (isResourceField) {
+        // Resource field: find the best field to upgrade
+        var rfInfo = stateReader.getResourceField(req.gid);
+        if (!rfInfo || !rfInfo.fieldId) {
+          // Shouldn't happen — if level > 0, field must exist. Safety bail.
+          return { blocked: true, reason: 'resource_field_not_found', task: null, targetGid: targetGid, chain: chain };
+        }
+
+        if (taskQueue.hasTaskOfType('upgrade_resource', villageId) ||
+            taskQueue.hasTaskOfType('upgrade_resource', null)) {
+          return { blocked: false, reason: 'already_queued', task: null, targetGid: targetGid, chain: chain };
+        }
+
+        return {
+          blocked: false,
+          reason: null,
+          task: {
+            type: 'upgrade_resource',
+            params: {
+              fieldId: rfInfo.fieldId,
+              _prereqFor: targetGid,
+              _resolveChain: chain.concat(req.gid)
+            },
+            priority: 2,
+            villageId: villageId
+          },
+          targetGid: targetGid,
+          chain: chain.concat(req.gid)
+        };
+      }
+
+      // Dorf2 building exists but level too low
+      var buildingInfo = stateReader.getBuilding(req.gid);
+      if (buildingInfo && buildingInfo.upgrading) {
+        // Already being upgraded — just wait for it
+        return { blocked: false, reason: 'awaiting_upgrade', task: null, targetGid: targetGid, chain: chain };
+      }
+
+      if (taskQueue.hasTaskOfType('upgrade_building', villageId) ||
+          taskQueue.hasTaskOfType('upgrade_building', null)) {
+        return { blocked: false, reason: 'already_queued', task: null, targetGid: targetGid, chain: chain };
+      }
+
+      return {
+        blocked: false,
+        reason: null,
+        task: {
+          type: 'upgrade_building',
+          params: {
+            slot: buildingInfo ? buildingInfo.slot : null,
+            _prereqFor: targetGid,
+            _resolveChain: chain.concat(req.gid)
+          },
+          priority: 2,
+          villageId: villageId
+        },
+        targetGid: targetGid,
+        chain: chain.concat(req.gid)
+      };
+    }
+
+    // All prereqs met — the target itself is what we need to act on
+    return { blocked: false, reason: 'prereqs_met', task: null, targetGid: targetGid, chain: chain };
   }
 
   // ---------------------------------------------------------------------------
