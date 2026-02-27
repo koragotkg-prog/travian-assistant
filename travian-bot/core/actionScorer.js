@@ -149,8 +149,11 @@
       const minTroops = config.minTroops || 50;
       if (totalTroops >= minTroops && !config.alwaysTrain) return actions;
 
-      const troopType = config.troopType || 't1';
-      const trainCount = config.trainCount || 5;
+      // Support new slots format + backward compat
+      var tc = config.troopConfig || config;
+      var firstSlot = (tc.slots && tc.slots.length > 0) ? tc.slots[0] : null;
+      const troopType = firstSlot ? firstSlot.troopType : (tc.defaultTroopType || config.troopType || 't1');
+      const trainCount = firstSlot ? (firstSlot.batchSize || 5) : (tc.trainCount || config.trainCount || 5);
 
       // Crop awareness: don't train if free crop is very low (skip penalty if data unavailable)
       const freeCrop = state.freeCrop;

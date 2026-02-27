@@ -92,7 +92,7 @@ Chrome alarm heartbeat (1 min) → BotEngine cycle (configurable interval)
 - **Human-like behavior**: Action execution uses random delays and simulated mouse events (`mousedown` → delay → `mouseup` → `click`). Preserve this pattern.
 - **Service worker mortality**: Chrome can kill the service worker at any time. State recovery is handled via `bot_state__<serverKey>` in chrome.storage. Any persistent data must go through `TravianStorage`, not in-memory variables.
 - **Content script lifecycle**: Content scripts are destroyed on page navigation. Any multi-step action involving `<a>` link clicks that cause navigation MUST be split into separate EXECUTE commands from the service worker. Never do multiple awaits after a navigation click in a content script.
-- **Structured error responses**: `actionExecutor.js` returns `{success: false, reason: 'code', message: '...'}` with reason codes: `no_adventure`, `hero_unavailable`, `insufficient_resources`, `queue_full`, `button_not_found`, `building_not_available`, `no_items`, `no_amount`.
+- **Structured error responses**: `actionExecutor.js` returns `{success: false, reason: 'code', message: '...'}` with reason codes: `no_adventure`, `hero_unavailable`, `insufficient_resources`, `queue_full`, `button_not_found`, `building_not_available`, `no_items`, `no_amount`, `input_not_found`, `input_disabled`, `invalid_count`.
 
 ## Data Shape Gotchas
 
@@ -102,6 +102,8 @@ These inconsistencies between modules have caused bugs — be aware of them:
 - **`domScanner.getResourceFields()`** returns `{id, type, level, upgrading, position}` — NO `gid` field. The `type` is a string: `"wood"`, `"clay"`, `"iron"`, `"crop"`. Map to gid: wood=1, clay=2, iron=3, crop=4.
 - **`domScanner.getBuildings()`** returns `{id, slot, name, level, upgrading}` where `id` IS the building type GID (not a unique slot ID). Match buildings by `slot`, read type from `id`.
 - **Hero resource items** are resource POOLS, not individual crates. `item.count` = total resource amount stored (e.g., 21909 wood). The dialog input asks for resource amount to transfer. Default fills warehouse to capacity — dangerous if not overridden.
+- **Troop tN mapping**: DOM inputs use `t1`–`t10` per tribe, where the index maps to `TravianGameData.TROOP_ORDER[tribe]`. Use `TravianGameData.getInputName(tribe, unitKey)` to convert strategy names (e.g., `'theutatesThunder'`) to input names (e.g., `'t4'`). The `troopConfig.slots` array stores `{troopType: 't4', building: 'stable', batchSize: 10}`.
+- **Troop config format (v2)**: `troopConfig.slots` is an array of slot objects. Old format with `defaultTroopType`/`trainCount`/`trainingBuilding` is auto-migrated to one slot on first load.
 
 ## Verified DOM Selectors (Travian Legends, Feb 2025)
 

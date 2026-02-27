@@ -78,9 +78,8 @@
 
       // Troop training settings
       troopConfig: {
-        type: null,          // Troop type identifier (game-specific)
+        slots: [],           // Array of {troopType, building, batchSize} — empty = no auto-training
         minResources: 1000,  // Don't train if total resources below this
-        trainBatchSize: 5,   // Number of troops to queue per cycle
       },
 
       // Farming / raiding settings

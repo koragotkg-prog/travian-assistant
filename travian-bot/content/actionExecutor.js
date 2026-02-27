@@ -166,6 +166,33 @@
     return null;
   }
 
+  /**
+   * Safety guard: detect if an element is inside a demolish/destroy section.
+   * Main Building level 10+ has a demolish section with green buttons
+   * (class="textButtonV1 green") that look identical to upgrade buttons.
+   * This prevents the bot from ever clicking a demolish button by accident.
+   */
+  function isDemolishElement(el) {
+    // Walk up the DOM tree checking for demolish containers
+    var node = el;
+    for (var i = 0; i < 8 && node; i++) {
+      if (node.classList &&
+          (node.classList.contains('demolish_building') ||
+           node.classList.contains('demolishArea') ||
+           node.id === 'demolish' ||
+           node.id === 'demolishForm')) {
+        return true;
+      }
+      node = node.parentElement;
+    }
+    // Fallback: check button text for demolish keywords (multi-language)
+    var text = (el.textContent || '').trim().toLowerCase();
+    return (text.indexOf('demolish') >= 0 ||
+            text.indexOf('รื้อ') >= 0 ||
+            text.indexOf('ทำลาย') >= 0 ||
+            text.indexOf('abriss') >= 0);
+  }
+
   // ---------------------------------------------------------------------------
   // Farm list API helpers (bypass FormV2 via direct REST API)
   // ---------------------------------------------------------------------------
@@ -352,6 +379,12 @@
       }
     }
 
+    // SAFETY: Global guard — never click elements inside demolish sections
+    if (isDemolishElement(el)) {
+      Logger.warn('clickElement: BLOCKED — element is inside demolish section');
+      return false;
+    }
+
     // Scroll element into view if needed
     if (typeof el.scrollIntoView === 'function') {
       el.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -479,6 +512,8 @@
           barracks:    ['a[href*="build.php?gid=19"]'],
           stable:      ['a[href*="build.php?gid=20"]'],
           workshop:    ['a[href*="build.php?gid=21"]'],
+          great_barracks: ['.buildingSlot[data-gid="29"] a', 'a[href*="build.php?gid=29"]'],
+          great_stable:   ['.buildingSlot[data-gid="30"] a', 'a[href*="build.php?gid=30"]'],
           marketplace: ['a[href*="build.php?gid=17"]'],
           heroAdventures: ['a[href*="/hero/adventures"]', 'a[href*="hero_adventure"]', '.adventure.attention'],
           hero:        ['#heroImageButton', '.heroImageButton', 'a[href="/hero"]', 'a[href="/hero/"]'],
@@ -699,18 +734,24 @@
         }
 
         // If not found in container, try page-wide selectors (legacy/fallback)
+        // NOTE: Removed '#build button.green' and '.build_details .section1 .green'
+        // because they match demolish buttons on Main Building level 10+ pages.
         if (!greenBtn) {
           greenBtn = trySelectors([
             '.upgradeButtonsContainer .section1 button.textButtonV1.green',
             '.upgradeButtonsContainer button.textButtonV1.green',
             '.upgradeButtonsContainer .section1 button.green',
+            '.upgradeButtonsContainer button.green',
             '.contractLink button.green',
             'button[value*="Upgrade"]',
-            'button[value*="upgrade"]',
-            '.build_details .section1 .green',
-            '#build button.green',
-            '.upgradeButtonsContainer button.green'
+            'button[value*="upgrade"]'
           ]);
+        }
+
+        // SAFETY: Never click buttons inside demolish section
+        if (greenBtn && isDemolishElement(greenBtn)) {
+          Logger.warn('clickUpgradeButton: BLOCKED demolish button — refusing to click');
+          greenBtn = null;
         }
 
         if (greenBtn) {
@@ -740,6 +781,12 @@
             '.build_details a.green'
           ]);
         }
+        // SAFETY: Never click links inside demolish section
+        if (greenLink && isDemolishElement(greenLink)) {
+          Logger.warn('clickUpgradeButton: BLOCKED demolish link — refusing to click');
+          greenLink = null;
+        }
+
         if (greenLink) {
           if (typeof greenLink.scrollIntoView === 'function') {
             greenLink.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -895,7 +942,7 @@
 
         if (!count || count <= 0) {
           Logger.warn('trainTroops: invalid count', count);
-          return false;
+          return { success: false, reason: 'invalid_count', message: 'Invalid count: ' + count };
         }
 
         await humanDelay(200, 500);
@@ -912,8 +959,18 @@
         var filled = await fillInput(inputSelectors, count);
 
         if (!filled) {
+          // Check if input exists but is disabled (building level too low, etc.)
+          var inputEl = null;
+          for (var s = 0; s < inputSelectors.length; s++) {
+            inputEl = document.querySelector(inputSelectors[s]);
+            if (inputEl) break;
+          }
+          if (inputEl && inputEl.disabled) {
+            Logger.warn('trainTroops: input disabled for', troopType);
+            return { success: false, reason: 'input_disabled', message: troopType + ' input disabled (building level too low?)' };
+          }
           Logger.warn('trainTroops: input not found for troop type', troopType);
-          return false;
+          return { success: false, reason: 'input_not_found', message: 'No input for ' + troopType + ' on this page' };
         }
 
         // Small delay before clicking train
@@ -936,14 +993,14 @@
 
         if (!clicked) {
           Logger.warn('trainTroops: train button not found');
-          return false;
+          return { success: false, reason: 'button_not_found', message: 'Train button not found (insufficient resources?)' };
         }
 
         Logger.log('trainTroops: submitted training for', troopType, 'x', count);
-        return true;
+        return { success: true, trained: count, troopType: troopType };
       } catch (e) {
         Logger.error('trainTroops error:', e);
-        return false;
+        return { success: false, reason: 'error', message: e.message || String(e) };
       }
     },
 
