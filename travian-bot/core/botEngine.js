@@ -715,7 +715,7 @@ class BotEngine {
           params: { villageId: task.villageId }
         });
         await this._randomDelay();
-        await this._waitForContentScript(10000);
+        await this._waitForContentScript(15000);
       }
 
       let response;
@@ -729,7 +729,7 @@ class BotEngine {
           });
           await this._randomDelay();
           // Wait for page reload and new content script injection
-          await this._waitForContentScript(10000);
+          await this._waitForContentScript(15000);
           // FIX 9: Verify navigation to dorf1
           if (!await this._verifyNavigation('resources')) {
             response = { success: false, reason: 'page_mismatch', message: 'Not on dorf1 after navigation' };
@@ -753,7 +753,7 @@ class BotEngine {
           });
           await this._randomDelay();
           // Wait for page reload and new content script injection
-          await this._waitForContentScript(10000);
+          await this._waitForContentScript(15000);
           // FIX 9: Verify navigation to dorf2
           if (!await this._verifyNavigation('village')) {
             response = { success: false, reason: 'page_mismatch', message: 'Not on dorf2 after navigation' };
@@ -776,7 +776,7 @@ class BotEngine {
             type: 'EXECUTE', action: 'navigateTo', params: { page: task.params.buildingType || 'barracks' }
           });
           await this._randomDelay();
-          await this._waitForContentScript(10000);
+          await this._waitForContentScript(15000);
           response = await this.sendToContentScript({
             type: 'EXECUTE', action: 'trainTroops', params: {
               troopType: task.params.troopType,
@@ -791,14 +791,14 @@ class BotEngine {
             type: 'EXECUTE', action: 'navigateTo', params: { page: 'rallyPoint' }
           });
           await this._randomDelay();
-          await this._waitForContentScript(10000);
+          await this._waitForContentScript(15000);
           // Step 2: Click the farm list tab (tt=99) - causes page reload
           await this.sendToContentScript({
             type: 'EXECUTE', action: 'clickFarmListTab', params: {}
           });
           await this._randomDelay();
           // Wait for content script to re-inject after page reload
-          await this._waitForContentScript(10000);
+          await this._waitForContentScript(15000);
           // Step 3: Send farm lists (smart selective or legacy send-all)
           var farmCfg = this.config && this.config.farmConfig;
           var smartFarming = farmCfg && farmCfg.smartFarming !== false; // default ON when field missing
@@ -852,14 +852,14 @@ class BotEngine {
             type: 'EXECUTE', action: 'navigateTo', params: { page: 'dorf2' }
           });
           await this._randomDelay();
-          await this._waitForContentScript(10000);
+          await this._waitForContentScript(15000);
           // Step 3: Click the trapper building slot (navigates to /build.php?id=XX)
           await this.sendToContentScript({
             type: 'EXECUTE', action: 'clickBuildingSlot', params: { slotId: trapperSlot }
           });
           await this._randomDelay();
           // Step 4: Wait for content script re-injection after page navigation
-          await this._waitForContentScript(10000);
+          await this._waitForContentScript(15000);
           // Step 5: Train traps
           response = await this.sendToContentScript({
             type: 'EXECUTE', action: 'trainTraps', params: { count: task.params.count || 10 }
@@ -872,7 +872,7 @@ class BotEngine {
             type: 'EXECUTE', action: 'navigateTo', params: { page: 'heroAdventures' }
           });
           await this._randomDelay();
-          await this._waitForContentScript(10000);
+          await this._waitForContentScript(15000);
           response = await this.sendToContentScript({
             type: 'EXECUTE', action: 'sendHeroAdventure', params: {}
           });
@@ -884,7 +884,7 @@ class BotEngine {
             type: 'EXECUTE', action: 'navigateTo', params: { page: 'hero' }
           });
           await this._randomDelay();
-          await this._waitForContentScript(10000);
+          await this._waitForContentScript(15000);
           response = await this.sendToContentScript({
             type: 'EXECUTE', action: 'useHeroItem', params: { itemIndex: task.params.itemIndex || 0 }
           });
@@ -897,7 +897,7 @@ class BotEngine {
           });
           await this._randomDelay();
           // Wait for page reload and new content script injection
-          await this._waitForContentScript(10000);
+          await this._waitForContentScript(15000);
           // FIX 9: Verify navigation to dorf2
           if (!await this._verifyNavigation('village')) {
             response = { success: false, reason: 'page_mismatch', message: 'Not on dorf2 after navigation for build_new' };
@@ -913,7 +913,7 @@ class BotEngine {
           }
           // Clicking empty slot navigates to build.php — wait for new page + content script
           await this._randomDelay();
-          await this._waitForContentScript(10000);
+          await this._waitForContentScript(15000);
           // Try to build in current tab first
           console.log('[BotEngine] build_new: trying GID ' + task.params.gid + ' in default tab');
           response = await this.sendToContentScript({
@@ -930,7 +930,7 @@ class BotEngine {
               if (tabClick && tabClick.success) {
                 // Tab was clicked — page reloads, wait for new content script
                 await this._randomDelay();
-                await this._waitForContentScript(10000);
+                await this._waitForContentScript(15000);
               } else {
                 // Tab already active or not found — still retry buildNewByGid
                 // (the first attempt might have raced with page load)
@@ -952,7 +952,7 @@ class BotEngine {
             type: 'EXECUTE', action: 'navigateTo', params: { page: 'rallyPoint' }
           });
           await this._randomDelay();
-          await this._waitForContentScript(10000);
+          await this._waitForContentScript(15000);
           response = await this.sendToContentScript({
             type: 'EXECUTE', action: 'sendAttack', params: {
               target: task.params.target,
@@ -1487,6 +1487,9 @@ class BotEngine {
    * Used after page-reload navigations (clicking links that cause full page load)
    * to avoid sending messages before the new content script has registered.
    *
+   * Uses a direct chrome.tabs.sendMessage ping (bypasses sendToContentScript's
+   * own retry layer which would eat the timeout budget with 3s inner retries).
+   *
    * @param {number} maxWaitMs - Maximum time to wait (default 10000ms)
    * @returns {Promise<boolean>} true if content script responded, false if timed out
    */
@@ -1494,14 +1497,61 @@ class BotEngine {
     maxWaitMs = maxWaitMs || 10000;
     var start = Date.now();
     var attempts = 0;
+    var tabId = this.activeTabId;
+
+    if (!tabId) {
+      console.warn('[BotEngine] _waitForContentScript: no activeTabId');
+      return false;
+    }
+
+    // First, check if the tab still exists and is loading/complete
+    try {
+      var tabInfo = await new Promise(function (resolve) {
+        chrome.tabs.get(tabId, function (tab) {
+          if (chrome.runtime.lastError) resolve(null);
+          else resolve(tab);
+        });
+      });
+      if (!tabInfo) {
+        console.warn('[BotEngine] _waitForContentScript: tab ' + tabId + ' no longer exists');
+        return false;
+      }
+      if (tabInfo.status === 'loading') {
+        // Tab is still loading — give extra time for document_idle content script injection
+        console.log('[BotEngine] Tab is still loading, waiting for document_idle...');
+      }
+    } catch (e) {
+      // Non-critical — proceed with polling
+    }
 
     while (Date.now() - start < maxWaitMs) {
       attempts++;
       try {
-        // TQ-4/PERF-2 FIX: Use lightweight GET_STATE page check instead of full SCAN.
-        // Full SCAN parses the entire DOM (resources, buildings, troops, hero, etc.)
-        // which is expensive. We only need to know the content script is responsive.
-        var ping = await this.sendToContentScript({ type: 'GET_STATE', params: { property: 'page' } });
+        // Direct lightweight ping — bypass sendToContentScript's retry wrapper
+        // to avoid wasting timeout budget on inner 1s+2s retries.
+        var ping = await new Promise(function (resolve) {
+          var timeoutId = setTimeout(function () {
+            resolve(null);
+          }, 1500); // 1.5s per ping attempt max
+
+          try {
+            chrome.tabs.sendMessage(tabId, {
+              type: 'GET_STATE', params: { property: 'page' }
+            }, function (response) {
+              clearTimeout(timeoutId);
+              if (chrome.runtime.lastError) {
+                // "Receiving end does not exist" = content script not injected yet
+                resolve(null);
+              } else {
+                resolve(response);
+              }
+            });
+          } catch (e) {
+            clearTimeout(timeoutId);
+            resolve(null);
+          }
+        });
+
         if (ping && ping.success) {
           if (attempts > 1) {
             console.log('[BotEngine] Content script ready after ' + attempts + ' attempts (' + (Date.now() - start) + 'ms)');
@@ -1509,9 +1559,14 @@ class BotEngine {
           return true;
         }
       } catch (e) {
-        // Content script not ready yet — retry after a short wait
+        // Unexpected error — continue polling
       }
-      await new Promise(function (r) { setTimeout(r, 1000); });
+
+      // Short wait between attempts — more frequent polling = faster detection
+      var elapsed = Date.now() - start;
+      if (elapsed >= maxWaitMs) break;
+      var waitMs = Math.min(800, maxWaitMs - elapsed);
+      await new Promise(function (r) { setTimeout(r, waitMs); });
     }
 
     console.warn('[BotEngine] Content script not ready after ' + maxWaitMs + 'ms (' + attempts + ' attempts)');
@@ -1694,7 +1749,7 @@ class BotEngine {
       });
       await this._randomDelay();
       // Wait for hero page content script to be ready
-      var heroReady = await this._waitForContentScript(10000);
+      var heroReady = await this._waitForContentScript(15000);
       if (!heroReady) {
         TravianLogger.log('WARN', '[BotEngine] Hero page did not load in time');
         return false;
@@ -1706,7 +1761,7 @@ class BotEngine {
       });
       await this._randomDelay();
       // Wait for inventory page content script to be ready
-      var invReady = await this._waitForContentScript(10000);
+      var invReady = await this._waitForContentScript(15000);
       if (!invReady) {
         TravianLogger.log('WARN', '[BotEngine] Hero inventory page did not load in time');
         return false;
@@ -1929,7 +1984,7 @@ class BotEngine {
         type: 'EXECUTE', action: 'navigateTo', params: { page: 'hero' }
       });
       await this._randomDelay();
-      var heroReady = await this._waitForContentScript(10000);
+      var heroReady = await this._waitForContentScript(15000);
       if (!heroReady) {
         TravianLogger.log('WARN', '[BotEngine] Hero page did not load for proactive claim');
         return false;
@@ -1940,7 +1995,7 @@ class BotEngine {
         type: 'EXECUTE', action: 'navigateTo', params: { page: 'heroInventory' }
       });
       await this._randomDelay();
-      var invReady = await this._waitForContentScript(10000);
+      var invReady = await this._waitForContentScript(15000);
       if (!invReady) {
         TravianLogger.log('WARN', '[BotEngine] Hero inventory did not load for proactive claim');
         return false;
