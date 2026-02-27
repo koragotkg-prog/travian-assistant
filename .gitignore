@@ -11,5 +11,8 @@ node_modules/
 # Rust build output
 target/
 
+# macOS
+.DS_Store
+
 # Temp/scratch
 _ul
