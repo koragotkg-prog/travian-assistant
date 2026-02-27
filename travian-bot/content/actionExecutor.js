@@ -727,7 +727,7 @@
 
         var upgradeBlocked = qs('.upgradeBlocked');
         if (upgradeBlocked) {
-          Logger.warn('clickUpgradeButton: insufficient resources (upgradeBlocked found)');
+          Logger.log('clickUpgradeButton: insufficient resources (upgradeBlocked found)');
           return { success: false, reason: 'insufficient_resources', message: 'Not enough resources for upgrade' };
         }
 
@@ -1986,7 +1986,7 @@
         var result = tryBuildInCurrentTab(gid);
 
         if (!result) {
-          Logger.warn('buildNewByGid: building GID', gid, 'not found in current tab');
+          Logger.log('buildNewByGid: building GID', gid, 'not found in current tab (will try other tabs)');
           // FIX 13: snapshot to diagnose missing building
           if (window.DomHelpers) {
             window.DomHelpers.captureAndLog({
@@ -2010,7 +2010,7 @@
             return { success: false, reason: 'queue_full', message: 'Build queue is full' };
 
           case 'insufficient_resources':
-            Logger.warn('buildNewByGid: insufficient resources for GID', gid);
+            Logger.log('buildNewByGid: insufficient resources for GID', gid);
             return { success: false, reason: 'insufficient_resources', message: 'Not enough resources to build' };
 
           default:

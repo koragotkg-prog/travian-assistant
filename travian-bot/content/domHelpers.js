@@ -105,7 +105,7 @@
       // Timeout handler
       timer = setTimeout(function () {
         cleanup();
-        Logger.warn('waitForElement timeout (' + timeout + 'ms):', selectors[0]);
+        Logger.log('waitForElement timeout (' + timeout + 'ms):', selectors[0]);
         resolve(null);
       }, timeout);
 
@@ -520,7 +520,7 @@
     }
 
     // All retries exhausted
-    Logger.error('retryAction [' + label + '] all ' + (maxRetries + 1) + ' attempts failed');
+    Logger.warn('retryAction [' + label + '] all ' + (maxRetries + 1) + ' attempts failed');
     throw lastError;
   }
 
@@ -576,7 +576,7 @@
       hasNavigation: !!safeQuery('.navigation, #navigation, nav'),
       hasBuildView: !!safeQuery('.upgradeButtonsContainer, .buildingWrapper'),
       hasDialog: !!safeQuery('.dialogWrapper, .modalContent, .heroConsumablesPopup, .popup'),
-      hasError: !!safeQuery('.error, .errorMessage, #errorPage'),
+      hasError: !!safeQuery('.systemMessage.error, .errorPage, #error, .errorMessage'),
       loadingVisible: !!safeQuery('.loading:not([style*="display: none"]), .ajaxLoader:not([style*="none"])')
     };
 
@@ -584,11 +584,14 @@
   }
 
   /**
-   * Log a snapshot (calls Logger.error with structured data).
+   * Log a snapshot at DEBUG level (diagnostic context, not an error itself).
+   * The calling code is responsible for logging the actual WARN/ERROR.
+   * Snapshots are verbose and should NOT appear in Chrome's extension error panel.
    * @param {Object} snapshot - From captureSnapshot()
    */
   function logSnapshot(snapshot) {
-    Logger.error('DOM Snapshot [' + snapshot.action + '] ' + snapshot.reason, snapshot);
+    Logger.log('DOM Snapshot [' + snapshot.action + '] ' + snapshot.reason +
+      ' | url=' + snapshot.url + ' | page=' + snapshot.pageType);
   }
 
   /**
