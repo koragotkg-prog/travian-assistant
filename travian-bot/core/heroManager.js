@@ -123,6 +123,13 @@
           return false;
         }
 
+        // Verify we actually landed on the hero page (not login/error redirect)
+        var pageOk = await this._bridge.verifyPage('hero');
+        if (!pageOk) {
+          _getLogger().log('WARN', '[HeroManager] Navigation to hero inventory failed — wrong page');
+          return false;
+        }
+
         // Scan inventory (also detects UI version)
         var scanResult = await this._bridge.send({
           type: 'EXECUTE', action: 'scanHeroInventory', params: {}
@@ -189,6 +196,13 @@
         var invReady = await this._bridge.waitForReady(15000);
         if (!invReady) {
           _getLogger().log('WARN', '[HeroManager] Hero inventory page did not load in time');
+          return false;
+        }
+
+        // Verify we actually landed on the hero page (not login/error redirect)
+        var pageOk = await this._bridge.verifyPage('hero');
+        if (!pageOk) {
+          _getLogger().log('WARN', '[HeroManager] Navigation to hero inventory failed — wrong page');
           return false;
         }
 

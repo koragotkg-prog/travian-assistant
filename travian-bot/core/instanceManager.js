@@ -64,12 +64,12 @@
      * Remove and stop an instance.
      * @param {string} serverKey
      */
-    remove(serverKey) {
+    async remove(serverKey) {
       var instance = this.instances.get(serverKey);
       if (!instance) return;
 
       if (instance.engine.running) {
-        instance.engine.stop();
+        await instance.engine.stop();
       }
 
       // Clear per-server alarm
@@ -104,12 +104,14 @@
     /**
      * Stop all running instances.
      */
-    stopAll() {
+    async stopAll() {
+      var stopPromises = [];
       for (var inst of this.instances.values()) {
         if (inst.engine.running) {
-          inst.engine.stop();
+          stopPromises.push(inst.engine.stop());
         }
       }
+      await Promise.allSettled(stopPromises);
       console.log('[InstanceManager] All instances stopped');
     }
 

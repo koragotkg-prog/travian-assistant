@@ -475,7 +475,7 @@ class BotEngine {
    * Emergency stop. Immediately halts all activity and records the reason.
    * @param {string} reason - Why the emergency stop was triggered
    */
-  emergencyStop(reason) {
+  async emergencyStop(reason) {
     console.error(`[BotEngine] EMERGENCY STOP: ${reason}`);
 
     // ST-5 FIX: Flush logs BEFORE stopping — emergency stop may precede SW death
@@ -485,7 +485,7 @@ class BotEngine {
 
     this._emergencyReason = reason; // SAF-5 FIX: store for getStatus()
     this._transition(BOT_STATES.EMERGENCY, reason);
-    this.stop(); // EMERGENCY → STOPPED
+    await this.stop(); // EMERGENCY → STOPPED — must await to ensure saveState() completes
 
     // Persist the emergency stop reason
     try {
@@ -585,7 +585,7 @@ class BotEngine {
             type: 'SCAN', params: { property: 'captcha' }
           }).catch(() => null);
           if (captchaCheck && captchaCheck.success && captchaCheck.data === true) {
-            this.emergencyStop('Captcha detected (scan failed but captcha confirmed)');
+            await this.emergencyStop('Captcha detected (scan failed but captcha confirmed)');
             return;
           }
         } catch (_) { /* lightweight check failed too — fall through to circuit breaker */ }
@@ -663,7 +663,7 @@ class BotEngine {
 
       // 4. Safety checks - captcha / errors
       if (this.gameState.captcha) {
-        this.emergencyStop('Captcha detected on page');
+        await this.emergencyStop('Captcha detected on page');
         return;
       }
 
@@ -674,7 +674,7 @@ class BotEngine {
         TravianLogger.log('ERROR', '[BotEngine] Error page detected: ' + errorDetail +
           ' | page=' + (this.gameState.page || 'unknown') +
           ' | url=' + (this.gameState.url || 'unknown'));
-        this.emergencyStop('Game error detected: ' + errorDetail);
+        await this.emergencyStop('Game error detected: ' + errorDetail);
         return;
       }
 
@@ -685,7 +685,7 @@ class BotEngine {
         this._notLoggedInCount++;
         this._slog('WARN', 'Not logged in (count: ' + this._notLoggedInCount + '/' + this._notLoggedInMaxCount + ')');
         if (this._notLoggedInCount >= this._notLoggedInMaxCount) {
-          this.emergencyStop('Session expired — not logged in for ' + this._notLoggedInCount + ' consecutive cycles');
+          await this.emergencyStop('Session expired — not logged in for ' + this._notLoggedInCount + ' consecutive cycles');
         }
         return;
       }
@@ -702,7 +702,7 @@ class BotEngine {
       // Check if decision engine flagged an emergency
       for (const task of newTasks) {
         if (task.type === 'emergency_stop') {
-          this.emergencyStop(task.params.reason);
+          await this.emergencyStop(task.params.reason);
           return;
         }
       }
@@ -759,7 +759,7 @@ class BotEngine {
 
         // After max trips → emergency stop (don't keep oscillating)
         if (this._circuitBreakerTrips >= this._circuitBreakerMaxTrips) {
-          this.emergencyStop(
+          await this.emergencyStop(
             'Circuit breaker: ' + this._circuitBreakerTrips + ' trips — persistent failures, stopping bot'
           );
           return;

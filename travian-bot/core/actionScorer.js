@@ -268,7 +268,8 @@
 
       // Wall upgrade — scored as normal building but with defense boost
       const buildings = state.buildings || [];
-      const wall = buildings.find(b => [31, 33, 36].includes(b.id || b.gid));
+      // Wall GIDs: 31=City Wall (Roman), 32=Earth Wall (Gaul), 33=Palisade (Teuton)
+      const wall = buildings.find(b => [31, 32, 33].includes(b.id || b.gid));
       if (wall && !wall.upgrading && wall.level < 20) {
         const score = 8 + (state.defenseReports?.recentAttacks > 0 ? 10 : 0);
         actions.push({

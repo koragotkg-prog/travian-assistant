@@ -112,7 +112,7 @@
      * @returns {Promise<object>} The response from the content script
      */
     async _sendOnce(message) {
-      var self = this;
+      var bridge = this;
       return new Promise(function(resolve, reject) {
         // FIX 1: "settled" flag prevents ghost actions from the timeout/callback race.
         // When the timeout fires first, we reject -- but chrome.tabs.sendMessage callback
@@ -120,20 +120,20 @@
         // or the late callback would trigger side-effects on an already-abandoned promise.
         var settled = false;
 
-        var currentTimeout = self._messageTimeout;
+        var currentTimeout = bridge._messageTimeout;
         var timeoutId = setTimeout(function() {
           if (settled) return;
           settled = true;
           // Adaptive timeout: increase for next attempt (Chrome may be throttling)
-          if (self._messageTimeout < self._messageTimeoutMax) {
-            self._messageTimeout = Math.min(self._messageTimeout + self._messageTimeoutStep, self._messageTimeoutMax);
-            console.log('[ContentScriptBridge] Timeout -> adaptive increase to ' + self._messageTimeout + 'ms');
+          if (bridge._messageTimeout < bridge._messageTimeoutMax) {
+            bridge._messageTimeout = Math.min(bridge._messageTimeout + bridge._messageTimeoutStep, bridge._messageTimeoutMax);
+            console.log('[ContentScriptBridge] Timeout -> adaptive increase to ' + bridge._messageTimeout + 'ms');
           }
           reject(new Error('Content script message timed out after ' + currentTimeout + 'ms'));
         }, currentTimeout);
 
         try {
-          chrome.tabs.sendMessage(self.activeTabId, message, function(response) {
+          chrome.tabs.sendMessage(bridge.activeTabId, message, function(response) {
             if (settled) {
               // Ghost callback -- timeout already fired. Log and discard.
               console.warn('[ContentScriptBridge] Ghost callback after timeout for:', message.type || message.action);
@@ -148,8 +148,8 @@
             }
 
             // Adaptive timeout: reset to base after successful response
-            if (self._messageTimeout > self._messageTimeoutBase) {
-              self._messageTimeout = self._messageTimeoutBase;
+            if (bridge._messageTimeout > bridge._messageTimeoutBase) {
+              bridge._messageTimeout = bridge._messageTimeoutBase;
             }
 
             resolve(response);

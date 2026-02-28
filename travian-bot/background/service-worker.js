@@ -324,12 +324,12 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
           var emergInst = resolveInstance(message, sender);
           var reason = (data && data.reason) || 'User triggered emergency stop';
           if (emergInst) {
-            emergInst.engine.emergencyStop(reason);
+            await emergInst.engine.emergencyStop(reason);
             notify('EMERGENCY STOP', reason + ' (' + emergInst.serverKey + ')');
             sendResponse({ success: true, data: emergInst.engine.getStatus() });
           } else {
             // Stop all as safety fallback
-            manager.stopAll();
+            await manager.stopAll();
             sendResponse({ success: true });
           }
           break;
@@ -997,8 +997,13 @@ chrome.tabs.onRemoved.addListener(function (tabId) {
   inst.engine.activeTabId = null;
 
   if (inst.engine.running) {
-    inst.engine.stop();
-    notify('Tab Closed', 'Tab closed for ' + inst.serverKey + '. Bot stopped.');
+    // Await stop() to ensure saveState() completes before SW can die
+    inst.engine.stop().then(function() {
+      notify('Tab Closed', 'Tab closed for ' + inst.serverKey + '. Bot stopped.');
+    }).catch(function(err) {
+      console.error('[SW] Error stopping bot on tab close:', err);
+      notify('Tab Closed', 'Tab closed for ' + inst.serverKey + '. Bot stopped (with errors).');
+    });
   }
 });
 
