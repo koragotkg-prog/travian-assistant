@@ -69,10 +69,9 @@ const dom = {
   cfgLoopActive: document.getElementById('cfgLoopActive'),
   cfgLoopIdle: document.getElementById('cfgLoopIdle'),
 
-  // Troop training
-  troopType: document.getElementById('troopType'),
-  troopBuilding: document.getElementById('troopBuilding'),
-  troopBatch: document.getElementById('troopBatch'),
+  // Troop training (dynamic slots)
+  troopSlots: document.getElementById('troopSlots'),
+  btnAddTroop: document.getElementById('btnAddTroop'),
   troopMinRes: document.getElementById('troopMinRes'),
 
   // Farming
@@ -1486,6 +1485,144 @@ function collectUpgradeTargets() {
 }
 
 // ============================================================
+// Troop Slot Management (tribe-aware, dynamic)
+// ============================================================
+
+/** Max number of troop training slots */
+var MAX_TROOP_SLOTS = 5;
+
+/** Current tribe for troop dropdowns */
+function getCurrentTribe() {
+  return (dom.cfgTribe && dom.cfgTribe.value) || 'gaul';
+}
+
+/**
+ * Render a single troop training slot.
+ * @param {Object} [slotData] - Optional existing data: {troopType, building, batchSize}
+ * @returns {HTMLElement}
+ */
+function createTroopSlotEl(slotData) {
+  var tribe = getCurrentTribe();
+  var GD = (typeof TravianGameData !== 'undefined') ? TravianGameData : null;
+  var options = GD ? GD.getTroopOptions(tribe) : [];
+
+  var div = document.createElement('div');
+  div.className = 'troop-slot';
+
+  // Troop type dropdown
+  var sel = document.createElement('select');
+  sel.className = 'troop-select';
+  var defaultOpt = document.createElement('option');
+  defaultOpt.value = '';
+  defaultOpt.textContent = '-- Select --';
+  sel.appendChild(defaultOpt);
+  for (var i = 0; i < options.length; i++) {
+    var o = document.createElement('option');
+    o.value = options[i].value;
+    o.textContent = options[i].value.toUpperCase() + ' — ' + options[i].label;
+    o.dataset.building = options[i].building;
+    sel.appendChild(o);
+  }
+
+  // Building badge (auto-filled from selection)
+  var badge = document.createElement('span');
+  badge.className = 'troop-building-badge';
+  badge.textContent = '—';
+
+  // Batch size input
+  var batch = document.createElement('input');
+  batch.type = 'number';
+  batch.className = 'troop-batch-input';
+  batch.min = '1';
+  batch.max = '200';
+  batch.value = (slotData && slotData.batchSize) ? slotData.batchSize : '5';
+  batch.title = 'Batch size';
+
+  // Remove button
+  var btnRemove = document.createElement('button');
+  btnRemove.className = 'btn-remove-troop';
+  btnRemove.textContent = '✕';
+  btnRemove.title = 'Remove this troop';
+  btnRemove.addEventListener('click', function () {
+    div.remove();
+  });
+
+  // Auto-update building badge on selection change
+  sel.addEventListener('change', function () {
+    var selected = sel.options[sel.selectedIndex];
+    badge.textContent = selected && selected.dataset.building
+      ? selected.dataset.building.replace(/_/g, ' ')
+      : '—';
+  });
+
+  div.appendChild(sel);
+  div.appendChild(badge);
+  div.appendChild(batch);
+  div.appendChild(btnRemove);
+
+  // Set initial value if data provided
+  if (slotData && slotData.troopType) {
+    sel.value = slotData.troopType;
+    // Trigger building badge update
+    var ev = new Event('change');
+    sel.dispatchEvent(ev);
+  }
+
+  return div;
+}
+
+/**
+ * Render all troop slots (replaces container contents).
+ * @param {Array} [slots] - Array of {troopType, building, batchSize}
+ */
+function renderTroopSlots(slots) {
+  if (!dom.troopSlots) return;
+  dom.troopSlots.innerHTML = '';
+  if (slots && slots.length > 0) {
+    for (var i = 0; i < slots.length; i++) {
+      dom.troopSlots.appendChild(createTroopSlotEl(slots[i]));
+    }
+  }
+}
+
+/**
+ * Re-render all existing troop slot dropdowns when tribe changes.
+ * Preserves batch sizes but resets troop selections (different tribe = different units).
+ */
+function rebuildTroopDropdownsForTribe() {
+  if (!dom.troopSlots) return;
+  var existing = dom.troopSlots.querySelectorAll('.troop-slot');
+  var preserved = [];
+  existing.forEach(function (slot) {
+    var batch = slot.querySelector('.troop-batch-input');
+    preserved.push({ troopType: '', batchSize: batch ? batch.value : '5' });
+  });
+  renderTroopSlots(preserved.length > 0 ? preserved : []);
+}
+
+/**
+ * Collect current troop slot data from the DOM.
+ * @returns {Array<{troopType: string, building: string, batchSize: number}>}
+ */
+function collectTroopSlots() {
+  var slots = [];
+  if (!dom.troopSlots) return slots;
+  dom.troopSlots.querySelectorAll('.troop-slot').forEach(function (el) {
+    var sel = el.querySelector('.troop-select');
+    var batch = el.querySelector('.troop-batch-input');
+    if (sel && sel.value) {
+      var selected = sel.options[sel.selectedIndex];
+      slots.push({
+        troopType: sel.value,
+        building: (selected && selected.dataset.building) || 'barracks',
+        batchSize: parseInt(batch ? batch.value : '5', 10) || 5
+      });
+    }
+  });
+  return slots;
+}
+
+// ============================================================
 // Config Collection & Population
 // ============================================================
 
@@ -1522,9 +1659,8 @@ function collectConfig() {
       buildings: scannedBuildings
     },
     troopConfig: {
-      defaultTroopType: dom.troopType.value,
-      trainCount: parseInt(dom.troopBatch.value, 10) || 5,
-      trainingBuilding: dom.troopBuilding ? dom.troopBuilding.value : 'barracks',
+      slots: collectTroopSlots(),
+      minResources: parseInt(dom.troopMinRes.value, 10) || 1000,
       minResourceThreshold: {
         wood: parseInt(dom.troopMinRes.value, 10) || 1000,
         clay: parseInt(dom.troopMinRes.value, 10) || 1000,
@@ -1665,17 +1801,38 @@ function populateForm(config) {
   }
   updateVillageScope();
 
-  // Troop config
+  // Troop config — supports new slots format + backward compat with old single-troop
   if (config.troopConfig) {
     var tc = config.troopConfig;
-    if (tc.defaultTroopType || tc.type) dom.troopType.value = tc.defaultTroopType || tc.type;
-    if (tc.trainingBuilding && dom.troopBuilding) dom.troopBuilding.value = tc.trainingBuilding;
-    if (tc.trainCount || tc.trainBatchSize) dom.troopBatch.value = tc.trainCount || tc.trainBatchSize;
+
+    // New format: slots array
+    if (tc.slots && Array.isArray(tc.slots) && tc.slots.length > 0) {
+      renderTroopSlots(tc.slots);
+    }
+    // Backward compat: migrate old single-troop format to one slot
+    else if (tc.defaultTroopType || tc.type) {
+      var oldType = tc.defaultTroopType || tc.type;
+      if (oldType) {
+        renderTroopSlots([{
+          troopType: oldType,
+          building: tc.trainingBuilding || 'barracks',
+          batchSize: tc.trainCount || tc.trainBatchSize || 5
+        }]);
+      } else {
+        renderTroopSlots([]);
+      }
+    } else {
+      renderTroopSlots([]);
+    }
+
+    // Min resources
     if (tc.minResourceThreshold && tc.minResourceThreshold.wood) {
       dom.troopMinRes.value = tc.minResourceThreshold.wood;
     } else if (tc.minResources) {
       dom.troopMinRes.value = tc.minResources;
     }
+  } else {
+    renderTroopSlots([]);
   }
 
   // Hero config
@@ -2307,6 +2464,24 @@ function bindEvents() {
       } finally {
         dom.btnScanFarmTargets.disabled = false;
       }
+    });
+  }
+
+  // --- Troop slots ---
+
+  if (dom.btnAddTroop) {
+    dom.btnAddTroop.addEventListener('click', function () {
+      if (!dom.troopSlots) return;
+      var currentCount = dom.troopSlots.querySelectorAll('.troop-slot').length;
+      if (currentCount >= MAX_TROOP_SLOTS) return;
+      dom.troopSlots.appendChild(createTroopSlotEl());
+    });
+  }
+
+  // Rebuild troop dropdowns when tribe changes (different tribe = different unit names)
+  if (dom.cfgTribe) {
+    dom.cfgTribe.addEventListener('change', function () {
+      rebuildTroopDropdownsForTribe();
     });
   }
 

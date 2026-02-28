@@ -26,10 +26,10 @@
       if (config.autoBuildingUpgrade || config.autoUpgradeBuildings) {
         actions.push(...this._scoreBuildingUpgrades(gameState, config));
       }
-      if (config.autoTrainTroops || config.autoTroopTraining) {
+      if (config.autoTroopTraining) {
         actions.push(...this._scoreTroopTraining(gameState, config));
       }
-      if (config.autoFarm || config.autoFarming) {
+      if (config.autoFarming) {
         actions.push(...this._scoreFarming(gameState, config));
       }
       if (config.autoHeroAdventure) {
@@ -70,11 +70,9 @@
         const gid = gidMap[field.type] || 0;
         if (!gid) continue;
 
-        // Check target level from config (keyed by slot, e.g. "3")
-        const slotKey = String(field.id || field.position);
-        const target = config.upgradeTargets?.[slotKey];
-        const targetLevel = target ? (target.targetLevel || 10) : (config.resourceConfig?.maxLevel || 10);
-        if (target && !target.enabled) continue;
+        // Check target level from config
+        const targetKey = `${field.type}Target`;
+        const targetLevel = config.upgradeTargets?.[targetKey] || config[targetKey] || 10;
         if (field.level >= targetLevel) continue;
 
         // Base value: production gain per hour
@@ -120,10 +118,7 @@
         if (bld.empty || bld.upgrading) continue;
 
         const gid = bld.id || bld.gid;
-        const slotKey = String(bld.slot);
-        const target = config.upgradeTargets?.[slotKey];
-        const targetLevel = target ? (target.targetLevel || null) : null;
-        if (target && !target.enabled) continue;
+        const targetLevel = config.buildingTargets?.[`b${gid}`] || null;
         if (targetLevel && bld.level >= targetLevel) continue;
 
         // Score by building utility
@@ -154,13 +149,17 @@
       const troops = state.troops || {};
       const totalTroops = Object.values(troops).reduce((sum, n) => sum + (parseInt(n) || 0), 0);
 
-      // Read from troopConfig sub-object (popup saves here)
-      const tc = config.troopConfig || {};
-      const slots = tc.slots || [];
-      const troopType = tc.defaultTroopType || tc.type || (slots[0] && slots[0].troopType) || 't1';
-      const trainCount = tc.trainCount || tc.trainBatchSize || (slots[0] && slots[0].batchSize) || 5;
+      // Simple: if below minimum troops, train more
+      const minTroops = config.minTroops || 50;
+      if (totalTroops >= minTroops && !config.alwaysTrain) return actions;
+
+      // Support new slots format + backward compat
+      var tc = config.troopConfig || config;
+      var firstSlot = (tc.slots && tc.slots.length > 0) ? tc.slots[0] : null;
+      const troopType = firstSlot ? firstSlot.troopType : (tc.defaultTroopType || config.troopType || 't1');
+      const trainCount = firstSlot ? (firstSlot.batchSize || 5) : (tc.trainCount || config.trainCount || 5);
       // FIX: Include buildingType so execution navigates to the correct building
-      const buildingType = tc.trainingBuilding || (slots[0] && slots[0].building) || 'barracks';
+      const buildingType = firstSlot ? (firstSlot.building || 'barracks') : (tc.trainingBuilding || 'barracks');
 
       // Crop awareness: don't train if free crop is very low (skip penalty if data unavailable)
       const freeCrop = state.freeCrop;
@@ -182,12 +181,12 @@
       const actions = [];
       const farmConfig = config.farmConfig || config;
 
-      if (!config.autoFarm && !config.autoFarming) return actions;
+      if (!farmConfig.autoFarming && !config.autoFarming) return actions;
 
       // Base farming score
       const lastFarm = state.lastFarmTime || 0;
       const elapsed = Date.now() - lastFarm;
-      const interval = farmConfig.intervalMs || 300000; // already in ms
+      const interval = (farmConfig.farmInterval || 300) * 1000;
 
       if (elapsed < interval) return actions;
 
@@ -212,8 +211,7 @@
       const hero = state.hero || {};
 
       if (!hero.hasAdventure || hero.isAway || hero.isDead) return actions;
-      const minHealth = (config.heroConfig && config.heroConfig.minHealth) || 30;
-      if ((hero.health || 0) < minHealth) return actions;
+      if ((hero.health || 0) < (config.minHeroHealth || 30)) return actions;
 
       actions.push({
         type: 'send_hero_adventure',

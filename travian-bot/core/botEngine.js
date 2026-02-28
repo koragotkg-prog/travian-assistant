@@ -1856,7 +1856,9 @@ class BotEngine {
       'no_items',           // No hero items to use
       'page_mismatch',      // FIX 9: page assertion failed — navigation problem
       'slot_occupied',      // Slot already has building — can't build new
-      'prerequisites_not_met' // Building prereqs unmet — DFS resolver should handle
+      'prerequisites_not_met', // Building prereqs unmet — DFS resolver should handle
+      'input_not_found',    // Troop input missing — wrong building or troop unavailable
+      'input_disabled'      // Troop input disabled — building level too low
     ];
     if (hopeless.indexOf(reason) !== -1) return true;
 
@@ -1896,6 +1898,10 @@ class BotEngine {
         return 600000;   // 10 min — slot already built, decision engine will rescan
       case 'prerequisites_not_met':
         return 300000;   // 5 min — DFS resolver should create prereq tasks
+      case 'input_not_found':
+        return 300000;   // 5 min — troop type not on this page
+      case 'input_disabled':
+        return 300000;   // 5 min — building level too low
       default:
         return 60000;    // 1 min default
     }

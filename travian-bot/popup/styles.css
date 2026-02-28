@@ -1358,6 +1358,60 @@ input[type="text"]:focus {
 }
 
 /* ============================================================
+   TROOP TRAINING SLOTS
+   ============================================================ */
+.troop-slot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  padding: 8px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  margin-bottom: 6px;
+  position: relative;
+}
+
+.troop-slot select {
+  flex: 1;
+  min-width: 0;
+}
+
+.troop-slot .troop-building-badge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: rgba(0,255,136,0.08);
+  color: var(--success);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.troop-slot .troop-batch-input {
+  width: 56px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.troop-slot .btn-remove-troop {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 0 4px;
+  line-height: 1;
+  flex-shrink: 0;
+  transition: color 0.15s;
+}
+
+.troop-slot .btn-remove-troop:hover {
+  color: var(--danger);
+}
+
+/* ============================================================
    TROOP SUMMARY
    ============================================================ */
 .troop-grid {

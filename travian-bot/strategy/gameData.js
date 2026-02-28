@@ -109,6 +109,15 @@
     },
 
     // =========================================================================
+    // Troop Order (maps unit key → tN input name by index+1)
+    // =========================================================================
+    TROOP_ORDER: {
+      roman:  ['legionnaire','praetorian','imperian','equitesLegati','equitesImperatoris','equitesCaesaris','batteringRam','fireCatapult','senator','settler'],
+      teuton: ['clubswinger','spearfighter','axefighter','scout','paladin','teutonicKnight','ram','catapult','chief','settler'],
+      gaul:   ['phalanx','swordsman','pathfinder','theutatesThunder','druidrider','haeduan','ram','trebuchet','chieftain','settler']
+    },
+
+    // =========================================================================
     // Tribe Strategic Profiles
     // =========================================================================
     TRIBE_PROFILES: {
@@ -194,6 +203,69 @@
         if (this.BUILDINGS[key].gid === gid) return key;
       }
       return null;
+    },
+
+    /**
+     * Get DOM input name (e.g. 't4') for a given tribe + unit key.
+     * @param {string} tribe - 'roman'|'teuton'|'gaul'
+     * @param {string} unitKey - e.g. 'theutatesThunder'
+     * @returns {string|null} e.g. 't4'
+     */
+    getInputName: function (tribe, unitKey) {
+      var order = this.TROOP_ORDER[tribe];
+      if (!order) return null;
+      var idx = order.indexOf(unitKey);
+      return idx >= 0 ? ('t' + (idx + 1)) : null;
+    },
+
+    /**
+     * Get unit key from a tN input name.
+     * @param {string} tribe - 'roman'|'teuton'|'gaul'
+     * @param {string} tN - e.g. 't4'
+     * @returns {string|null} e.g. 'theutatesThunder'
+     */
+    getUnitKey: function (tribe, tN) {
+      var order = this.TROOP_ORDER[tribe];
+      if (!order || !tN) return null;
+      var match = tN.match(/^t(\d+)$/);
+      if (!match) return null;
+      var idx = parseInt(match[1], 10) - 1;
+      return idx >= 0 && idx < order.length ? order[idx] : null;
+    },
+
+    /**
+     * Get tribe-aware troop options for a dropdown.
+     * Each option has value (tN), label (display name), and building.
+     * @param {string} tribe - 'roman'|'teuton'|'gaul'
+     * @returns {Array<{value: string, label: string, building: string, unitKey: string}>}
+     */
+    getTroopOptions: function (tribe) {
+      var order = this.TROOP_ORDER[tribe];
+      var troops = this.TROOPS[tribe];
+      if (!order || !troops) return [];
+
+      // Building fallback for troops not in TROOPS data (catapult/trebuchet, settler)
+      var buildingFallback = {
+        fireCatapult: 'workshop', catapult: 'workshop', trebuchet: 'workshop',
+        senator: 'residence', chief: 'residence', chieftain: 'residence',
+        settler: 'residence'
+      };
+
+      var options = [];
+      for (var i = 0; i < order.length; i++) {
+        var key = order[i];
+        var data = troops[key];
+        // Capitalise first letter for display: 'theutatesThunder' → 'Theutates Thunder'
+        var label = key.replace(/([A-Z])/g, ' $1').replace(/^./, function (s) { return s.toUpperCase(); }).trim();
+        var building = data ? data.building : (buildingFallback[key] || 'barracks');
+        options.push({
+          value: 't' + (i + 1),
+          label: label,
+          building: building,
+          unitKey: key
+        });
+      }
+      return options;
     },
 
     // =========================================================================

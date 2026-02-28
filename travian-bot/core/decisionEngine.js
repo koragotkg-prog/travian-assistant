@@ -191,11 +191,13 @@ class DecisionEngine {
       }
     }
 
-    // 6. Troop training
+    // 6. Troop training (supports multiple slots)
     if ((config.autoTrainTroops || config.autoTroopTraining) && !this.isCoolingDown('train_troops')) {
-      const troopTask = this.evaluateTroopTraining(gameState, config);
-      if (troopTask && !taskQueue.hasTaskOfType('train_troops', troopTask.villageId)) {
-        newTasks.push(troopTask);
+      const troopTasks = this.evaluateAllTroopTraining(gameState, config);
+      for (const tt of troopTasks) {
+        if (!taskQueue.hasTaskOfType('train_troops', tt.villageId)) {
+          newTasks.push(tt);
+        }
       }
     }
 
@@ -418,7 +420,8 @@ class DecisionEngine {
 
   /**
    * Evaluate whether troops should be trained.
-   * Uses military planner for phase-aware recommendations when available.
+   * Supports multi-slot config: generates one task per configured slot.
+   * Uses military planner for phase-aware recommendations when no slots configured.
    */
   evaluateTroopTraining(state, config) {
     if (!config.troopConfig) return null;
@@ -428,7 +431,10 @@ class DecisionEngine {
 
     // Check minimum resource threshold
     const minThreshold = config.troopConfig.minResourceThreshold || {
-      wood: 500, clay: 500, iron: 500, crop: 300
+      wood: config.troopConfig.minResources || 500,
+      clay: config.troopConfig.minResources || 500,
+      iron: config.troopConfig.minResources || 500,
+      crop: Math.round((config.troopConfig.minResources || 500) * 0.6)
     };
 
     if (currentResources.wood < minThreshold.wood ||
@@ -438,33 +444,62 @@ class DecisionEngine {
       return null;
     }
 
-    // Strategy-powered: use military planner for troop type recommendation
-    if (this.militaryPlanner && config.tribe) {
+    const GD = (typeof self !== 'undefined' && self.TravianGameData) ? self.TravianGameData : null;
+    const tribe = config.tribe || 'gaul';
+
+    // --- Multi-slot path: user configured specific troop training slots ---
+    const slots = config.troopConfig.slots;
+    if (slots && Array.isArray(slots) && slots.length > 0) {
+      // Return only the first slot as a single task (queue handles one at a time)
+      // BotEngine will re-evaluate after completing each task
+      const slot = slots[0];
+      return {
+        type: 'train_troops',
+        params: {
+          troopType: slot.troopType,
+          count: slot.batchSize || 5,
+          buildingType: slot.building || 'barracks'
+        },
+        priority: this.currentPhase === 'late' ? 4 : 6,
+        villageId: state.currentVillageId || null
+      };
+    }
+
+    // --- Backward compat: old single-troop format ---
+    const legacyType = config.troopConfig.defaultTroopType || config.troopConfig.type;
+    if (legacyType) {
+      return {
+        type: 'train_troops',
+        params: {
+          troopType: legacyType,
+          count: config.troopConfig.trainCount || config.troopConfig.trainBatchSize || 5,
+          buildingType: config.troopConfig.trainingBuilding || 'barracks'
+        },
+        priority: 6,
+        villageId: state.currentVillageId || null
+      };
+    }
+
+    // --- Strategy-powered: use military planner when no user config ---
+    if (this.militaryPlanner && tribe) {
       try {
         const plan = this.militaryPlanner.troopProductionPlan(
-          config.tribe,
+          tribe,
           this.currentPhase,
           config.threatLevel || 0,
           currentResources
         );
 
         if (plan && plan.primaryUnit && plan.affordableCount > 0) {
-          // Map strategy unit names to config troop types if user has one set
-          const userTroopType = config.troopConfig.defaultTroopType;
-          const trainCount = Math.min(
-            config.troopConfig.trainCount || 5,
-            plan.affordableCount
-          );
+          const trainCount = Math.min(5, plan.affordableCount);
 
           console.log('[DecisionEngine] Troop plan: ' + plan.primaryUnit +
             ' x' + trainCount + ' (' + plan.reasoning.join('; ') + ')');
 
-          // If user has a specific troop type configured, use their building too
-          const useStrategyUnit = !userTroopType;
-          const finalTroopType = useStrategyUnit ? plan.primaryUnit : userTroopType;
-          const finalBuilding = useStrategyUnit
-            ? this._getTroopBuilding(plan.primaryUnit, config.tribe)
-            : (config.troopConfig.trainingBuilding || 'barracks');
+          // Convert strategy unit name to tN input name
+          var troopInputName = GD ? GD.getInputName(tribe, plan.primaryUnit) : null;
+          var finalTroopType = troopInputName || plan.primaryUnit;
+          var finalBuilding = this._getTroopBuilding(plan.primaryUnit, tribe);
 
           return {
             type: 'train_troops',
@@ -482,17 +517,56 @@ class DecisionEngine {
       }
     }
 
-    // Fallback: use config values directly
-    return {
-      type: 'train_troops',
-      params: {
-        troopType: config.troopConfig.defaultTroopType || 'infantry',
-        count: config.troopConfig.trainCount || 5,
-        buildingType: config.troopConfig.trainingBuilding || 'barracks'
-      },
-      priority: 6,
-      villageId: state.currentVillageId || null
+    return null; // No troop training configured or recommended
+  }
+
+  /**
+   * Generate troop training tasks for ALL configured slots.
+   * Returns an array of tasks (one per slot), or a single-task array from strategy.
+   */
+  evaluateAllTroopTraining(state, config) {
+    if (!config.troopConfig) return [];
+    const currentResources = state.resources;
+    if (!currentResources) return [];
+
+    // Resource threshold check
+    const minThreshold = config.troopConfig.minResourceThreshold || {
+      wood: config.troopConfig.minResources || 500,
+      clay: config.troopConfig.minResources || 500,
+      iron: config.troopConfig.minResources || 500,
+      crop: Math.round((config.troopConfig.minResources || 500) * 0.6)
     };
+    if (currentResources.wood < minThreshold.wood ||
+        currentResources.clay < minThreshold.clay ||
+        currentResources.iron < minThreshold.iron ||
+        currentResources.crop < minThreshold.crop) {
+      return [];
+    }
+
+    const slots = config.troopConfig.slots;
+    if (slots && Array.isArray(slots) && slots.length > 0) {
+      var tasks = [];
+      var priority = this.currentPhase === 'late' ? 4 : 6;
+      for (var i = 0; i < slots.length; i++) {
+        var slot = slots[i];
+        if (!slot.troopType) continue;
+        tasks.push({
+          type: 'train_troops',
+          params: {
+            troopType: slot.troopType,
+            count: slot.batchSize || 5,
+            buildingType: slot.building || 'barracks'
+          },
+          priority: priority + i, // stagger priority so first slot runs first
+          villageId: state.currentVillageId || null
+        });
+      }
+      return tasks;
+    }
+
+    // Fallback to single-task evaluation (legacy config or strategy)
+    const single = this.evaluateTroopTraining(state, config);
+    return single ? [single] : [];
   }
 
   // ---------------------------------------------------------------------------
