@@ -2197,14 +2197,9 @@ function renderStrategyDashboard(data) {
   var analysis = data.analysis;
   var phase = data.phase || 'unknown';
 
-  if (!analysis) {
-    container.innerHTML = '<div class="strategy-placeholder">No analysis yet — bot needs to run a cycle first.</div>';
-    return;
-  }
-
   var html = '';
 
-  // --- GlobalPlanner Section (strategic meta-layer) ---
+  // --- GlobalPlanner Section (renders even before first AI analysis) ---
   var planner = data.planner;
   if (planner) {
     var planPhase = planner.phase || 'BOOTSTRAP';
@@ -2255,6 +2250,17 @@ function renderStrategyDashboard(data) {
     html += '<div class="planner-step">Next: ' + escapeHtml(currentStepDesc) + '</div>';
 
     html += '</div>';
+  }
+
+  // If no AI analysis yet, show planner + placeholder and return
+  if (!analysis) {
+    if (!html) {
+      html = '<div class="strategy-placeholder">No analysis yet \u2014 bot needs to run a cycle first.</div>';
+    } else {
+      html += '<div class="strategy-placeholder">AI analysis pending \u2014 planner active.</div>';
+    }
+    container.innerHTML = html;
+    return;
   }
 
   // --- Phase + Focus header ---
