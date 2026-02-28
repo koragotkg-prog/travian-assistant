@@ -593,13 +593,16 @@ class BotEngine {
               this.gameState.constructionQueue = dorf2Scan.data.constructionQueue;
             }
           }
-          // Navigate back to dorf1
-          await this.sendToContentScript({
-            type: 'EXECUTE', action: 'navigateTo', params: { page: 'dorf1' }
-          });
-          await this._waitForContentScript(10000);
         } catch (e) {
           this._slog('WARN', 'Dorf2 buildings scan failed: ' + e.message);
+        } finally {
+          // Always navigate back to dorf1, even if scan failed
+          try {
+            await this.sendToContentScript({
+              type: 'EXECUTE', action: 'navigateTo', params: { page: 'dorf1' }
+            });
+            await this._waitForContentScript(10000);
+          } catch (_) { /* best effort */ }
         }
       }
 
@@ -1040,6 +1043,13 @@ class BotEngine {
               }
             }
           }
+          // Navigate back to dorf1 so the next scan cycle works correctly
+          try {
+            await this.sendToContentScript({
+              type: 'EXECUTE', action: 'navigateTo', params: { page: 'dorf1' }
+            });
+            await this._waitForContentScript(10000);
+          } catch (_) { /* best effort */ }
           break;
 
         case 'build_traps':
