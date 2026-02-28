@@ -38,15 +38,25 @@ class DecisionEngine {
     this.militaryPlanner = null;
     this.actionScorer = null;
 
+    /** @type {TravianGlobalPlanner|null} Strategic meta-planner */
+    this.globalPlanner = null;
+
+    /** @type {object|null} Last MetaContext from GlobalPlanner for popup display */
+    this.lastPlannerContext = null;
+
     try {
       if (typeof self !== 'undefined') {
         if (self.TravianStrategyEngine) this.strategyEngine = new self.TravianStrategyEngine();
         if (self.TravianBuildOptimizer) this.buildOptimizer = new self.TravianBuildOptimizer();
         if (self.TravianMilitaryPlanner) this.militaryPlanner = new self.TravianMilitaryPlanner();
         if (self.TravianActionScorer) this.actionScorer = new self.TravianActionScorer();
+        if (self.TravianGlobalPlanner) this.globalPlanner = new self.TravianGlobalPlanner();
       }
       if (this.actionScorer) {
         console.log('[DecisionEngine] ActionScorer integrated — hybrid AI scoring enabled');
+      }
+      if (this.globalPlanner) {
+        console.log('[DecisionEngine] GlobalPlanner integrated — strategic meta-planning enabled');
       }
       if (this.strategyEngine) {
         console.log('[DecisionEngine] Strategy Engine integrated');
@@ -100,12 +110,52 @@ class DecisionEngine {
     const queue = gameState.constructionQueue || { count: 0, maxCount: 1 };
     const buildQueueFull = queue.count >= queue.maxCount;
 
+    // 2b-pre. GlobalPlanner strategic context (runs BEFORE ActionScorer)
+    //         Returns score multipliers that bias AI scoring toward current strategy.
+    let metaContext = null;
+    if (this.globalPlanner) {
+      try {
+        metaContext = this.globalPlanner.advise(gameState, config);
+        this.lastPlannerContext = metaContext;
+        TravianLogger.log('DEBUG', `[Planner] ${metaContext.advice}`);
+      } catch (err) {
+        console.warn('[DecisionEngine] GlobalPlanner.advise() failed:', err.message);
+      }
+    }
+
     // 2b. If ActionScorer is available, use hybrid AI scoring
     //     FIX: AI path now falls through to safety rules (cranny, new builds)
     //     instead of returning early — AI complements safety, not replaces it.
     let aiHandledUpgradeOrTrain = false;
     if (this.actionScorer && config.useAIScoring !== false) {
       const scoredActions = this.actionScorer.scoreAll(gameState, config, taskQueue);
+
+      // Apply GlobalPlanner multipliers to bias scores toward strategic goal
+      if (metaContext && metaContext.multipliers) {
+        const planStep = metaContext.planStep;
+        for (const action of scoredActions) {
+          const mult = metaContext.multipliers[action.type] || 1.0;
+          // Plan step bonus: if action matches current plan step type + gid
+          let planBonus = 1.0;
+          if (planStep && action.type === planStep.type && action.params) {
+            let actionGid = action.params.gid || action.params.buildingGid || null;
+            // ActionScorer returns upgrade_resource params as {fieldId, type, level}
+            // where type is 'wood'/'clay'/'iron'/'crop' — NOT a gid. Resolve here.
+            if (!actionGid && action.type === 'upgrade_resource' && action.params.type) {
+              const RESOURCE_GID = { wood: 1, clay: 2, iron: 3, crop: 4 };
+              actionGid = RESOURCE_GID[action.params.type] || null;
+            }
+            if (actionGid && actionGid === planStep.gid) {
+              // Strong bias toward following the build order
+              planBonus = (typeof TravianGlobalPlanner !== 'undefined' && TravianGlobalPlanner.PLAN_STEP_BONUS)
+                ? TravianGlobalPlanner.PLAN_STEP_BONUS : 1.8;
+            }
+          }
+          action.score *= mult * planBonus;
+        }
+        // Re-sort after multiplier application
+        scoredActions.sort((a, b) => b.score - a.score);
+      }
 
       // FIX: Filter out actions that are on cooldown — AI path previously bypassed this
       const available = scoredActions.filter(a => !this.isCoolingDown(a.type));
@@ -1189,6 +1239,29 @@ class DecisionEngine {
     return Math.round(Math.min(100, Math.max(0,
       (balanceFactor * 40) + (storageFactor * 30) + (productionFactor * 30)
     )));
+  }
+
+  // ---------------------------------------------------------------------------
+  // GlobalPlanner State Accessor
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Get current GlobalPlanner state for popup/dashboard display.
+   * @returns {object|null} Planner state summary, or null if planner unavailable
+   */
+  getPlannerState() {
+    if (!this.globalPlanner) return null;
+    return {
+      phase: this.globalPlanner.phase,
+      mode: this.globalPlanner.mode,
+      planProgress: this.globalPlanner.activePlan
+        ? (this.globalPlanner.planStepIndex + '/' + this.globalPlanner.activePlan.steps.length)
+        : 'No plan',
+      planName: this.globalPlanner.activePlan ? this.globalPlanner.activePlan.name : null,
+      emergency: this.globalPlanner.emergencyOverride,
+      cycleCount: this.globalPlanner.cycleCount,
+      currentStep: this.lastPlannerContext ? this.lastPlannerContext.planStep : null,
+    };
   }
 }
 

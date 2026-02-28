@@ -294,6 +294,25 @@ class BotEngine {
       console.warn('[BotEngine] Could not restore saved state:', err);
     }
 
+    // Restore GlobalPlanner state from chrome.storage
+    if (this.serverKey && this.decisionEngine && this.decisionEngine.globalPlanner
+        && typeof chrome !== 'undefined' && chrome.storage) {
+      try {
+        const plannerKey = 'bot_planner__' + this.serverKey;
+        const result = await new Promise(resolve => {
+          chrome.storage.local.get(plannerKey, r => resolve(r));
+        });
+        if (result[plannerKey]) {
+          this.decisionEngine.globalPlanner = self.TravianGlobalPlanner.deserialize(result[plannerKey]);
+          console.log('[BotEngine] Restored GlobalPlanner: phase=' + this.decisionEngine.globalPlanner.phase
+            + ' mode=' + this.decisionEngine.globalPlanner.mode
+            + ' planStep=' + this.decisionEngine.globalPlanner.planStepIndex);
+        }
+      } catch (err) {
+        console.warn('[BotEngine] Could not restore planner state:', err);
+      }
+    }
+
     // Initialize Farm Stack (Intelligence → Scheduler → Manager)
     if (this.serverKey && self.TravianFarmIntelligence) {
       try {
@@ -690,6 +709,19 @@ class BotEngine {
           task.villageId,
           task.scheduledFor || null
         );
+      }
+
+      // 5a. Persist GlobalPlanner state after decision cycle
+      //     Survives service worker death and Chrome restarts.
+      if (this.decisionEngine.globalPlanner && this.serverKey
+          && typeof chrome !== 'undefined' && chrome.storage) {
+        try {
+          const plannerKey = 'bot_planner__' + this.serverKey;
+          const plannerData = this.decisionEngine.globalPlanner.serialize();
+          chrome.storage.local.set({ [plannerKey]: plannerData });
+        } catch (_planErr) {
+          console.warn('[BotEngine] Failed to persist planner state:', _planErr.message);
+        }
       }
 
       // 5b. Proactive hero resource claim: if resources are critically low

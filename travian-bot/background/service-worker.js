@@ -21,6 +21,7 @@ importScripts(
   '../strategy/buildOptimizer.js',
   '../strategy/militaryPlanner.js',
   '../strategy/strategyEngine.js',
+  '../strategy/globalPlanner.js',   // TravianGlobalPlanner — strategic phase/mode/plan layer
   '../core/actionScorer.js',     // TravianActionScorer
   '../core/decisionEngine.js',
   '../core/gameStateCollector.js', // TravianGameStateCollector
@@ -409,7 +410,8 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
           var strInst = resolveInstance(message, sender);
           var analysis = (strInst && strInst.engine.decisionEngine) ? strInst.engine.decisionEngine.getLastAnalysis() : null;
           var phase = (strInst && strInst.engine.decisionEngine) ? strInst.engine.decisionEngine.getPhase() : 'unknown';
-          sendResponse({ success: true, data: { analysis: analysis, phase: phase } });
+          var plannerState = (strInst && strInst.engine.decisionEngine) ? strInst.engine.decisionEngine.getPlannerState() : null;
+          sendResponse({ success: true, data: { analysis: analysis, phase: phase, planner: plannerState } });
           break;
         }
 

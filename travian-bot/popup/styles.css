@@ -1757,3 +1757,149 @@ input[type="text"]:focus {
 /* Stat card color variants */
 .stat-card--success .stat-value { color: var(--success); }
 .stat-card--warning .stat-value { color: var(--warning); }
+
+/* ============================================================
+   GLOBAL PLANNER (AI Strategy tab)
+   ============================================================ */
+.planner-section {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  margin-bottom: 10px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.3), 0 0 1px var(--primary-glow);
+  position: relative;
+  overflow: hidden;
+}
+
+.planner-section::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--primary), transparent);
+  opacity: 0.6;
+}
+
+/* Emergency banner */
+.planner-emergency {
+  background: rgba(255, 51, 102, 0.12);
+  border: 1px solid rgba(255, 51, 102, 0.3);
+  border-radius: var(--radius-sm);
+  padding: 5px 10px;
+  margin-bottom: 8px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--danger);
+  text-align: center;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+/* Phase + Mode header row */
+.planner-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.planner-phase {
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 3px 10px;
+  font-weight: 700;
+  font-size: 11px;
+  letter-spacing: 0.5px;
+  text-transform: capitalize;
+}
+
+/* Per-phase color variants */
+.planner-phase--bootstrap {
+  border-color: var(--text-muted);
+  color: var(--text-secondary);
+}
+
+.planner-phase--early-econ {
+  border-color: var(--primary);
+  color: var(--primary);
+  box-shadow: 0 0 8px var(--primary-glow);
+}
+
+.planner-phase--expansion-window {
+  border-color: var(--success);
+  color: var(--success);
+  box-shadow: 0 0 8px var(--success-glow);
+}
+
+.planner-phase--military-buildup {
+  border-color: var(--warning);
+  color: var(--warning);
+  box-shadow: 0 0 8px var(--warning-glow);
+}
+
+.planner-phase--power-spike {
+  border-color: var(--danger);
+  color: var(--danger);
+  box-shadow: 0 0 8px var(--danger-glow);
+}
+
+.planner-phase--defensive-stabilize {
+  border-color: #8888dd;
+  color: #8888dd;
+  box-shadow: 0 0 8px rgba(136, 136, 221, 0.2);
+}
+
+.planner-mode {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: rgba(0, 229, 255, 0.06);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-subtle);
+  letter-spacing: 0.3px;
+  margin-left: auto;
+}
+
+/* Progress bar */
+.planner-progress {
+  margin-bottom: 6px;
+}
+
+.planner-progress-bar {
+  height: 6px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-subtle);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.planner-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--primary-dim), var(--primary));
+  border-radius: 2px;
+  transition: width 0.6s ease;
+  box-shadow: 0 0 6px var(--primary-glow);
+}
+
+.planner-progress-text {
+  display: block;
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-top: 3px;
+  text-align: right;
+  font-family: 'Consolas', 'Cascadia Code', monospace;
+}
+
+/* Current step */
+.planner-step {
+  font-size: 11px;
+  color: var(--text-secondary);
+  padding: 4px 8px;
+  background: var(--bg-input);
+  border-radius: var(--radius-sm);
+  border-left: 2px solid var(--primary-dim);
+}

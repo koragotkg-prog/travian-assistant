@@ -2204,6 +2204,59 @@ function renderStrategyDashboard(data) {
 
   var html = '';
 
+  // --- GlobalPlanner Section (strategic meta-layer) ---
+  var planner = data.planner;
+  if (planner) {
+    var planPhase = planner.phase || 'BOOTSTRAP';
+    var planMode = planner.mode || 'BALANCE_MODE';
+    var planProgress = planner.planProgress || 'No plan';
+    var planEmergency = planner.emergency;
+    var planCycles = planner.cycleCount || 0;
+    var currentStepDesc = (planner.currentStep && planner.currentStep.desc) ? planner.currentStep.desc : 'Plan complete';
+
+    // Phase → color class mapping
+    var planPhaseClass = 'planner-phase--' + planPhase.toLowerCase().replace(/_/g, '-');
+    // Mode → display name
+    var modeDisplay = {
+      'ECON_FOCUS': '💰 Economy',
+      'EXPAND_FOCUS': '🏘 Expand',
+      'MILITARY_FOCUS': '⚔ Military',
+      'DEFENSE_FOCUS': '🛡 Defense',
+      'BALANCE_MODE': '⚖ Balance'
+    };
+    var modeText = modeDisplay[planMode] || planMode;
+
+    html += '<div class="planner-section">';
+
+    // Emergency banner
+    if (planEmergency) {
+      html += '<div class="planner-emergency">⚠ ' + escapeHtml(planEmergency) + '</div>';
+    }
+
+    // Phase + Mode header
+    html += '<div class="planner-header">';
+    html += '<span class="planner-phase ' + planPhaseClass + '">' + escapeHtml(planPhase.replace(/_/g, ' ')) + '</span>';
+    html += '<span class="planner-mode">' + modeText + '</span>';
+    html += '</div>';
+
+    // Plan progress bar
+    var progressParts = planProgress.split('/');
+    var planDone = parseInt(progressParts[0]) || 0;
+    var planTotal = parseInt(progressParts[1]) || 1;
+    var planPct = Math.round((planDone / planTotal) * 100);
+    html += '<div class="planner-progress">';
+    html += '<div class="planner-progress-bar">';
+    html += '<div class="planner-progress-fill" style="width:' + planPct + '%"></div>';
+    html += '</div>';
+    html += '<span class="planner-progress-text">' + planProgress + ' (' + planPct + '%)</span>';
+    html += '</div>';
+
+    // Current step
+    html += '<div class="planner-step">Next: ' + escapeHtml(currentStepDesc) + '</div>';
+
+    html += '</div>';
+  }
+
   // --- Phase + Focus header ---
   var phaseInfo = analysis.phaseDetection || {};
   var strategyInfo = analysis.phaseStrategy || {};
