@@ -29,6 +29,7 @@ importScripts(
   '../core/farmIntelligence.js',  // Farm stack: intelligence layer
   '../core/farmScheduler.js',     // Farm stack: timing/priority layer
   '../core/farmManager.js',       // Farm stack: orchestration FSM
+  '../core/contentScriptBridge.js', // ContentScriptBridge — messaging, retry, adaptive timeout
   '../core/taskHandlers.js',      // Task handler registry (extracted from BotEngine.executeTask)
   '../core/botEngine.js',
   '../core/instanceManager.js'

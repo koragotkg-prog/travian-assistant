@@ -8,6 +8,7 @@
  *   - self.TravianScheduler   (core/scheduler.js)
  *   - self.TravianDecisionEngine (core/decisionEngine.js)
  *   - self.TravianGameStateCollector (core/gameStateCollector.js)
+ *   - self.TravianContentScriptBridge (core/contentScriptBridge.js)
  */
 
 // ---------------------------------------------------------------------------
@@ -57,7 +58,7 @@ class BotEngine {
     // Current state
     this.gameState = null;
     this.config = null;
-    this.activeTabId = null;
+    this._activeTabId = null;
     this.serverKey = null; // Set by InstanceManager
 
     // Statistics
@@ -79,19 +80,11 @@ class BotEngine {
     this.actionsThisHour = 0;
     this.hourResetTime = Date.now();
 
-    // Content script communication timeout (ms)
-    // TQ-6 FIX: Increased base from 15s to 30s. Chrome throttles background tabs
-    // with minimum 1s setTimeout — content scripts can take 20-30s under heavy throttle.
-    // At 15s the timeout would fire → reject → retry → duplicate click.
-    this._messageTimeout = 30000;
-    this._messageTimeoutBase = 30000;   // Reset target after success
-    this._messageTimeoutMax = 60000;    // Cap for throttled tabs
-    this._messageTimeoutStep = 10000;   // Increase per consecutive timeout
-
-    // TQ-6 FIX: Request deduplication counter.
-    // Each EXECUTE message gets a unique requestId so the content script can
-    // detect and discard duplicate requests from timeout→retry sequences.
-    this._requestIdCounter = 0;
+    // Content script communication — delegated to ContentScriptBridge.
+    // Bridge owns adaptive timeout, request dedup, retry logic, and ping/wait helpers.
+    this._bridge = new (self.TravianContentScriptBridge)(
+      (...args) => this._slog(...args)
+    );
 
     // FIX-P3: Unified cycle lock replaces _mainLoopRunning + _executionLocked.
     // Values: null (free), 'scanning', 'deciding', 'executing', 'returning'
@@ -191,6 +184,15 @@ class BotEngine {
     }
   }
 
+  // activeTabId getter/setter — keeps ContentScriptBridge in sync.
+  // service-worker.js sets engine.activeTabId directly in many places,
+  // so the setter transparently propagates to the bridge.
+  get activeTabId() { return this._activeTabId; }
+  set activeTabId(id) {
+    this._activeTabId = id;
+    if (this._bridge) this._bridge.setTabId(id);
+  }
+
   get paused() { return this._paused; }
   set paused(v) {
     console.warn('[BotEngine][SM] Direct set of .paused is deprecated — use pause()/resume() instead');
@@ -230,7 +232,7 @@ class BotEngine {
       return;
     }
 
-    this.activeTabId = tabId;
+    this.activeTabId = tabId; // setter also updates this._bridge
 
     // Load configuration from storage
     await this.loadConfig();
@@ -1032,99 +1034,16 @@ class BotEngine {
 
   /**
    * Send a message to the content script running in the active tab.
-   * Wraps chrome.tabs.sendMessage with a timeout.
+   * Delegates to ContentScriptBridge.send() which handles retry, adaptive timeout,
+   * request dedup, and ghost callback prevention.
+   *
+   * Kept as a thin wrapper so task handlers can continue calling engine.sendToContentScript().
    *
    * @param {object} message - The message to send
    * @returns {Promise<object>} The response from the content script
    */
   async sendToContentScript(message) {
-    if (!this.activeTabId) {
-      throw new Error('No active tab ID set');
-    }
-
-    // TQ-6 FIX: Stamp EXECUTE messages with a unique requestId for dedup.
-    // Content script tracks last seen requestId and ignores duplicates.
-    if (message && message.type === 'EXECUTE') {
-      this._requestIdCounter++;
-      message._requestId = this._requestIdCounter;
-    }
-
-    // MP-1 FIX: Retry wrapper for transient "Receiving end does not exist" errors.
-    // Content script may not be injected yet after page navigation.
-    var maxRetries = 2;
-    var lastErr = null;
-    for (var attempt = 0; attempt <= maxRetries; attempt++) {
-      try {
-        return await this._sendMessageOnce(message);
-      } catch (err) {
-        lastErr = err;
-        var isConnectionError = err.message && (
-          err.message.indexOf('Receiving end does not exist') !== -1 ||
-          err.message.indexOf('Could not establish connection') !== -1
-        );
-        if (!isConnectionError || attempt >= maxRetries) throw err;
-        // Wait before retry — content script may be loading
-        var retryDelay = 1000 * (attempt + 1); // 1s, 2s
-        this._slog('WARN', 'Content script not ready, retry ' + (attempt + 1) + '/' + maxRetries + ' in ' + retryDelay + 'ms');
-        await new Promise(r => setTimeout(r, retryDelay));
-      }
-    }
-    throw lastErr;
-  }
-
-  /**
-   * Internal: send a single message to content script (no retry).
-   * Separated from sendToContentScript to support MP-1 retry wrapper.
-   */
-  async _sendMessageOnce(message) {
-    return new Promise((resolve, reject) => {
-      // FIX 1: "settled" flag prevents ghost actions from the timeout/callback race.
-      // When the timeout fires first, we reject — but chrome.tabs.sendMessage callback
-      // can still arrive later. Without this flag, both resolve AND reject would fire,
-      // or the late callback would trigger side-effects on an already-abandoned promise.
-      let settled = false;
-
-      const currentTimeout = this._messageTimeout;
-      const timeoutId = setTimeout(() => {
-        if (settled) return;
-        settled = true;
-        // Adaptive timeout: increase for next attempt (Chrome may be throttling)
-        if (this._messageTimeout < this._messageTimeoutMax) {
-          this._messageTimeout = Math.min(this._messageTimeout + this._messageTimeoutStep, this._messageTimeoutMax);
-          console.log(`[BotEngine] Timeout → adaptive increase to ${this._messageTimeout}ms`);
-        }
-        reject(new Error(`Content script message timed out after ${currentTimeout}ms`));
-      }, currentTimeout);
-
-      try {
-        chrome.tabs.sendMessage(this.activeTabId, message, (response) => {
-          if (settled) {
-            // Ghost callback — timeout already fired. Log and discard.
-            console.warn('[BotEngine] Ghost callback after timeout for:', message.type || message.action);
-            return;
-          }
-          settled = true;
-          clearTimeout(timeoutId);
-
-          if (chrome.runtime.lastError) {
-            reject(new Error(chrome.runtime.lastError.message));
-            return;
-          }
-
-          // Adaptive timeout: reset to base after successful response
-          if (this._messageTimeout > this._messageTimeoutBase) {
-            this._messageTimeout = this._messageTimeoutBase;
-          }
-
-          resolve(response);
-        });
-      } catch (err) {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timeoutId);
-        reject(err);
-      }
-    });
+    return this._bridge.send(message);
   }
 
   // ---------------------------------------------------------------------------
@@ -1187,6 +1106,7 @@ class BotEngine {
       lastAIAction: this.decisionEngine ? this.decisionEngine.lastAIAction : null,
       cooldowns: this.decisionEngine ? Object.fromEntries(this.decisionEngine.cooldowns) : {},
       currentPhase: this.decisionEngine ? this.decisionEngine.currentPhase : null,
+      plannerState: this.decisionEngine ? this.decisionEngine.getPlannerState() : null,
       prereqResolutions: this.decisionEngine ? this.decisionEngine.lastPrereqResolutions : [],
       executionLocked: this._executionLocked,
       cycleLock: this._cycleLock,
@@ -1347,29 +1267,20 @@ class BotEngine {
   }
 
   // ---------------------------------------------------------------------------
-  // Page State Assertion (FIX 9)
+  // Page State Assertion (FIX 9) — delegates to ContentScriptBridge
   // ---------------------------------------------------------------------------
 
   /**
    * Verify the browser is on the expected page type after navigation.
-   * Sends a lightweight SCAN and compares the page type.
+   * Delegates to ContentScriptBridge.verifyPage().
+   *
+   * Kept as a thin wrapper so task handlers can continue calling engine._verifyNavigation().
+   *
    * @param {string} expectedPage - Expected value from domScanner.detectPage()
    * @returns {Promise<boolean>} true if on correct page
    */
   async _verifyNavigation(expectedPage) {
-    try {
-      const resp = await this.sendToContentScript({ type: 'SCAN' });
-      if (!resp || !resp.success || !resp.data) return false;
-      const actual = resp.data.page || 'unknown';
-      if (actual === expectedPage) return true;
-      this._slog('WARN', 'Page assertion failed: expected ' + expectedPage + ', got ' + actual, {
-        expectedPage, actualPage: actual
-      });
-      return false;
-    } catch (e) {
-      this._slog('WARN', 'Page assertion error: ' + e.message);
-      return false;
-    }
+    return this._bridge.verifyPage(expectedPage);
   }
 
   // ---------------------------------------------------------------------------
@@ -1491,93 +1402,15 @@ class BotEngine {
 
   /**
    * Wait until the content script in the active tab is ready and responding.
-   * Used after page-reload navigations (clicking links that cause full page load)
-   * to avoid sending messages before the new content script has registered.
+   * Delegates to ContentScriptBridge.waitForReady().
    *
-   * Uses a direct chrome.tabs.sendMessage ping (bypasses sendToContentScript's
-   * own retry layer which would eat the timeout budget with 3s inner retries).
+   * Kept as a thin wrapper so task handlers can continue calling engine._waitForContentScript().
    *
    * @param {number} maxWaitMs - Maximum time to wait (default 10000ms)
    * @returns {Promise<boolean>} true if content script responded, false if timed out
    */
   async _waitForContentScript(maxWaitMs) {
-    maxWaitMs = maxWaitMs || 10000;
-    var start = Date.now();
-    var attempts = 0;
-    var tabId = this.activeTabId;
-
-    if (!tabId) {
-      console.warn('[BotEngine] _waitForContentScript: no activeTabId');
-      return false;
-    }
-
-    // First, check if the tab still exists and is loading/complete
-    try {
-      var tabInfo = await new Promise(function (resolve) {
-        chrome.tabs.get(tabId, function (tab) {
-          if (chrome.runtime.lastError) resolve(null);
-          else resolve(tab);
-        });
-      });
-      if (!tabInfo) {
-        console.warn('[BotEngine] _waitForContentScript: tab ' + tabId + ' no longer exists');
-        return false;
-      }
-      if (tabInfo.status === 'loading') {
-        // Tab is still loading — give extra time for document_idle content script injection
-        console.log('[BotEngine] Tab is still loading, waiting for document_idle...');
-      }
-    } catch (e) {
-      // Non-critical — proceed with polling
-    }
-
-    while (Date.now() - start < maxWaitMs) {
-      attempts++;
-      try {
-        // Direct lightweight ping — bypass sendToContentScript's retry wrapper
-        // to avoid wasting timeout budget on inner 1s+2s retries.
-        var ping = await new Promise(function (resolve) {
-          var timeoutId = setTimeout(function () {
-            resolve(null);
-          }, 1500); // 1.5s per ping attempt max
-
-          try {
-            chrome.tabs.sendMessage(tabId, {
-              type: 'GET_STATE', params: { property: 'page' }
-            }, function (response) {
-              clearTimeout(timeoutId);
-              if (chrome.runtime.lastError) {
-                // "Receiving end does not exist" = content script not injected yet
-                resolve(null);
-              } else {
-                resolve(response);
-              }
-            });
-          } catch (e) {
-            clearTimeout(timeoutId);
-            resolve(null);
-          }
-        });
-
-        if (ping && ping.success) {
-          if (attempts > 1) {
-            console.log('[BotEngine] Content script ready after ' + attempts + ' attempts (' + (Date.now() - start) + 'ms)');
-          }
-          return true;
-        }
-      } catch (e) {
-        // Unexpected error — continue polling
-      }
-
-      // Short wait between attempts — more frequent polling = faster detection
-      var elapsed = Date.now() - start;
-      if (elapsed >= maxWaitMs) break;
-      var waitMs = Math.min(800, maxWaitMs - elapsed);
-      await new Promise(function (r) { setTimeout(r, waitMs); });
-    }
-
-    console.warn('[BotEngine] Content script not ready after ' + maxWaitMs + 'ms (' + attempts + ' attempts)');
-    return false;
+    return this._bridge.waitForReady(maxWaitMs);
   }
 
   /**
