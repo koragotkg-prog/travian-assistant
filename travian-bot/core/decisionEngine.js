@@ -463,10 +463,24 @@ class DecisionEngine {
 
           // If user has a specific troop type configured, use their building too
           const useStrategyUnit = !userTroopType;
-          const finalTroopType = useStrategyUnit ? plan.primaryUnit : userTroopType;
+          let finalTroopType = useStrategyUnit ? plan.primaryUnit : userTroopType;
           const finalBuilding = useStrategyUnit
             ? this._getTroopBuilding(plan.primaryUnit, config.tribe)
             : (config.troopConfig.trainingBuilding || 'barracks');
+
+          // Convert strategy unit name (e.g. 'theutatesThunder') to DOM input name ('t4')
+          if (useStrategyUnit) {
+            var GD = (typeof self !== 'undefined' && self.TravianGameData) ? self.TravianGameData : null;
+            if (GD && GD.getInputName) {
+              var inputName = GD.getInputName(config.tribe, finalTroopType);
+              if (inputName) {
+                finalTroopType = inputName;
+              } else {
+                console.warn('[DecisionEngine] Cannot map unit ' + finalTroopType + ' to input name for tribe ' + config.tribe);
+                return null;
+              }
+            }
+          }
 
           return {
             type: 'train_troops',

@@ -959,7 +959,7 @@ class BotEngine {
             // Re-raid bounty-full targets with TT via rally point (if enabled)
             // Flow: scan farm list for bounty-full → navigate to rally point → send TT per target
             var reRaidEnabled = farmCfg && farmCfg.enableReRaid;
-            if (reRaidEnabled && smartFarming) {
+            if (reRaidEnabled) {
               try {
                 TravianLogger.log('INFO', '[BotEngine] Re-raid: scanning bounty-full targets...');
                 await TravianDelay.humanDelay(2000, 3500); // wait for UI to update after initial send

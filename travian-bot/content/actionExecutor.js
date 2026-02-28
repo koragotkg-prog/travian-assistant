@@ -952,6 +952,7 @@
         // Find the input for this troop type
         var inputSelectors = [
           'input[name="' + troopType + '"]',
+          'input[name="troop[' + troopType + ']"]',
           'input[name="troops[' + troopType + ']"]',
           'input#' + troopType,
           '.troop input[name*="' + troopType + '"]',
