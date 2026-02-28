@@ -373,7 +373,7 @@ class BotEngine {
   /**
    * Stop the bot engine. Saves state and clears all timers.
    */
-  stop() {
+  async stop() {
     this._transition(BOT_STATES.STOPPED, 'stopped');
 
     // Stop scheduler (clears all timers and cycles)
@@ -390,7 +390,7 @@ class BotEngine {
     }
 
     // Save state before fully stopping
-    this.saveState();
+    await this.saveState();
 
     // ST-5 FIX: Flush logs immediately on stop to prevent loss on SW death.
     // The 30s setInterval flush may never fire if the SW is killed soon after.
