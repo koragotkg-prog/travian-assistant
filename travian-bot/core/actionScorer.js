@@ -5,7 +5,7 @@
 
   class ActionScorer {
     constructor() {
-      this.gameData = root.TravianGameData ? new root.TravianGameData() : null;
+      this.gameData = root.TravianGameData || null;
       this.buildOptimizer = root.TravianBuildOptimizer ? new root.TravianBuildOptimizer() : null;
     }
 
@@ -75,12 +75,23 @@
         const targetLevel = config.upgradeTargets?.[targetKey] || config[targetKey] || 10;
         if (field.level >= targetLevel) continue;
 
-        // Base value: production gain per hour
-        let baseValue = 5; // default
+        // ROI-based scoring: gain per resource invested
+        let baseValue = 5; // fallback
         if (this.gameData) {
-          const currentProd = this.gameData.getProduction(gid, field.level);
-          const nextProd = this.gameData.getProduction(gid, field.level + 1);
-          baseValue = (nextProd - currentProd) || 5;
+          const currentProd = this.gameData.getProduction(field.level);
+          const nextProd = this.gameData.getProduction(field.level + 1);
+          const prodGain = (nextProd - currentProd) || 5;
+
+          // Calculate total upgrade cost using gameData
+          const cost = this.gameData.getBuildingCost
+            ? this.gameData.getBuildingCost(gid, field.level + 1)
+            : null;
+          const totalCost = cost
+            ? (cost.wood || 0) + (cost.clay || 0) + (cost.iron || 0) + (cost.crop || 0)
+            : 500; // safe fallback
+
+          // ROI = hourly gain / total investment (normalized x1000 for readable scores)
+          baseValue = totalCost > 0 ? (prodGain / totalCost) * 1000 : prodGain;
         }
 
         // Urgency: boost if this resource is lowest
@@ -100,7 +111,7 @@
           type: 'upgrade_resource',
           params: { fieldId: field.id, type: field.type, level: field.level },
           score,
-          reason: `${field.type} lv${field.level}→${field.level+1} +${baseValue}/hr`
+          reason: `${field.type} lv${field.level}→${field.level+1} ROI:${baseValue.toFixed(1)}`
         });
       }
 
@@ -121,17 +132,22 @@
         const targetLevel = config.buildingTargets?.[`b${gid}`] || null;
         if (targetLevel && bld.level >= targetLevel) continue;
 
-        // Score by building utility
+        // Cost-aware scoring with utility multipliers
         let baseValue = 10;
-        if (gid === 10) baseValue = 15; // Warehouse — high utility
-        if (gid === 11) baseValue = 15; // Granary
-        if (gid === 15) baseValue = 12; // Main Building — build speed
-        if (gid === 19) baseValue = 8;  // Barracks
-        if (gid === 17) baseValue = 7;  // Marketplace
-        if (gid === 23) baseValue = 6;  // Cranny
-        if (gid === 36 || gid === 31 || gid === 33) baseValue = 5; // Wall
+        // Utility multipliers by building type
+        const utilityMap = { 10: 1.5, 11: 1.5, 15: 1.2, 19: 0.8, 17: 0.7, 23: 0.6, 36: 0.5, 31: 0.5, 33: 0.5 };
+        const utilityMult = utilityMap[gid] || 1.0;
 
-        const score = baseValue * (1 + (10 - bld.level) * 0.1); // lower levels = higher priority
+        // Cost-aware: lower levels are cheaper → better ROI
+        if (this.gameData && this.gameData.getBuildingCost) {
+          const cost = this.gameData.getBuildingCost(gid, bld.level + 1);
+          const totalCost = cost ? (cost.wood || 0) + (cost.clay || 0) + (cost.iron || 0) + (cost.crop || 0) : 1000;
+          baseValue = (1000 / Math.max(totalCost, 100)) * 10 * utilityMult;
+        } else {
+          baseValue = 10 * utilityMult * (1 + (10 - bld.level) * 0.1);
+        }
+
+        const score = baseValue;
 
         actions.push({
           type: 'upgrade_building',

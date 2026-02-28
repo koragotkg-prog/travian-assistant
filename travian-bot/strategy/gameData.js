@@ -167,6 +167,19 @@
       };
     },
 
+    /** Cost to upgrade a building by GID from (level-1) to (level).
+     *  @param {number} gid - Building GID (e.g. 1=Woodcutter, 15=Main Building)
+     *  @param {number} level - Target level (the level being built TO)
+     *  @returns {{wood,clay,iron,crop}|null}
+     */
+    getBuildingCost: function (gid, level) {
+      var key = this.gidToKey(gid);
+      if (!key) return null;
+      // fromLevel = level - 1 (upgrading FROM previous level)
+      var fromLevel = Math.max(0, (level || 1) - 1);
+      return this.getUpgradeCost(key, fromLevel);
+    },
+
     /** Total resource cost (sum of all 4 resources) */
     totalCost: function (costObj) {
       if (!costObj) return Infinity;
