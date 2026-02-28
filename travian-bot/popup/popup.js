@@ -156,6 +156,25 @@ const dom = {
   taskAIReason: document.getElementById('taskAIReason'),
   questSection: document.getElementById('questSection'),
   questDisplay: document.getElementById('questDisplay'),
+
+  // Farm Intelligence tab
+  farmTargetCount: document.getElementById('farmTargetCount'),
+  farmActiveCount: document.getElementById('farmActiveCount'),
+  farmPausedCount: document.getElementById('farmPausedCount'),
+  farmBlacklistCount: document.getElementById('farmBlacklistCount'),
+  profitWood: document.getElementById('profitWood'),
+  profitClay: document.getElementById('profitClay'),
+  profitIron: document.getElementById('profitIron'),
+  profitCrop: document.getElementById('profitCrop'),
+  profitTotal: document.getElementById('profitTotal'),
+  profitRaids: document.getElementById('profitRaids'),
+  profitLosses: document.getElementById('profitLosses'),
+  profitAvg: document.getElementById('profitAvg'),
+  lifetimeRaids: document.getElementById('lifetimeRaids'),
+  lifetimeLoot: document.getElementById('lifetimeLoot'),
+  lifetimeLosses: document.getElementById('lifetimeLosses'),
+  farmIntelTargetList: document.getElementById('farmIntelTargetList'),
+  farmTargetBadge: document.getElementById('farmTargetBadge'),
 };
 
 // ============================================================
@@ -165,7 +184,9 @@ const dom = {
 /**
  * Switch to a tab by name (dash, config, ai, logs).
  */
-const TAB_PANEL_MAP = { dash: 'panelDash', config: 'panelConfig', ai: 'panelAI', logs: 'panelLogs' };
+const TAB_PANEL_MAP = { dash: 'panelDash', config: 'panelConfig', ai: 'panelAI', logs: 'panelLogs', farm: 'panelFarm' };
+
+var _farmIntelInterval = null;
 
 function switchTab(tabName) {
   dom.tabButtons.forEach(btn => {
@@ -175,6 +196,19 @@ function switchTab(tabName) {
   dom.tabPanels.forEach(panel => {
     panel.classList.toggle('active', panel.id === targetPanel);
   });
+
+  // Farm intel tab: refresh on enter, poll every 5s while visible
+  if (tabName === 'farm') {
+    refreshFarmIntel();
+    if (!_farmIntelInterval) {
+      _farmIntelInterval = setInterval(refreshFarmIntel, 5000);
+    }
+  } else {
+    if (_farmIntelInterval) {
+      clearInterval(_farmIntelInterval);
+      _farmIntelInterval = null;
+    }
+  }
 }
 
 // ============================================================
@@ -2369,6 +2403,128 @@ function stopRefreshInterval() {
     clearInterval(refreshInterval);
     refreshInterval = null;
   }
+}
+
+// ============================================================
+// Farm Intelligence Tab
+// ============================================================
+
+/**
+ * Format a number with K/M suffix for compact display.
+ */
+function fmtCompact(n) {
+  if (n == null || isNaN(n)) return '0';
+  if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+  if (n >= 10000) return (n / 1000).toFixed(0) + 'K';
+  if (n >= 1000) return (n / 1000).toFixed(1) + 'K';
+  return String(Math.round(n));
+}
+
+/**
+ * Format a timestamp to relative time string (e.g. "2m", "1h", "3d").
+ */
+function fmtTimeAgo(ts) {
+  if (!ts) return '--';
+  var diff = Date.now() - ts;
+  if (diff < 60000) return '<1m';
+  if (diff < 3600000) return Math.floor(diff / 60000) + 'm';
+  if (diff < 86400000) return Math.floor(diff / 3600000) + 'h';
+  return Math.floor(diff / 86400000) + 'd';
+}
+
+/**
+ * Escape HTML special characters in a string.
+ */
+function escHtml(s) {
+  if (!s) return '';
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+/**
+ * Fetch farm intelligence data from the service worker and update the Farm tab.
+ */
+function refreshFarmIntel() {
+  sendMessage({ type: 'GET_FARM_INTEL' }).then(function(response) {
+    if (!response || !response.success || !response.data) return;
+    var d = response.data;
+
+    // Stats cards
+    if (dom.farmTargetCount) dom.farmTargetCount.textContent = d.stats.targetCount || 0;
+    if (dom.farmActiveCount) dom.farmActiveCount.textContent = d.stats.active || 0;
+    if (dom.farmPausedCount) dom.farmPausedCount.textContent = d.stats.paused || 0;
+    if (dom.farmBlacklistCount) dom.farmBlacklistCount.textContent = d.stats.blacklisted || 0;
+
+    // 24h Profit report
+    var p = d.profit || {};
+    var loot = p.loot || {};
+    if (dom.profitWood) dom.profitWood.textContent = fmtCompact(loot.wood);
+    if (dom.profitClay) dom.profitClay.textContent = fmtCompact(loot.clay);
+    if (dom.profitIron) dom.profitIron.textContent = fmtCompact(loot.iron);
+    if (dom.profitCrop) dom.profitCrop.textContent = fmtCompact(loot.crop);
+    var totalLoot = (loot.wood || 0) + (loot.clay || 0) + (loot.iron || 0) + (loot.crop || 0);
+    if (dom.profitTotal) dom.profitTotal.textContent = fmtCompact(totalLoot);
+    if (dom.profitRaids) dom.profitRaids.textContent = p.raids || 0;
+    if (dom.profitLosses) dom.profitLosses.textContent = p.losses || 0;
+    if (dom.profitAvg) dom.profitAvg.textContent = p.raids > 0 ? fmtCompact(Math.round(totalLoot / p.raids)) : '0';
+
+    // Lifetime stats
+    var gs = (d.stats.globalStats) || {};
+    if (dom.lifetimeRaids) dom.lifetimeRaids.textContent = gs.totalRaids || 0;
+    var ltLoot = gs.totalLoot || {};
+    var ltTotal = (ltLoot.wood || 0) + (ltLoot.clay || 0) + (ltLoot.iron || 0) + (ltLoot.crop || 0);
+    if (dom.lifetimeLoot) dom.lifetimeLoot.textContent = fmtCompact(ltTotal);
+    if (dom.lifetimeLosses) dom.lifetimeLosses.textContent = gs.totalTroopLosses || 0;
+
+    // Target list
+    var targets = d.targets || [];
+    if (dom.farmTargetBadge) dom.farmTargetBadge.textContent = '(' + targets.length + ')';
+    renderFarmTargets(targets);
+  }).catch(function() {
+    // Silently fail — bot may not be running
+  });
+}
+
+/**
+ * Render the farm intelligence target list into the Farm tab.
+ * Data comes from our own service worker (FarmIntelligence), not external input.
+ * Names are HTML-escaped as a safety measure since they originate from game data.
+ */
+function renderFarmTargets(targets) {
+  var container = dom.farmIntelTargetList;
+  if (!container) return;
+
+  if (!targets || targets.length === 0) {
+    container.innerHTML = '<span class="text-muted-italic">No farm data yet \u2014 run a farm cycle first.</span>';
+    return;
+  }
+
+  var html = '';
+  for (var i = 0; i < targets.length; i++) {
+    var t = targets[i];
+    var m = t.metrics || {};
+    var statusClass = 'ft-status--' + (t.status || 'active');
+    var scoreClass = (t.score >= 60) ? 'ft-score--high' : (t.score >= 30) ? 'ft-score--mid' : 'ft-score--low';
+    var trendIcon = (m.lootTrend === 'rising') ? '\u2191' : (m.lootTrend === 'declining') ? '\u2193' : '\u2192';
+    var trendClass = (m.lootTrend === 'rising') ? 'ft-trend--up' : (m.lootTrend === 'declining') ? 'ft-trend--down' : 'ft-trend--stable';
+    var coords = t.coords ? (t.coords.x + '|' + t.coords.y) : (t.coordKey || '?');
+    var safeName = escHtml(t.name || '');
+    var titleParts = [safeName];
+    if (t.status === 'paused' && t.pauseReason) titleParts.push('(' + escHtml(t.pauseReason) + ')');
+    if (t.status === 'blacklisted') titleParts.push('(blocked)');
+    titleParts.push('pop:' + (t.population || '?'));
+    titleParts.push('dist:' + ((t.distance || 0).toFixed(1)));
+
+    html += '<div class="farm-target-item" title="' + titleParts.join(' ') + '">';
+    html += '<span class="ft-status ' + statusClass + '"></span>';
+    html += '<span class="ft-coords">' + escHtml(coords) + '</span>';
+    html += '<span class="ft-name">' + (safeName || escHtml(coords)) + '</span>';
+    html += '<span class="ft-score ' + scoreClass + '">' + (t.score || 0) + '</span>';
+    html += '<span class="ft-loot">' + fmtCompact(m.avgLootPerRaid || 0) + '</span>';
+    html += '<span class="ft-time">' + fmtTimeAgo(m.lastRaidAt) + '</span>';
+    html += '<span class="ft-trend ' + trendClass + '">' + trendIcon + '</span>';
+    html += '</div>';
+  }
+  container.innerHTML = html;
 }
 
 // ============================================================

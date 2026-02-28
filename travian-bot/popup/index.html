@@ -44,6 +44,9 @@
     <button class="tab-btn" data-tab="logs" id="tabLogs">
       <span class="tab-icon">📋</span><span class="tab-label">Logs</span>
     </button>
+    <button class="tab-btn" data-tab="farm" id="tabFarm">
+      <span class="tab-icon">🌾</span><span class="tab-label">Farm</span>
+    </button>
   </nav>
 
   <!-- ===== TAB CONTENT AREA (scrollable) ===== -->
@@ -468,6 +471,72 @@
         </div>
         <div id="logViewer" class="log-area"></div>
       </section>
+    </div>
+
+    <!-- ===== TAB: FARM INTELLIGENCE ===== -->
+    <div class="tab-panel" id="panelFarm">
+
+      <!-- Farm Stats Cards -->
+      <section class="stats-grid farm-stats">
+        <div class="stat-card">
+          <span class="stat-icon">🎯</span>
+          <span class="stat-value" id="farmTargetCount">0</span>
+          <span class="stat-label">Targets</span>
+        </div>
+        <div class="stat-card stat-card--success">
+          <span class="stat-icon">✓</span>
+          <span class="stat-value" id="farmActiveCount">0</span>
+          <span class="stat-label">Active</span>
+        </div>
+        <div class="stat-card stat-card--warning">
+          <span class="stat-icon">⏸</span>
+          <span class="stat-value" id="farmPausedCount">0</span>
+          <span class="stat-label">Paused</span>
+        </div>
+        <div class="stat-card stat-card--danger">
+          <span class="stat-icon">✕</span>
+          <span class="stat-value" id="farmBlacklistCount">0</span>
+          <span class="stat-label">Blocked</span>
+        </div>
+      </section>
+
+      <!-- 24h Profit Report -->
+      <section class="card">
+        <h3 class="section-title">24h Profit Report</h3>
+        <div class="farm-profit" id="farmProfitReport">
+          <div class="profit-row"><span class="res-label">Wood</span><span class="profit-val" id="profitWood">0</span></div>
+          <div class="profit-row"><span class="res-label">Clay</span><span class="profit-val" id="profitClay">0</span></div>
+          <div class="profit-row"><span class="res-label">Iron</span><span class="profit-val" id="profitIron">0</span></div>
+          <div class="profit-row"><span class="res-label">Crop</span><span class="profit-val" id="profitCrop">0</span></div>
+          <div class="profit-row profit-total"><span class="res-label">Total</span><span class="profit-val" id="profitTotal">0</span></div>
+          <div class="profit-meta">
+            <span>Raids: <span id="profitRaids">0</span></span>
+            <span>Losses: <span id="profitLosses">0</span></span>
+            <span>Avg: <span id="profitAvg">0</span>/raid</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- Global Lifetime Stats -->
+      <section class="card">
+        <h3 class="section-title">Lifetime Stats</h3>
+        <div class="farm-lifetime" id="farmLifetimeStats">
+          <span>Total raids: <strong id="lifetimeRaids">0</strong></span>
+          <span>Total loot: <strong id="lifetimeLoot">0</strong></span>
+          <span>Troop losses: <strong id="lifetimeLosses">0</strong></span>
+        </div>
+      </section>
+
+      <!-- Target List -->
+      <section class="card">
+        <div class="section-header">
+          <h3 class="section-title">Targets <span id="farmTargetBadge" class="badge">(0)</span></h3>
+        </div>
+        <div class="farm-target-list" id="farmIntelTargetList">
+          <span class="text-muted-italic">No farm data yet — run a farm cycle first.</span>
+        </div>
+      </section>
+
     </div>
 
   </main>

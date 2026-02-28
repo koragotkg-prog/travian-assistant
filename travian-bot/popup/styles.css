@@ -1611,3 +1611,149 @@ input[type="text"]:focus {
   color: var(--text-muted);
   font-size: 11px;
 }
+
+/* ============================================================
+   FARM INTELLIGENCE TAB
+   ============================================================ */
+
+/* Profit report */
+.farm-profit {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.profit-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 3px 0;
+  font-size: 12px;
+}
+
+.profit-val {
+  font-weight: 600;
+  font-family: 'Consolas', 'Cascadia Code', monospace;
+  color: var(--text);
+}
+
+.profit-total {
+  border-top: 1px solid var(--border);
+  padding-top: 6px;
+  margin-top: 2px;
+}
+
+.profit-total .profit-val {
+  color: var(--primary);
+  font-size: 14px;
+  text-shadow: 0 0 6px var(--primary-glow);
+}
+
+.profit-meta {
+  display: flex;
+  gap: 12px;
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-top: 6px;
+  padding-top: 4px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+/* Lifetime stats */
+.farm-lifetime {
+  display: flex;
+  gap: 12px;
+  font-size: 11px;
+  flex-wrap: wrap;
+  color: var(--text-secondary);
+}
+
+.farm-lifetime strong {
+  color: var(--text);
+  font-weight: 700;
+}
+
+/* Target list */
+.farm-target-list {
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.farm-target-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 4px;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+  font-size: 11px;
+}
+
+.farm-target-item:last-child {
+  border-bottom: none;
+}
+
+.ft-status {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.ft-status--active { background: var(--success); box-shadow: 0 0 4px var(--success-glow); }
+.ft-status--paused { background: var(--warning); box-shadow: 0 0 4px var(--warning-glow); }
+.ft-status--blacklisted { background: var(--danger); box-shadow: 0 0 4px var(--danger-glow); }
+
+.ft-coords {
+  font-family: 'Consolas', 'Cascadia Code', monospace;
+  color: var(--text-muted);
+  font-size: 10px;
+  min-width: 52px;
+}
+
+.ft-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+
+.ft-score {
+  font-weight: 700;
+  min-width: 24px;
+  text-align: right;
+  font-size: 11px;
+}
+
+.ft-score--high { color: var(--success); }
+.ft-score--mid { color: var(--warning); }
+.ft-score--low { color: var(--danger); }
+
+.ft-loot {
+  color: var(--primary);
+  font-family: 'Consolas', 'Cascadia Code', monospace;
+  min-width: 36px;
+  text-align: right;
+  font-size: 10px;
+}
+
+.ft-time {
+  color: var(--text-muted);
+  font-size: 10px;
+  min-width: 32px;
+  text-align: right;
+}
+
+.ft-trend {
+  font-size: 10px;
+  min-width: 12px;
+  text-align: center;
+}
+
+.ft-trend--up { color: var(--success); }
+.ft-trend--stable { color: var(--text-muted); }
+.ft-trend--down { color: var(--danger); }
+
+/* Stat card color variants */
+.stat-card--success .stat-value { color: var(--success); }
+.stat-card--warning .stat-value { color: var(--warning); }

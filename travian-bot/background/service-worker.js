@@ -413,6 +413,36 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
           break;
         }
 
+        // ---- Farm Intelligence (per-server) ----
+        case 'GET_FARM_INTEL': {
+          var fiInst = resolveInstance(message, sender);
+          var intel = fiInst && fiInst.engine._farmIntelligence;
+          if (!intel) {
+            sendResponse({ success: true, data: {
+              stats: { targetCount: 0, active: 0, paused: 0, blacklisted: 0, globalStats: { totalRaids: 0, totalLoot: { wood: 0, clay: 0, iron: 0, crop: 0 }, totalTroopLosses: 0 } },
+              profit: { loot: { wood: 0, clay: 0, iron: 0, crop: 0 }, raids: 0, losses: 0 },
+              targets: []
+            }});
+            break;
+          }
+          var fiStats = intel.getStats();
+          var fiProfit = intel.getProfitReport(86400000);
+          // Get ALL targets (active + paused + blacklisted), sorted by score desc
+          var fiKeys = Object.keys(intel._targets || {});
+          var fiAll = fiKeys.map(function(k) { return intel._targets[k]; });
+          fiAll.sort(function(a, b) { return (b.score || 0) - (a.score || 0); });
+          var fiSlim = fiAll.map(function(t) {
+            return {
+              coordKey: t.coordKey, coords: t.coords, name: t.name,
+              status: t.status, score: t.score, distance: t.distance,
+              population: t.population, pauseReason: t.pauseReason,
+              metrics: t.metrics
+            };
+          });
+          sendResponse({ success: true, data: { stats: fiStats, profit: fiProfit, targets: fiSlim } });
+          break;
+        }
+
         // ---- Scan Result (legacy placeholder — scan data handled internally by BotEngine._cycle) ----
         case 'SCAN_RESULT': {
           // No-op: content scripts never send SCAN_RESULT; BotEngine processes scan responses
