@@ -9,6 +9,7 @@
  *   - self.TravianDecisionEngine (core/decisionEngine.js)
  *   - self.TravianGameStateCollector (core/gameStateCollector.js)
  *   - self.TravianContentScriptBridge (core/contentScriptBridge.js)
+ *   - self.TravianNavigationManager (core/navigationManager.js)
  */
 
 // ---------------------------------------------------------------------------
@@ -86,6 +87,14 @@ class BotEngine {
       (...args) => this._slog(...args)
     );
 
+    // Hero resource claiming — delegated to HeroManager.
+    // Owns proactive/reactive claim logic, deficit calculation, V1/V2 paths, and cooldown.
+    this._heroManager = new (self.TravianHeroManager || Object)(
+      this._bridge,
+      (...args) => this._slog(...args),
+      () => this._randomDelay()
+    );
+
     // FIX-P3: Unified cycle lock replaces _mainLoopRunning + _executionLocked.
     // Values: null (free), 'scanning', 'deciding', 'executing', 'returning'
     // Any non-null value blocks concurrent mainLoop entry.
@@ -123,12 +132,12 @@ class BotEngine {
     this._cycleCounter = 0;
     this._currentCycleId = null;
 
-    // Cached buildings data from dorf2 scans.
-    // getBuildings() only works on dorf2 but the bot rests on dorf1.
-    // We cache the last dorf2 scan and refresh when a build timer expires or after max staleness.
-    this._cachedBuildings = null;
-    this._buildingsScanCycle = 0;       // last cycle that scanned dorf2
-    this._buildQueueEarliestFinish = 0; // ms epoch: when the earliest queued build completes
+    // Navigation & building cache management — delegated to NavigationManager.
+    // Owns dorf2 scan/cache heuristics, navigateAndWait(), and building cache state.
+    this._navigationManager = new (self.TravianNavigationManager)(
+      this._bridge,
+      (...args) => this._slog(...args)
+    );
   }
 
   // ---------------------------------------------------------------------------
@@ -602,54 +611,21 @@ class BotEngine {
         }
       }
 
-      // ── Dorf2 buildings scan (event-driven) ──
+      // ── Dorf2 buildings scan (event-driven, delegated to NavigationManager) ──
       // getBuildings() only returns data on dorf2 pages. Since the bot rests
       // on dorf1, buildings[] is always empty unless we navigate to dorf2.
-      // We refresh when a build queue timer expires or after max staleness,
-      // rather than polling every N cycles, to avoid unnecessary navigations.
+      // NavigationManager handles scan heuristics, caching, and navigation.
       var needBuildingScan = (this.config.autoUpgradeBuildings || this.config.autoBuildingUpgrade) &&
-        this._shouldRefreshBuildings();
+        this._navigationManager.shouldRefreshBuildings(this._cycleCounter, this.gameState);
 
       if (needBuildingScan) {
-        try {
-          this._slog('DEBUG', 'Scanning dorf2 for buildings data');
-          await this.sendToContentScript({
-            type: 'EXECUTE', action: 'navigateTo', params: { page: 'dorf2' }
-          });
-          await this._randomDelay();
-          await this._waitForContentScript(15000);
-          var dorf2Scan = await this.sendToContentScript({ type: 'SCAN' });
-          if (dorf2Scan && dorf2Scan.success && dorf2Scan.data && dorf2Scan.data.buildings && dorf2Scan.data.buildings.length > 0) {
-            this._cachedBuildings = dorf2Scan.data.buildings;
-            this._buildingsScanCycle = this._cycleCounter;
-            this._slog('INFO', 'Cached ' + this._cachedBuildings.length + ' buildings from dorf2');
-            // Also update construction queue from dorf2 (more accurate)
-            if (dorf2Scan.data.constructionQueue) {
-              this.gameState.constructionQueue = dorf2Scan.data.constructionQueue;
-              // Capture earliest finish time so _shouldRefreshBuildings() can
-              // trigger the next scan when a build completes.
-              this._buildQueueEarliestFinish = dorf2Scan.data.constructionQueue.earliestFinishTime || 0;
-            } else {
-              this._buildQueueEarliestFinish = 0;
-            }
-          }
-        } catch (e) {
-          this._slog('WARN', 'Dorf2 buildings scan failed: ' + e.message);
-        } finally {
-          // Always navigate back to dorf1, even if scan failed
-          try {
-            await this.sendToContentScript({
-              type: 'EXECUTE', action: 'navigateTo', params: { page: 'dorf1' }
-            });
-            await this._waitForContentScript(10000);
-          } catch (_) { /* best effort */ }
-        }
+        await this._navigationManager.scanBuildings(
+          this._cycleCounter, this.gameState, () => this._randomDelay()
+        );
       }
 
       // Merge cached buildings into gameState if current scan didn't get them
-      if (this._cachedBuildings && (!this.gameState.buildings || this.gameState.buildings.length === 0)) {
-        this.gameState.buildings = this._cachedBuildings;
-      }
+      this._navigationManager.mergeCachedBuildings(this.gameState);
 
       // State: DECIDING (scan complete)
       this._cycleLock = 'deciding';
@@ -754,20 +730,21 @@ class BotEngine {
 
       // 5b. Proactive hero resource claim: if resources are critically low
       //     and hero is home with resource items, claim before executing upgrades
-      if (this._shouldProactivelyClaimHero()) {
+      if (this._heroManager && this._heroManager.shouldProactivelyClaim &&
+          this._heroManager.shouldProactivelyClaim(this.gameState)) {
         TravianLogger.log('INFO', '[BotEngine] Resources critically low — attempting proactive hero claim');
-        const claimed = await this._proactiveHeroClaim();
+        const claimed = await this._heroManager.proactiveClaim(this.gameState);
         // FIX: Navigate back home after hero claim — otherwise next SCAN reads hero inventory page
         try {
           await this.sendToContentScript({ type: 'EXECUTE', action: 'navigateTo', params: { page: 'dorf1' } });
           await TravianDelay.humanDelay(1500, 2500);
         } catch (_navErr) { /* best effort */ }
         if (claimed) {
-          this._heroClaimCooldown = Date.now() + 300000; // 5 min cooldown
+          this._heroManager.setCooldown(300000); // 5 min cooldown
           return; // skip this cycle, let resources update
         }
         // Even if failed, set cooldown so we don't spam attempts
-        this._heroClaimCooldown = Date.now() + 120000; // 2 min cooldown on failure
+        this._heroManager.setCooldown(120000); // 2 min cooldown on failure
       }
 
       // 6. Circuit breaker check — pause if too many consecutive failures
@@ -973,8 +950,9 @@ class BotEngine {
 
           // Special: if insufficient resources, try claiming hero inventory
           if (reason === 'insufficient_resources' &&
-              (task.type === 'upgrade_resource' || task.type === 'upgrade_building' || task.type === 'build_new')) {
-            const claimed = await this._tryClaimHeroResources(task);
+              (task.type === 'upgrade_resource' || task.type === 'upgrade_building' || task.type === 'build_new') &&
+              this._heroManager && this._heroManager.tryClaimForTask) {
+            const claimed = await this._heroManager.tryClaimForTask(task, this.gameState);
             if (claimed) {
               // Re-queue the same task so it retries after hero item was used
               this.taskQueue.add(task.type, task.params, task.priority, task.villageId);
@@ -1196,39 +1174,6 @@ class BotEngine {
     } catch (err) {
       console.error('[BotEngine] Failed to save state:', err);
     }
-  }
-
-  // ---------------------------------------------------------------------------
-  // Dorf2 Scan Heuristics
-  // ---------------------------------------------------------------------------
-
-  /**
-   * Decide whether to refresh cached buildings from dorf2.
-   * Event-driven: triggers when a build queue timer has expired since the last
-   * scan, or after a maximum staleness window (20 cycles) as a safety net.
-   * @returns {boolean}
-   */
-  _shouldRefreshBuildings() {
-    // Always scan if we have no cache at all
-    if (!this._cachedBuildings) return true;
-
-    // Check if any build queue timer has expired since last scan.
-    // _buildQueueEarliestFinish is an absolute ms-epoch timestamp captured
-    // when we last scanned dorf2's construction queue.
-    if (this._buildQueueEarliestFinish > 0 && Date.now() >= this._buildQueueEarliestFinish) {
-      return true;
-    }
-
-    // Also check the live constructionQueue from the most recent dorf1 scan —
-    // it may have been updated more recently than the cached dorf2 value.
-    var queue = this.gameState && this.gameState.constructionQueue;
-    if (queue && queue.earliestFinishTime > 0 && Date.now() >= queue.earliestFinishTime) {
-      return true;
-    }
-
-    // Fallback: max staleness of 20 cycles (~5-10 min at typical intervals)
-    var staleness = this._cycleCounter - this._buildingsScanCycle;
-    return staleness >= 20;
   }
 
   // ---------------------------------------------------------------------------
@@ -1504,20 +1449,9 @@ class BotEngine {
     try {
       // For building tasks, detour through dorf2 to refresh cached buildings
       if (taskType === 'upgrade_building' || taskType === 'build_new') {
-        await this._randomDelay();
-        await this.sendToContentScript({
-          type: 'EXECUTE', action: 'navigateTo', params: { page: 'dorf2' }
-        });
-        await this._waitForContentScript(10000);
-        var dorf2Resp = await this.sendToContentScript({ type: 'SCAN' });
-        if (dorf2Resp && dorf2Resp.success && dorf2Resp.data && dorf2Resp.data.buildings && dorf2Resp.data.buildings.length > 0) {
-          this._cachedBuildings = dorf2Resp.data.buildings;
-          this._buildingsScanCycle = this._cycleCounter;
-          // Update earliest finish time for event-driven scan trigger
-          if (dorf2Resp.data.constructionQueue) {
-            this._buildQueueEarliestFinish = dorf2Resp.data.constructionQueue.earliestFinishTime || 0;
-          }
-        }
+        await this._navigationManager.refreshBuildingsDetour(
+          this._cycleCounter, () => this._randomDelay()
+        );
       }
 
       await this._randomDelay();
