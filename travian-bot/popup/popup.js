@@ -220,22 +220,7 @@ let refreshInterval = null;
 let currentServerKey = null; // Set on popup open from active tab URL
 let lastTargetRefreshTs = 0; // Throttle upgrade targets refresh (ms)
 
-// GID → Building/Resource name mapping (Travian Legends)
-const GID_NAMES = {
-  1: 'Woodcutter', 2: 'Clay Pit', 3: 'Iron Mine', 4: 'Crop Field',
-  5: 'Sawmill', 6: 'Brickyard', 7: 'Iron Foundry', 8: 'Grain Mill',
-  9: 'Bakery', 10: 'Warehouse', 11: 'Granary', 13: 'Armoury',
-  14: 'Tournament Square', 15: 'Main Building', 16: 'Rally Point',
-  17: 'Marketplace', 18: 'Embassy', 19: 'Barracks', 20: 'Stable',
-  21: 'Workshop', 22: 'Academy', 23: 'Cranny', 24: 'Town Hall',
-  25: 'Residence', 26: 'Palace', 27: 'Treasury', 28: 'Trade Office',
-  29: 'Great Barracks', 30: 'Great Stable',
-  31: 'City Wall', 32: 'Earth Wall', 33: 'Palisade',
-  34: 'Stonemason', 35: 'Brewery', 36: 'Trapper',
-  37: "Hero's Mansion", 38: 'Great Warehouse', 39: 'Great Granary',
-  40: 'Wonder', 41: 'Horse Drinking Trough', 42: 'Stone Wall',
-  43: 'Command Center', 44: 'Waterworks', 45: 'Hospital'
-};
+// GID_NAMES is provided by shared/constants.js (loaded before popup.js)
 
 // Building prerequisites: gid → [{gid, level}] (from strategy/gameData.js)
 const BUILDING_PREREQS = {
