@@ -440,6 +440,15 @@ class DecisionEngine {
       return null;
     }
 
+    // Read from v2 slots config (popup saves slots array, not flat fields)
+    const slots = config.troopConfig.slots;
+    const firstSlot = (Array.isArray(slots) && slots.length > 0) ? slots[0] : null;
+    // v2 slot fields: troopType ('t4'), building ('stable'), batchSize (3)
+    // v1 legacy fields: defaultTroopType, trainCount, trainingBuilding
+    const userTroopType = (firstSlot && firstSlot.troopType) || config.troopConfig.defaultTroopType || null;
+    const userBatchSize = (firstSlot && firstSlot.batchSize) || config.troopConfig.trainCount || 5;
+    const userBuilding = (firstSlot && firstSlot.building) || config.troopConfig.trainingBuilding || 'barracks';
+
     // Strategy-powered: use military planner for troop type recommendation
     if (this.militaryPlanner && config.tribe) {
       try {
@@ -451,22 +460,17 @@ class DecisionEngine {
         );
 
         if (plan && plan.primaryUnit && plan.affordableCount > 0) {
-          // Map strategy unit names to config troop types if user has one set
-          const userTroopType = config.troopConfig.defaultTroopType;
-          const trainCount = Math.min(
-            config.troopConfig.trainCount || 5,
-            plan.affordableCount
-          );
+          const trainCount = Math.min(userBatchSize, plan.affordableCount);
 
           console.log('[DecisionEngine] Troop plan: ' + plan.primaryUnit +
             ' x' + trainCount + ' (' + plan.reasoning.join('; ') + ')');
 
-          // If user has a specific troop type configured, use their building too
+          // If user has a specific troop type configured, use theirs; otherwise use strategy
           const useStrategyUnit = !userTroopType;
           let finalTroopType = useStrategyUnit ? plan.primaryUnit : userTroopType;
           const finalBuilding = useStrategyUnit
             ? this._getTroopBuilding(plan.primaryUnit, config.tribe)
-            : (config.troopConfig.trainingBuilding || 'barracks');
+            : userBuilding;
 
           // Convert strategy unit name (e.g. 'theutatesThunder') to DOM input name ('t4')
           if (useStrategyUnit) {
@@ -499,12 +503,13 @@ class DecisionEngine {
     }
 
     // Fallback: use config values directly
+    if (!userTroopType) return null; // no troop type configured at all
     return {
       type: 'train_troops',
       params: {
-        troopType: config.troopConfig.defaultTroopType || 'infantry',
-        count: config.troopConfig.trainCount || 5,
-        buildingType: config.troopConfig.trainingBuilding || 'barracks'
+        troopType: userTroopType,
+        count: userBatchSize,
+        buildingType: userBuilding
       },
       priority: 6,
       villageId: state.currentVillageId || null
