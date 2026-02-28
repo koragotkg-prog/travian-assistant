@@ -15,7 +15,16 @@ Travian Bot Chrome Extension (Manifest V3) located in `travian-bot/`. No build s
 - Content script changes: Reload the extension AND refresh the Travian tab
 - Popup changes: Close and reopen the popup
 
-There are no build steps, linters, or test suites configured.
+There are no build steps, linters, or test suites configured. This is a Chrome Extension — there is no dev server or preview workflow. Verification requires manually reloading the extension in `chrome://extensions`.
+
+## Git Workflow
+
+When the user says **"commit"**, always do all three steps:
+1. **Commit** the changes with a descriptive message
+2. **Push** to the remote branch
+3. **Merge into `main`** and push main — resolve conflicts if needed, then clean up stale branches
+
+If working in a worktree or feature branch, merge into `main` so the user can immediately reload the extension from the main working directory. Do not leave commits stranded on unmerged branches.
 
 ## Architecture
 
