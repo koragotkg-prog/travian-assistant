@@ -344,7 +344,7 @@ class BotEngine {
         if (this.taskQueue && this.taskQueue.dirtyAt > 0) {
           this.taskQueue.markClean();
         }
-      });
+      }).catch(() => {});
     }, 60000, 5000); // 60s base, +/-5s jitter
 
     // Schedule the main decision/execution loop
@@ -653,6 +653,27 @@ class BotEngine {
 
       // Inject persistent lastFarmTime so DecisionEngine sees it
       this.gameState.lastFarmTime = this._lastFarmTime || 0;
+
+      // Inject farm intelligence summary for ActionScorer dynamic scoring
+      if (this._farmIntelligence) {
+        try {
+          var activeTargets = this._farmIntelligence.getActiveTargets();
+          var stats = this._farmIntelligence.getStats();
+          var gs = stats && stats.globalStats;
+          var avgLoot = 0;
+          if (gs && gs.totalRaids > 0) {
+            var totalLoot = gs.totalLoot || {};
+            avgLoot = ((totalLoot.wood || 0) + (totalLoot.clay || 0) +
+                       (totalLoot.iron || 0) + (totalLoot.crop || 0)) / gs.totalRaids;
+          }
+          this.gameState.farmIntelligence = {
+            readyCount: activeTargets.length,
+            avgLootPerRaid: avgLoot
+          };
+        } catch (_) {
+          // FarmIntelligence may not be loaded yet — safe to skip
+        }
+      }
 
       // 4. Safety checks - captcha / errors
       if (this.gameState.captcha) {
