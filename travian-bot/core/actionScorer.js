@@ -5,7 +5,7 @@
 
   class ActionScorer {
     constructor() {
-      this.gameData = root.TravianGameData ? new root.TravianGameData() : null;
+      this.gameData = root.TravianGameData || null;
       this.buildOptimizer = root.TravianBuildOptimizer ? new root.TravianBuildOptimizer() : null;
     }
 
@@ -26,10 +26,10 @@
       if (config.autoBuildingUpgrade || config.autoUpgradeBuildings) {
         actions.push(...this._scoreBuildingUpgrades(gameState, config));
       }
-      if (config.autoTroopTraining) {
+      if (config.autoTrainTroops || config.autoTroopTraining) {
         actions.push(...this._scoreTroopTraining(gameState, config));
       }
-      if (config.autoFarming) {
+      if (config.autoFarm || config.autoFarming) {
         actions.push(...this._scoreFarming(gameState, config));
       }
       if (config.autoHeroAdventure) {
@@ -63,10 +63,11 @@
       const buildQueue = state.constructionQueue || { count: 0 };
       if (buildQueue.count >= (buildQueue.maxCount || 1)) return actions;
 
+      const gidMap = { wood: 1, clay: 2, iron: 3, crop: 4 };
+
       for (const field of fields) {
         if (field.upgrading) continue;
 
-        const gidMap = { wood: 1, clay: 2, iron: 3, crop: 4 };
         const gid = gidMap[field.type] || 0;
         if (!gid) continue;
 
@@ -75,12 +76,23 @@
         const targetLevel = config.upgradeTargets?.[targetKey] || config[targetKey] || 10;
         if (field.level >= targetLevel) continue;
 
-        // Base value: production gain per hour
-        let baseValue = 5; // default
+        // ROI-based scoring: gain per resource invested
+        let baseValue = 5; // fallback
         if (this.gameData) {
-          const currentProd = this.gameData.getProduction(gid, field.level);
-          const nextProd = this.gameData.getProduction(gid, field.level + 1);
-          baseValue = (nextProd - currentProd) || 5;
+          const currentProd = this.gameData.getProduction(field.level);
+          const nextProd = this.gameData.getProduction(field.level + 1);
+          const prodGain = (nextProd - currentProd) || 5;
+
+          // Calculate total upgrade cost using gameData
+          const cost = this.gameData.getBuildingCost
+            ? this.gameData.getBuildingCost(gid, field.level + 1)
+            : null;
+          const totalCost = cost
+            ? (cost.wood || 0) + (cost.clay || 0) + (cost.iron || 0) + (cost.crop || 0)
+            : 500; // safe fallback
+
+          // ROI = hourly gain / total investment (normalized x1000 for readable scores)
+          baseValue = totalCost > 0 ? (prodGain / totalCost) * 1000 : prodGain;
         }
 
         // Urgency: boost if this resource is lowest
@@ -100,7 +112,7 @@
           type: 'upgrade_resource',
           params: { fieldId: field.id, type: field.type, level: field.level },
           score,
-          reason: `${field.type} lv${field.level}→${field.level+1} +${baseValue}/hr`
+          reason: `${field.type} lv${field.level}→${field.level+1} ROI:${baseValue.toFixed(1)}`
         });
       }
 
@@ -118,20 +130,29 @@
         if (bld.empty || bld.upgrading) continue;
 
         const gid = bld.id || bld.gid;
-        const targetLevel = config.buildingTargets?.[`b${gid}`] || null;
+        // Popup saves upgradeTargets keyed by slot string: { "18": { enabled: true, targetLevel: 10 } }
+        // Legacy buildingTargets['b'+gid] kept for backward compat
+        const slotTarget = config.upgradeTargets?.[String(bld.slot)];
+        const targetLevel = (slotTarget && slotTarget.enabled) ? slotTarget.targetLevel
+                          : config.buildingTargets?.[`b${gid}`] || null;
         if (targetLevel && bld.level >= targetLevel) continue;
 
-        // Score by building utility
+        // Cost-aware scoring with utility multipliers
         let baseValue = 10;
-        if (gid === 10) baseValue = 15; // Warehouse — high utility
-        if (gid === 11) baseValue = 15; // Granary
-        if (gid === 15) baseValue = 12; // Main Building — build speed
-        if (gid === 19) baseValue = 8;  // Barracks
-        if (gid === 17) baseValue = 7;  // Marketplace
-        if (gid === 23) baseValue = 6;  // Cranny
-        if (gid === 36 || gid === 31 || gid === 33) baseValue = 5; // Wall
+        // Utility multipliers by building type
+        const utilityMap = { 10: 1.5, 11: 1.5, 15: 1.2, 19: 0.8, 17: 0.7, 23: 0.6, 36: 0.5, 31: 0.5, 33: 0.5 };
+        const utilityMult = utilityMap[gid] || 1.0;
 
-        const score = baseValue * (1 + (10 - bld.level) * 0.1); // lower levels = higher priority
+        // Cost-aware: lower levels are cheaper → better ROI
+        if (this.gameData && this.gameData.getBuildingCost) {
+          const cost = this.gameData.getBuildingCost(gid, bld.level + 1);
+          const totalCost = cost ? (cost.wood || 0) + (cost.clay || 0) + (cost.iron || 0) + (cost.crop || 0) : 1000;
+          baseValue = Math.min((1000 / Math.max(totalCost, 100)) * 10 * utilityMult, 25);
+        } else {
+          baseValue = 10 * utilityMult * (1 + (10 - bld.level) * 0.1);
+        }
+
+        const score = baseValue;
 
         actions.push({
           type: 'upgrade_building',
@@ -180,27 +201,35 @@
     _scoreFarming(state, config) {
       const actions = [];
       const farmConfig = config.farmConfig || config;
+      if (!farmConfig.autoFarming && !config.autoFarming && !config.autoFarm) return actions;
 
-      if (!farmConfig.autoFarming && !config.autoFarming) return actions;
-
-      // Base farming score
       const lastFarm = state.lastFarmTime || 0;
       const elapsed = Date.now() - lastFarm;
-      const interval = (farmConfig.farmInterval || 300) * 1000;
-
+      // Popup saves intervalMs (already in ms); legacy farmInterval is in seconds
+      const interval = farmConfig.intervalMs || (farmConfig.farmInterval || 300) * 1000;
       if (elapsed < interval) return actions;
 
-      // Check outgoing raids
       const outgoing = state.troopMovements?.outgoing || 0;
       if (outgoing > 0) return actions;
 
-      const score = 20; // farming is generally high value
+      // Dynamic score based on farm intelligence
+      let score = 15; // base (reduced from fixed 20)
+      const farmIntel = state.farmIntelligence;
+      if (farmIntel) {
+        const readyTargets = farmIntel.readyCount || 0;
+        const avgLoot = farmIntel.avgLootPerRaid || 0;
+        // More ready targets and higher avg loot = higher priority
+        score = Math.min(30, 10 + readyTargets * 0.5 + (avgLoot / 500));
+      }
+      // Time urgency: score increases as interval is exceeded
+      const overdueRatio = Math.min(elapsed / interval, 3);
+      score *= (0.7 + 0.3 * overdueRatio);
 
       actions.push({
         type: 'send_farm',
         params: { useRallyPointFarmList: farmConfig.useRallyPointFarmList !== false },
         score,
-        reason: `Farm raid (${Math.floor(elapsed/1000)}s since last)`
+        reason: `Farm raid (${Math.floor(elapsed/1000)}s since last, score: ${score.toFixed(1)})`
       });
 
       return actions;
@@ -244,7 +273,8 @@
 
       // Wall upgrade — scored as normal building but with defense boost
       const buildings = state.buildings || [];
-      const wall = buildings.find(b => [31, 33, 36].includes(b.id || b.gid));
+      // Wall GIDs: 31=City Wall (Roman), 32=Earth Wall (Gaul), 33=Palisade (Teuton)
+      const wall = buildings.find(b => [31, 32, 33].includes(b.id || b.gid));
       if (wall && !wall.upgrading && wall.level < 20) {
         const score = 8 + (state.defenseReports?.recentAttacks > 0 ? 10 : 0);
         actions.push({

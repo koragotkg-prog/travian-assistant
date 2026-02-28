@@ -856,7 +856,7 @@
         return { success: false, reason: 'button_not_found', message: 'Upgrade button not found on page' };
       } catch (e) {
         Logger.error('clickUpgradeButton error:', e);
-        return false;
+        return { success: false, reason: 'button_not_found', message: e.message || 'clickUpgradeButton exception' };
       }
     },
 
@@ -1677,6 +1677,12 @@
           '.heroState [class*="statusDead"]'
         ]);
 
+        // Early guard: if hero is away/dead, don't even try to click adventure buttons
+        if (heroAway) {
+          Logger.warn('sendHeroAdventure: hero is away or dead (early guard)');
+          return { success: false, reason: 'hero_unavailable', message: 'Hero is away or dead' };
+        }
+
         // Check if adventure list is empty
         var adventureRows = qsa('.adventureList tbody tr');
         if (!adventureRows || adventureRows.length === 0) {
@@ -2017,7 +2023,8 @@
         var maxBtn = (actionBtns && actionBtns.length >= 1) ? actionBtns[0] : null;
         var moveBtn = (actionBtns && actionBtns.length >= 2) ? actionBtns[1] : null;
 
-        // Prefer "ย้าย" (Move) if enabled, fall back to "โอนสูงสุด" (Transfer Max)
+        // Only use "ย้าย" (Move) button — NEVER fall back to "โอนสูงสุด" (Transfer Max)
+        // Transfer Max ignores input values and drains entire hero resource pools
         if (moveBtn && !moveBtn.classList.contains('disabled')) {
           await simulateHumanClick(moveBtn);
           Logger.log('useHeroItemBulk: confirmed via Move button');
@@ -2025,14 +2032,12 @@
           return { success: true, transferred: transferred };
         }
 
-        // Move still disabled — execCommand may have failed, try Transfer Max
-        if (maxBtn && !maxBtn.classList.contains('disabled')) {
-          Logger.log('useHeroItemBulk: Move button disabled, using Transfer Max fallback');
-          await simulateHumanClick(maxBtn);
-          Logger.log('useHeroItemBulk: confirmed via Transfer Max');
-          await humanDelay(500, 1000);
-          return { success: true, transferred: transferred };
-        }
+        // Move still disabled — React state didn't update from nativeInputValueSetter
+        // Do NOT fall back to Transfer Max — it would drain all hero resources
+        Logger.warn('useHeroItemBulk: Move button disabled — React input sync failed, aborting to prevent resource drain');
+        var cancelBtnSafe = qs(sel.cancelButton);
+        if (cancelBtnSafe) cancelBtnSafe.click();
+        return { success: false, reason: 'input_disabled', message: 'Move button disabled — input values not recognized by React' };
 
         Logger.warn('useHeroItemBulk: no usable confirm button found');
         var cancelBtn2 = qs(sel.cancelButton);

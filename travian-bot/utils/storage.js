@@ -103,6 +103,9 @@
         idleMax: 120000,
       },
 
+      // Server start date (ISO string) for game-day estimation
+      serverStartDate: null,
+
       // Safety / anti-detection settings
       safetyConfig: {
         maxActionsPerHour: 60,

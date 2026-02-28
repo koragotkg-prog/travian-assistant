@@ -465,9 +465,25 @@ const App = {
   renderStrategy(s) {
     var id = function(x) { return document.getElementById(x); };
 
-    // Phase — use currentPhase from decision engine (exposed via getStatus)
+    // Phase — GlobalPlanner is the single authority for phase detection.
+    // Show detailed planner phase when available, fall back to legacy currentPhase.
+    var planner = s.plannerState || null;
     var phase = s.currentPhase || null;
-    if (phase) {
+    if (planner && planner.phase) {
+      // Show GlobalPlanner's detailed phase (e.g. EARLY_ECON, EXPANSION_WINDOW)
+      var plannerPhase = planner.phase.replace(/_/g, ' ');
+      id('stratPhase').textContent = plannerPhase;
+      var plannerDescs = {
+        'BOOTSTRAP': 'Initial setup — crannies, basic fields',
+        'EARLY_ECON': 'Focus on resource production and infrastructure',
+        'EXPANSION_WINDOW': 'Preparing for second village settlement',
+        'MILITARY_BUILDUP': 'Building army and military infrastructure',
+        'POWER_SPIKE': 'Army is significant — raiding and operations',
+        'DEFENSIVE_STABILIZE': 'Under threat — prioritizing defense'
+      };
+      var modeStr = planner.mode ? ' [' + planner.mode.replace(/_/g, ' ') + ']' : '';
+      id('stratPhaseDesc').textContent = (plannerDescs[planner.phase] || 'Phase active') + modeStr;
+    } else if (phase) {
       id('stratPhase').textContent = phase.charAt(0).toUpperCase() + phase.slice(1);
       var descs = {
         early: 'Focus on resource production and basic infrastructure',

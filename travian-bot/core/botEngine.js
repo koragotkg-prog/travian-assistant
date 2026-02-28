@@ -8,6 +8,8 @@
  *   - self.TravianScheduler   (core/scheduler.js)
  *   - self.TravianDecisionEngine (core/decisionEngine.js)
  *   - self.TravianGameStateCollector (core/gameStateCollector.js)
+ *   - self.TravianContentScriptBridge (core/contentScriptBridge.js)
+ *   - self.TravianNavigationManager (core/navigationManager.js)
  */
 
 // ---------------------------------------------------------------------------
@@ -57,7 +59,7 @@ class BotEngine {
     // Current state
     this.gameState = null;
     this.config = null;
-    this.activeTabId = null;
+    this._activeTabId = null;
     this.serverKey = null; // Set by InstanceManager
 
     // Statistics
@@ -79,19 +81,22 @@ class BotEngine {
     this.actionsThisHour = 0;
     this.hourResetTime = Date.now();
 
-    // Content script communication timeout (ms)
-    // TQ-6 FIX: Increased base from 15s to 30s. Chrome throttles background tabs
-    // with minimum 1s setTimeout — content scripts can take 20-30s under heavy throttle.
-    // At 15s the timeout would fire → reject → retry → duplicate click.
-    this._messageTimeout = 30000;
-    this._messageTimeoutBase = 30000;   // Reset target after success
-    this._messageTimeoutMax = 60000;    // Cap for throttled tabs
-    this._messageTimeoutStep = 10000;   // Increase per consecutive timeout
+    // Content script communication — delegated to ContentScriptBridge.
+    // Bridge owns adaptive timeout, request dedup, retry logic, and ping/wait helpers.
+    this._bridge = new (self.TravianContentScriptBridge)(
+      (...args) => this._slog(...args)
+    );
 
-    // TQ-6 FIX: Request deduplication counter.
-    // Each EXECUTE message gets a unique requestId so the content script can
-    // detect and discard duplicate requests from timeout→retry sequences.
-    this._requestIdCounter = 0;
+    // Hero resource claiming — delegated to HeroManager.
+    // Owns proactive/reactive claim logic, deficit calculation, V1/V2 paths, and cooldown.
+    if (!self.TravianHeroManager) {
+      console.error('[BotEngine] TravianHeroManager not loaded — hero resource claiming disabled');
+    }
+    this._heroManager = new (self.TravianHeroManager || Object)(
+      this._bridge,
+      (...args) => this._slog(...args),
+      () => this._randomDelay()
+    );
 
     // FIX-P3: Unified cycle lock replaces _mainLoopRunning + _executionLocked.
     // Values: null (free), 'scanning', 'deciding', 'executing', 'returning'
@@ -130,12 +135,12 @@ class BotEngine {
     this._cycleCounter = 0;
     this._currentCycleId = null;
 
-    // Cached buildings data from dorf2 scans.
-    // getBuildings() only works on dorf2 but the bot rests on dorf1.
-    // We cache the last dorf2 scan and refresh every N cycles.
-    this._cachedBuildings = null;
-    this._buildingsScanCycle = 0;       // last cycle that scanned dorf2
-    this._buildingsScanInterval = 3;    // rescan dorf2 every N cycles
+    // Navigation & building cache management — delegated to NavigationManager.
+    // Owns dorf2 scan/cache heuristics, navigateAndWait(), and building cache state.
+    this._navigationManager = new (self.TravianNavigationManager)(
+      this._bridge,
+      (...args) => this._slog(...args)
+    );
   }
 
   // ---------------------------------------------------------------------------
@@ -191,6 +196,15 @@ class BotEngine {
     }
   }
 
+  // activeTabId getter/setter — keeps ContentScriptBridge in sync.
+  // service-worker.js sets engine.activeTabId directly in many places,
+  // so the setter transparently propagates to the bridge.
+  get activeTabId() { return this._activeTabId; }
+  set activeTabId(id) {
+    this._activeTabId = id;
+    if (this._bridge) this._bridge.setTabId(id);
+  }
+
   get paused() { return this._paused; }
   set paused(v) {
     console.warn('[BotEngine][SM] Direct set of .paused is deprecated — use pause()/resume() instead');
@@ -230,7 +244,7 @@ class BotEngine {
       return;
     }
 
-    this.activeTabId = tabId;
+    this.activeTabId = tabId; // setter also updates this._bridge
 
     // Load configuration from storage
     await this.loadConfig();
@@ -264,13 +278,21 @@ class BotEngine {
             for (const task of savedState.taskQueue) {
               // Only restore tasks that were pending or running (running gets reset to pending)
               if (task.status === 'pending' || task.status === 'running') {
-                this.taskQueue.add(
+                const newId = this.taskQueue.add(
                   task.type,
                   task.params || {},
                   task.priority || 5,
                   task.villageId || null,
                   task.scheduledFor || null
                 );
+                // Preserve retry metadata so tasks don't re-exhaust retries after SW restart
+                if (newId && task.retries > 0) {
+                  const restored = this.taskQueue.queue.find(t => t.id === newId);
+                  if (restored) {
+                    restored.retries = task.retries;
+                    restored.maxRetries = task.maxRetries || this.taskQueue.maxRetries;
+                  }
+                }
                 restoredCount++;
               }
             }
@@ -344,7 +366,7 @@ class BotEngine {
         if (this.taskQueue && this.taskQueue.dirtyAt > 0) {
           this.taskQueue.markClean();
         }
-      });
+      }).catch(() => {});
     }, 60000, 5000); // 60s base, +/-5s jitter
 
     // Schedule the main decision/execution loop
@@ -373,7 +395,7 @@ class BotEngine {
   /**
    * Stop the bot engine. Saves state and clears all timers.
    */
-  stop() {
+  async stop() {
     this._transition(BOT_STATES.STOPPED, 'stopped');
 
     // Stop scheduler (clears all timers and cycles)
@@ -390,7 +412,7 @@ class BotEngine {
     }
 
     // Save state before fully stopping
-    this.saveState();
+    await this.saveState();
 
     // ST-5 FIX: Flush logs immediately on stop to prevent loss on SW death.
     // The 30s setInterval flush may never fire if the SW is killed soon after.
@@ -461,7 +483,7 @@ class BotEngine {
    * Emergency stop. Immediately halts all activity and records the reason.
    * @param {string} reason - Why the emergency stop was triggered
    */
-  emergencyStop(reason) {
+  async emergencyStop(reason) {
     console.error(`[BotEngine] EMERGENCY STOP: ${reason}`);
 
     // ST-5 FIX: Flush logs BEFORE stopping — emergency stop may precede SW death
@@ -471,7 +493,7 @@ class BotEngine {
 
     this._emergencyReason = reason; // SAF-5 FIX: store for getStatus()
     this._transition(BOT_STATES.EMERGENCY, reason);
-    this.stop(); // EMERGENCY → STOPPED
+    await this.stop(); // EMERGENCY → STOPPED — must await to ensure saveState() completes
 
     // Persist the emergency stop reason
     try {
@@ -571,7 +593,7 @@ class BotEngine {
             type: 'SCAN', params: { property: 'captcha' }
           }).catch(() => null);
           if (captchaCheck && captchaCheck.success && captchaCheck.data === true) {
-            this.emergencyStop('Captcha detected (scan failed but captcha confirmed)');
+            await this.emergencyStop('Captcha detected (scan failed but captcha confirmed)');
             return;
           }
         } catch (_) { /* lightweight check failed too — fall through to circuit breaker */ }
@@ -600,49 +622,21 @@ class BotEngine {
         }
       }
 
-      // ── Dorf2 buildings scan (cached, refreshed every N cycles) ──
+      // ── Dorf2 buildings scan (event-driven, delegated to NavigationManager) ──
       // getBuildings() only returns data on dorf2 pages. Since the bot rests
       // on dorf1, buildings[] is always empty unless we navigate to dorf2.
-      // We do this periodically (every _buildingsScanInterval cycles) and
-      // cache the result so the decision engine can create upgrade_building tasks.
+      // NavigationManager handles scan heuristics, caching, and navigation.
       var needBuildingScan = (this.config.autoUpgradeBuildings || this.config.autoBuildingUpgrade) &&
-        (!this._cachedBuildings || (this._cycleCounter - this._buildingsScanCycle) >= this._buildingsScanInterval);
+        this._navigationManager.shouldRefreshBuildings(this._cycleCounter, this.gameState);
 
       if (needBuildingScan) {
-        try {
-          this._slog('DEBUG', 'Scanning dorf2 for buildings data');
-          await this.sendToContentScript({
-            type: 'EXECUTE', action: 'navigateTo', params: { page: 'dorf2' }
-          });
-          await this._randomDelay();
-          await this._waitForContentScript(15000);
-          var dorf2Scan = await this.sendToContentScript({ type: 'SCAN' });
-          if (dorf2Scan && dorf2Scan.success && dorf2Scan.data && dorf2Scan.data.buildings && dorf2Scan.data.buildings.length > 0) {
-            this._cachedBuildings = dorf2Scan.data.buildings;
-            this._buildingsScanCycle = this._cycleCounter;
-            this._slog('INFO', 'Cached ' + this._cachedBuildings.length + ' buildings from dorf2');
-            // Also update construction queue from dorf2 (more accurate)
-            if (dorf2Scan.data.constructionQueue) {
-              this.gameState.constructionQueue = dorf2Scan.data.constructionQueue;
-            }
-          }
-        } catch (e) {
-          this._slog('WARN', 'Dorf2 buildings scan failed: ' + e.message);
-        } finally {
-          // Always navigate back to dorf1, even if scan failed
-          try {
-            await this.sendToContentScript({
-              type: 'EXECUTE', action: 'navigateTo', params: { page: 'dorf1' }
-            });
-            await this._waitForContentScript(10000);
-          } catch (_) { /* best effort */ }
-        }
+        await this._navigationManager.scanBuildings(
+          this._cycleCounter, this.gameState, () => this._randomDelay()
+        );
       }
 
       // Merge cached buildings into gameState if current scan didn't get them
-      if (this._cachedBuildings && (!this.gameState.buildings || this.gameState.buildings.length === 0)) {
-        this.gameState.buildings = this._cachedBuildings;
-      }
+      this._navigationManager.mergeCachedBuildings(this.gameState);
 
       // State: DECIDING (scan complete)
       this._cycleLock = 'deciding';
@@ -654,9 +648,30 @@ class BotEngine {
       // Inject persistent lastFarmTime so DecisionEngine sees it
       this.gameState.lastFarmTime = this._lastFarmTime || 0;
 
+      // Inject farm intelligence summary for ActionScorer dynamic scoring
+      if (this._farmIntelligence) {
+        try {
+          var activeTargets = this._farmIntelligence.getActiveTargets();
+          var stats = this._farmIntelligence.getStats();
+          var gs = stats && stats.globalStats;
+          var avgLoot = 0;
+          if (gs && gs.totalRaids > 0) {
+            var totalLoot = gs.totalLoot || {};
+            avgLoot = ((totalLoot.wood || 0) + (totalLoot.clay || 0) +
+                       (totalLoot.iron || 0) + (totalLoot.crop || 0)) / gs.totalRaids;
+          }
+          this.gameState.farmIntelligence = {
+            readyCount: activeTargets.length,
+            avgLootPerRaid: avgLoot
+          };
+        } catch (_) {
+          // FarmIntelligence may not be loaded yet — safe to skip
+        }
+      }
+
       // 4. Safety checks - captcha / errors
       if (this.gameState.captcha) {
-        this.emergencyStop('Captcha detected on page');
+        await this.emergencyStop('Captcha detected on page');
         return;
       }
 
@@ -667,7 +682,7 @@ class BotEngine {
         TravianLogger.log('ERROR', '[BotEngine] Error page detected: ' + errorDetail +
           ' | page=' + (this.gameState.page || 'unknown') +
           ' | url=' + (this.gameState.url || 'unknown'));
-        this.emergencyStop('Game error detected: ' + errorDetail);
+        await this.emergencyStop('Game error detected: ' + errorDetail);
         return;
       }
 
@@ -678,7 +693,7 @@ class BotEngine {
         this._notLoggedInCount++;
         this._slog('WARN', 'Not logged in (count: ' + this._notLoggedInCount + '/' + this._notLoggedInMaxCount + ')');
         if (this._notLoggedInCount >= this._notLoggedInMaxCount) {
-          this.emergencyStop('Session expired — not logged in for ' + this._notLoggedInCount + ' consecutive cycles');
+          await this.emergencyStop('Session expired — not logged in for ' + this._notLoggedInCount + ' consecutive cycles');
         }
         return;
       }
@@ -695,7 +710,7 @@ class BotEngine {
       // Check if decision engine flagged an emergency
       for (const task of newTasks) {
         if (task.type === 'emergency_stop') {
-          this.emergencyStop(task.params.reason);
+          await this.emergencyStop(task.params.reason);
           return;
         }
       }
@@ -726,24 +741,22 @@ class BotEngine {
 
       // 5b. Proactive hero resource claim: if resources are critically low
       //     and hero is home with resource items, claim before executing upgrades
-      if (this._shouldProactivelyClaimHero()) {
+      if (this._heroManager && this._heroManager.shouldProactivelyClaim &&
+          this._heroManager.shouldProactivelyClaim(this.gameState)) {
         TravianLogger.log('INFO', '[BotEngine] Resources critically low — attempting proactive hero claim');
-        const claimed = await this._proactiveHeroClaim();
+        const claimed = await this._heroManager.proactiveClaim(this.gameState);
         // FIX: Navigate back home after hero claim — otherwise next SCAN reads hero inventory page
         try {
           await this.sendToContentScript({ type: 'EXECUTE', action: 'navigateTo', params: { page: 'dorf1' } });
-          await TravianDelay.humanDelay(1500, 2500);
+          await this._bridge.waitForReady(10000);
+          await this._randomDelay();
         } catch (_navErr) { /* best effort */ }
         if (claimed) {
-          const hcCfg = this.config && this.config.heroConfig;
-          const successCd = (hcCfg && hcCfg.claimCooldownSuccess != null) ? hcCfg.claimCooldownSuccess * 60000 : 300000;
-          this._heroClaimCooldown = Date.now() + successCd;
+          this._heroManager.setCooldown(300000); // 5 min cooldown
           return; // skip this cycle, let resources update
         }
         // Even if failed, set cooldown so we don't spam attempts
-        const hcCfgF = this.config && this.config.heroConfig;
-        const failCd = (hcCfgF && hcCfgF.claimCooldownFail != null) ? hcCfgF.claimCooldownFail * 60000 : 120000;
-        this._heroClaimCooldown = Date.now() + failCd;
+        this._heroManager.setCooldown(120000); // 2 min cooldown on failure
       }
 
       // 6. Circuit breaker check — pause if too many consecutive failures
@@ -754,7 +767,7 @@ class BotEngine {
 
         // After max trips → emergency stop (don't keep oscillating)
         if (this._circuitBreakerTrips >= this._circuitBreakerMaxTrips) {
-          this.emergencyStop(
+          await this.emergencyStop(
             'Circuit breaker: ' + this._circuitBreakerTrips + ' trips — persistent failures, stopping bot'
           );
           return;
@@ -891,269 +904,15 @@ class BotEngine {
 
       let response;
 
-      // All tasks are sent as EXECUTE messages to the content script's message handler
-      switch (task.type) {
-        case 'upgrade_resource':
-          // Step 1: Navigate to dorf1 (resource view)
-          await this.sendToContentScript({
-            type: 'EXECUTE', action: 'navigateTo', params: { page: 'dorf1' }
-          });
-          await this._randomDelay();
-          // Wait for page reload and new content script injection
-          await this._waitForContentScript(15000);
-          // FIX 9: Verify navigation to dorf1
-          if (!await this._verifyNavigation('resources')) {
-            response = { success: false, reason: 'page_mismatch', message: 'Not on dorf1 after navigation' };
-            break;
-          }
-          // Step 2: Click the resource field (navigates to /build.php?id=XX)
-          await this.sendToContentScript({
-            type: 'EXECUTE', action: 'clickResourceField', params: { fieldId: task.params.fieldId }
-          });
-          await this._randomDelay();
-          // Step 2b: Wait for content script re-injection after page navigation
-          await this._waitForContentScript(15000);
-          // Step 3: Click upgrade button
-          response = await this.sendToContentScript({
-            type: 'EXECUTE', action: 'clickUpgradeButton', params: {}
-          });
-          break;
-
-        case 'upgrade_building':
-          // Step 1: Navigate to dorf2 (village view)
-          await this.sendToContentScript({
-            type: 'EXECUTE', action: 'navigateTo', params: { page: 'dorf2' }
-          });
-          await this._randomDelay();
-          // Wait for page reload and new content script injection
-          await this._waitForContentScript(15000);
-          // FIX 9: Verify navigation to dorf2
-          if (!await this._verifyNavigation('village')) {
-            response = { success: false, reason: 'page_mismatch', message: 'Not on dorf2 after navigation' };
-            break;
-          }
-          // Step 2: Click the building slot (navigates to /build.php?id=XX)
-          await this.sendToContentScript({
-            type: 'EXECUTE', action: 'clickBuildingSlot', params: { slotId: task.params.slot }
-          });
-          await this._randomDelay();
-          // Step 2b: Wait for content script re-injection after page navigation
-          await this._waitForContentScript(15000);
-          // Step 3: Click upgrade button (green = affordable, no button = can't afford)
-          response = await this.sendToContentScript({
-            type: 'EXECUTE', action: 'clickUpgradeButton', params: {}
-          });
-          break;
-
-        case 'train_troops':
-          // Navigate to the barracks/stable page and train
-          await this.sendToContentScript({
-            type: 'EXECUTE', action: 'navigateTo', params: { page: task.params.buildingType || 'barracks' }
-          });
-          await this._randomDelay();
-          await this._waitForContentScript(15000);
-          response = await this.sendToContentScript({
-            type: 'EXECUTE', action: 'trainTroops', params: {
-              troopType: task.params.troopType,
-              count: task.params.count
-            }
-          });
-          break;
-
-        case 'send_farm':
-          // Delegate to FarmManager FSM (4-layer farm stack)
-          if (!this._farmManager) {
-            var farmIntel = new self.TravianFarmIntelligence(this.serverKey);
-            await farmIntel.load();
-            var farmSched = new self.TravianFarmScheduler(farmIntel);
-            this._farmManager = new self.TravianFarmManager(this.serverKey, farmIntel, farmSched);
-            this._farmIntelligence = farmIntel;
-            // Wire intelligence to DecisionEngine for all-blacklisted check
-            if (this.decisionEngine) this.decisionEngine._farmIntelligence = farmIntel;
-          }
-          // Pass specific farm list ID through config if task specifies one
-          if (task.params.farmListId != null) {
-            if (!this.config.farmConfig) this.config.farmConfig = {};
-            this.config.farmConfig._taskFarmListId = task.params.farmListId;
-          }
-          var farmResult = await this._farmManager.executeFarmCycle(
-            this.config,
-            this.gameState,
-            (msg) => this.sendToContentScript(msg),
-            (ms) => this._waitForContentScript(ms)
-          );
-          // Clean up task-specific param
-          if (this.config.farmConfig) delete this.config.farmConfig._taskFarmListId;
-          if (farmResult && (farmResult.success || farmResult.recovered)) {
-            // Treat recovered cycles as soft success — don't eat retry budget
-            this._lastFarmTime = Date.now();
-            this.stats.farmRaidsSent += (farmResult.sent || 0) + (farmResult.reRaidSent || 0);
-            if (farmResult.recovered) farmResult.success = true;  // Mark as success for task completion
-          }
-          // Persist intelligence after each cycle
-          if (this._farmIntelligence) {
-            try { await this._farmIntelligence.persist(); } catch (_) {}
-          }
-          response = farmResult;
-          break;
-
-        case 'build_traps':
-          // Step 1: Find trapper building slot from gameState (gid=36, slot != 40 which is wall)
-          var trapperSlot = null;
-          if (this.gameState && this.gameState.buildings) {
-            var trapperBld = this.gameState.buildings.find(function(b) {
-              return (b.id === 36 || b.gid === 36) && b.slot !== 40;
-            });
-            if (trapperBld) trapperSlot = trapperBld.slot;
-          }
-          if (!trapperSlot) {
-            response = { success: false, reason: 'building_not_available', message: 'Trapper building not found' };
-            break;
-          }
-          // Step 2: Navigate to dorf2
-          await this.sendToContentScript({
-            type: 'EXECUTE', action: 'navigateTo', params: { page: 'dorf2' }
-          });
-          await this._randomDelay();
-          await this._waitForContentScript(15000);
-          // Step 3: Click the trapper building slot (navigates to /build.php?id=XX)
-          await this.sendToContentScript({
-            type: 'EXECUTE', action: 'clickBuildingSlot', params: { slotId: trapperSlot }
-          });
-          await this._randomDelay();
-          // Step 4: Wait for content script re-injection after page navigation
-          await this._waitForContentScript(15000);
-          // Step 5: Train traps
-          response = await this.sendToContentScript({
-            type: 'EXECUTE', action: 'trainTraps', params: { count: task.params.count || 10 }
-          });
-          break;
-
-        case 'send_hero_adventure':
-          // Navigate to hero adventures page and send hero
-          await this.sendToContentScript({
-            type: 'EXECUTE', action: 'navigateTo', params: { page: 'heroAdventures' }
-          });
-          await this._randomDelay();
-          await this._waitForContentScript(15000);
-          response = await this.sendToContentScript({
-            type: 'EXECUTE', action: 'sendHeroAdventure', params: {}
-          });
-          break;
-
-        case 'claim_hero_resources':
-          // Navigate to hero page and claim resource items
-          await this.sendToContentScript({
-            type: 'EXECUTE', action: 'navigateTo', params: { page: 'hero' }
-          });
-          await this._randomDelay();
-          await this._waitForContentScript(15000);
-          response = await this.sendToContentScript({
-            type: 'EXECUTE', action: 'useHeroItem', params: { itemIndex: task.params.itemIndex || 0 }
-          });
-          break;
-
-        case 'build_new':
-          // Navigate to empty slot in dorf2 and build a new building
-          await this.sendToContentScript({
-            type: 'EXECUTE', action: 'navigateTo', params: { page: 'dorf2' }
-          });
-          await this._randomDelay();
-          // Wait for page reload and new content script injection
-          await this._waitForContentScript(15000);
-          // FIX 9: Verify navigation to dorf2
-          if (!await this._verifyNavigation('village')) {
-            response = { success: false, reason: 'page_mismatch', message: 'Not on dorf2 after navigation for build_new' };
-            break;
-          }
-          // Click the empty building slot to open build menu
-          var slotClick = await this.sendToContentScript({
-            type: 'EXECUTE', action: 'clickBuildingSlot', params: { slotId: task.params.slot }
-          });
-          if (!slotClick || slotClick === false || (slotClick && slotClick.success === false)) {
-            response = { success: false, reason: 'button_not_found', message: 'Empty slot ' + task.params.slot + ' not found on dorf2' };
-            break;
-          }
-          // Clicking empty slot navigates to build.php — wait for new page + content script
-          await this._randomDelay();
-          await this._waitForContentScript(15000);
-          // Try to build in current tab first
-          console.log('[BotEngine] build_new: trying GID ' + task.params.gid + ' in default tab');
-          response = await this.sendToContentScript({
-            type: 'EXECUTE', action: 'buildNewByGid', params: { gid: task.params.gid }
-          });
-          // If slot is occupied or prerequisites not met, no point trying other tabs
-          if (response && (response.reason === 'slot_occupied' || response.reason === 'prerequisites_not_met')) {
-            console.log('[BotEngine] build_new: ' + response.reason + ' — skipping tab switching');
-            break;
-          }
-          // If building not in current tab, try switching tabs (each click causes page reload)
-          // Tab switching must happen at botEngine level because page reloads kill content script
-          if (response && response.reason === 'building_not_in_tab') {
-            console.log('[BotEngine] build_new: GID ' + task.params.gid + ' not in default tab, trying other tabs');
-            for (var tabIdx = 0; tabIdx < 3; tabIdx++) {
-              var tabClick = await this.sendToContentScript({
-                type: 'EXECUTE', action: 'clickBuildTab', params: { tabIndex: tabIdx }
-              });
-              if (tabClick && tabClick.success) {
-                // Tab was clicked — page reloads, wait for new content script
-                await this._randomDelay();
-                await this._waitForContentScript(15000);
-              } else {
-                // Tab already active or not found — still retry buildNewByGid
-                // (the first attempt might have raced with page load)
-                await this._randomDelay();
-              }
-              // Try buildNewByGid again
-              response = await this.sendToContentScript({
-                type: 'EXECUTE', action: 'buildNewByGid', params: { gid: task.params.gid }
-              });
-              console.log('[BotEngine] build_new: tab ' + tabIdx + ' result:', response && response.reason || (response && response.success ? 'OK' : 'fail'));
-              if (!response || response.reason !== 'building_not_in_tab') break;
-            }
-          }
-          break;
-
-        case 'send_attack':
-          // Navigate to rally point and send attack to coordinates
-          await this.sendToContentScript({
-            type: 'EXECUTE', action: 'navigateTo', params: { page: 'rallyPoint' }
-          });
-          await this._randomDelay();
-          await this._waitForContentScript(15000);
-          response = await this.sendToContentScript({
-            type: 'EXECUTE', action: 'sendAttack', params: {
-              target: task.params.target,
-              troops: task.params.troops || {}
-            }
-          });
-          // FIX: Only update farm time on success — failed attacks should retry sooner
-          if (response && response.success) {
-            this._lastFarmTime = Date.now();
-          }
-          break;
-
-        case 'switch_village':
-          response = await this.sendToContentScript({
-            type: 'EXECUTE', action: 'switchVillage', params: {
-              villageId: task.params.targetVillageId
-            }
-          });
-          break;
-
-        case 'navigate':
-          response = await this.sendToContentScript({
-            type: 'EXECUTE', action: 'navigateTo', params: {
-              page: task.params.page
-            }
-          });
-          break;
-
-        default:
-          response = await this.sendToContentScript({
-            type: 'EXECUTE', action: task.type, params: task.params
-          });
-          break;
+      // Dispatch to TaskHandlerRegistry (extracted from former switch statement)
+      const handler = self.TravianTaskHandlers && self.TravianTaskHandlers[task.type];
+      if (handler) {
+        response = await handler(this, task);
+      } else {
+        // Fallback: send task type directly as an EXECUTE action to content script
+        response = await this.sendToContentScript({
+          type: 'EXECUTE', action: task.type, params: task.params
+        });
       }
 
       // Process response — with smart error handling
@@ -1203,8 +962,9 @@ class BotEngine {
 
           // Special: if insufficient resources, try claiming hero inventory
           if (reason === 'insufficient_resources' &&
-              (task.type === 'upgrade_resource' || task.type === 'upgrade_building' || task.type === 'build_new')) {
-            const claimed = await this._tryClaimHeroResources(task);
+              (task.type === 'upgrade_resource' || task.type === 'upgrade_building' || task.type === 'build_new') &&
+              this._heroManager && this._heroManager.tryClaimForTask) {
+            const claimed = await this._heroManager.tryClaimForTask(task, this.gameState);
             if (claimed) {
               // Re-queue the same task so it retries after hero item was used
               this.taskQueue.add(task.type, task.params, task.priority, task.villageId);
@@ -1264,99 +1024,16 @@ class BotEngine {
 
   /**
    * Send a message to the content script running in the active tab.
-   * Wraps chrome.tabs.sendMessage with a timeout.
+   * Delegates to ContentScriptBridge.send() which handles retry, adaptive timeout,
+   * request dedup, and ghost callback prevention.
+   *
+   * Kept as a thin wrapper so task handlers can continue calling engine.sendToContentScript().
    *
    * @param {object} message - The message to send
    * @returns {Promise<object>} The response from the content script
    */
   async sendToContentScript(message) {
-    if (!this.activeTabId) {
-      throw new Error('No active tab ID set');
-    }
-
-    // TQ-6 FIX: Stamp EXECUTE messages with a unique requestId for dedup.
-    // Content script tracks last seen requestId and ignores duplicates.
-    if (message && message.type === 'EXECUTE') {
-      this._requestIdCounter++;
-      message._requestId = this._requestIdCounter;
-    }
-
-    // MP-1 FIX: Retry wrapper for transient "Receiving end does not exist" errors.
-    // Content script may not be injected yet after page navigation.
-    var maxRetries = 2;
-    var lastErr = null;
-    for (var attempt = 0; attempt <= maxRetries; attempt++) {
-      try {
-        return await this._sendMessageOnce(message);
-      } catch (err) {
-        lastErr = err;
-        var isConnectionError = err.message && (
-          err.message.indexOf('Receiving end does not exist') !== -1 ||
-          err.message.indexOf('Could not establish connection') !== -1
-        );
-        if (!isConnectionError || attempt >= maxRetries) throw err;
-        // Wait before retry — content script may be loading
-        var retryDelay = 1000 * (attempt + 1); // 1s, 2s
-        this._slog('WARN', 'Content script not ready, retry ' + (attempt + 1) + '/' + maxRetries + ' in ' + retryDelay + 'ms');
-        await new Promise(r => setTimeout(r, retryDelay));
-      }
-    }
-    throw lastErr;
-  }
-
-  /**
-   * Internal: send a single message to content script (no retry).
-   * Separated from sendToContentScript to support MP-1 retry wrapper.
-   */
-  async _sendMessageOnce(message) {
-    return new Promise((resolve, reject) => {
-      // FIX 1: "settled" flag prevents ghost actions from the timeout/callback race.
-      // When the timeout fires first, we reject — but chrome.tabs.sendMessage callback
-      // can still arrive later. Without this flag, both resolve AND reject would fire,
-      // or the late callback would trigger side-effects on an already-abandoned promise.
-      let settled = false;
-
-      const currentTimeout = this._messageTimeout;
-      const timeoutId = setTimeout(() => {
-        if (settled) return;
-        settled = true;
-        // Adaptive timeout: increase for next attempt (Chrome may be throttling)
-        if (this._messageTimeout < this._messageTimeoutMax) {
-          this._messageTimeout = Math.min(this._messageTimeout + this._messageTimeoutStep, this._messageTimeoutMax);
-          console.log(`[BotEngine] Timeout → adaptive increase to ${this._messageTimeout}ms`);
-        }
-        reject(new Error(`Content script message timed out after ${currentTimeout}ms`));
-      }, currentTimeout);
-
-      try {
-        chrome.tabs.sendMessage(this.activeTabId, message, (response) => {
-          if (settled) {
-            // Ghost callback — timeout already fired. Log and discard.
-            console.warn('[BotEngine] Ghost callback after timeout for:', message.type || message.action);
-            return;
-          }
-          settled = true;
-          clearTimeout(timeoutId);
-
-          if (chrome.runtime.lastError) {
-            reject(new Error(chrome.runtime.lastError.message));
-            return;
-          }
-
-          // Adaptive timeout: reset to base after successful response
-          if (this._messageTimeout > this._messageTimeoutBase) {
-            this._messageTimeout = this._messageTimeoutBase;
-          }
-
-          resolve(response);
-        });
-      } catch (err) {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timeoutId);
-        reject(err);
-      }
-    });
+    return this._bridge.send(message);
   }
 
   // ---------------------------------------------------------------------------
@@ -1419,6 +1096,7 @@ class BotEngine {
       lastAIAction: this.decisionEngine ? this.decisionEngine.lastAIAction : null,
       cooldowns: this.decisionEngine ? Object.fromEntries(this.decisionEngine.cooldowns) : {},
       currentPhase: this.decisionEngine ? this.decisionEngine.currentPhase : null,
+      plannerState: this.decisionEngine ? this.decisionEngine.getPlannerState() : null,
       prereqResolutions: this.decisionEngine ? this.decisionEngine.lastPrereqResolutions : [],
       executionLocked: this._executionLocked,
       cycleLock: this._cycleLock,
@@ -1546,29 +1224,20 @@ class BotEngine {
   }
 
   // ---------------------------------------------------------------------------
-  // Page State Assertion (FIX 9)
+  // Page State Assertion (FIX 9) — delegates to ContentScriptBridge
   // ---------------------------------------------------------------------------
 
   /**
    * Verify the browser is on the expected page type after navigation.
-   * Sends a lightweight SCAN and compares the page type.
+   * Delegates to ContentScriptBridge.verifyPage().
+   *
+   * Kept as a thin wrapper so task handlers can continue calling engine._verifyNavigation().
+   *
    * @param {string} expectedPage - Expected value from domScanner.detectPage()
    * @returns {Promise<boolean>} true if on correct page
    */
   async _verifyNavigation(expectedPage) {
-    try {
-      const resp = await this.sendToContentScript({ type: 'SCAN' });
-      if (!resp || !resp.success || !resp.data) return false;
-      const actual = resp.data.page || 'unknown';
-      if (actual === expectedPage) return true;
-      this._slog('WARN', 'Page assertion failed: expected ' + expectedPage + ', got ' + actual, {
-        expectedPage, actualPage: actual
-      });
-      return false;
-    } catch (e) {
-      this._slog('WARN', 'Page assertion error: ' + e.message);
-      return false;
-    }
+    return this._bridge.verifyPage(expectedPage);
   }
 
   // ---------------------------------------------------------------------------
@@ -1690,93 +1359,15 @@ class BotEngine {
 
   /**
    * Wait until the content script in the active tab is ready and responding.
-   * Used after page-reload navigations (clicking links that cause full page load)
-   * to avoid sending messages before the new content script has registered.
+   * Delegates to ContentScriptBridge.waitForReady().
    *
-   * Uses a direct chrome.tabs.sendMessage ping (bypasses sendToContentScript's
-   * own retry layer which would eat the timeout budget with 3s inner retries).
+   * Kept as a thin wrapper so task handlers can continue calling engine._waitForContentScript().
    *
    * @param {number} maxWaitMs - Maximum time to wait (default 10000ms)
    * @returns {Promise<boolean>} true if content script responded, false if timed out
    */
   async _waitForContentScript(maxWaitMs) {
-    maxWaitMs = maxWaitMs || 10000;
-    var start = Date.now();
-    var attempts = 0;
-    var tabId = this.activeTabId;
-
-    if (!tabId) {
-      console.warn('[BotEngine] _waitForContentScript: no activeTabId');
-      return false;
-    }
-
-    // First, check if the tab still exists and is loading/complete
-    try {
-      var tabInfo = await new Promise(function (resolve) {
-        chrome.tabs.get(tabId, function (tab) {
-          if (chrome.runtime.lastError) resolve(null);
-          else resolve(tab);
-        });
-      });
-      if (!tabInfo) {
-        console.warn('[BotEngine] _waitForContentScript: tab ' + tabId + ' no longer exists');
-        return false;
-      }
-      if (tabInfo.status === 'loading') {
-        // Tab is still loading — give extra time for document_idle content script injection
-        console.log('[BotEngine] Tab is still loading, waiting for document_idle...');
-      }
-    } catch (e) {
-      // Non-critical — proceed with polling
-    }
-
-    while (Date.now() - start < maxWaitMs) {
-      attempts++;
-      try {
-        // Direct lightweight ping — bypass sendToContentScript's retry wrapper
-        // to avoid wasting timeout budget on inner 1s+2s retries.
-        var ping = await new Promise(function (resolve) {
-          var timeoutId = setTimeout(function () {
-            resolve(null);
-          }, 1500); // 1.5s per ping attempt max
-
-          try {
-            chrome.tabs.sendMessage(tabId, {
-              type: 'GET_STATE', params: { property: 'page' }
-            }, function (response) {
-              clearTimeout(timeoutId);
-              if (chrome.runtime.lastError) {
-                // "Receiving end does not exist" = content script not injected yet
-                resolve(null);
-              } else {
-                resolve(response);
-              }
-            });
-          } catch (e) {
-            clearTimeout(timeoutId);
-            resolve(null);
-          }
-        });
-
-        if (ping && ping.success) {
-          if (attempts > 1) {
-            console.log('[BotEngine] Content script ready after ' + attempts + ' attempts (' + (Date.now() - start) + 'ms)');
-          }
-          return true;
-        }
-      } catch (e) {
-        // Unexpected error — continue polling
-      }
-
-      // Short wait between attempts — more frequent polling = faster detection
-      var elapsed = Date.now() - start;
-      if (elapsed >= maxWaitMs) break;
-      var waitMs = Math.min(800, maxWaitMs - elapsed);
-      await new Promise(function (r) { setTimeout(r, waitMs); });
-    }
-
-    console.warn('[BotEngine] Content script not ready after ' + maxWaitMs + 'ms (' + attempts + ' attempts)');
-    return false;
+    return this._bridge.waitForReady(maxWaitMs);
   }
 
   /**
@@ -1870,22 +1461,16 @@ class BotEngine {
     try {
       // For building tasks, detour through dorf2 to refresh cached buildings
       if (taskType === 'upgrade_building' || taskType === 'build_new') {
-        await this._randomDelay();
-        await this.sendToContentScript({
-          type: 'EXECUTE', action: 'navigateTo', params: { page: 'dorf2' }
-        });
-        await this._waitForContentScript(10000);
-        var dorf2Resp = await this.sendToContentScript({ type: 'SCAN' });
-        if (dorf2Resp && dorf2Resp.success && dorf2Resp.data && dorf2Resp.data.buildings && dorf2Resp.data.buildings.length > 0) {
-          this._cachedBuildings = dorf2Resp.data.buildings;
-          this._buildingsScanCycle = this._cycleCounter;
-        }
+        await this._navigationManager.refreshBuildingsDetour(
+          this._cycleCounter, () => this._randomDelay()
+        );
       }
 
       await this._randomDelay();
       await this.sendToContentScript({
         type: 'EXECUTE', action: 'navigateTo', params: { page: 'dorf1' }
       });
+      await this._bridge.waitForReady(10000);
       console.log('[BotEngine] Returned to dorf1');
     } catch (err) {
       // Non-critical — just log and continue
@@ -1959,419 +1544,9 @@ class BotEngine {
     }
   }
 
-  /**
-   * When an upgrade fails due to insufficient resources, try claiming
-   * hero inventory resource items as a fallback.
-   * @param {object} failedTask - The task that failed
-   */
-  async _tryClaimHeroResources(failedTask) {
-    try {
-      // Pre-check: hero must be at home (not on adventure or dead)
-      const heroStatus = this.gameState?.hero;
-      if (heroStatus && (heroStatus.isAway || heroStatus.isDead)) {
-        TravianLogger.log('INFO', '[BotEngine] Hero not available for resource claim — skipping');
-        return false;
-      }
-
-      TravianLogger.log('INFO', '[BotEngine] Attempting to claim hero inventory resources...');
-
-      // Calculate deficit: what resources are we short of?
-      // Must know the exact deficit BEFORE navigating — if we can't calculate it,
-      // skip entirely to avoid the dialog default (fills warehouse to max capacity).
-      const deficit = this._calcResourceDeficit(failedTask);
-      if (!deficit) {
-        TravianLogger.log('WARN', '[BotEngine] Cannot calculate resource deficit — skipping hero claim to avoid waste');
-        return false;
-      }
-      TravianLogger.log('DEBUG', '[BotEngine] Resource deficit: ' + JSON.stringify(deficit));
-
-      // Navigate directly to hero inventory (single step — old code did
-      // hero → heroInventory which wasted ~15s on a redundant page reload).
-      // navigateTo('heroInventory') tries a[href="/hero/inventory"] first (which
-      // won't match because hero tabs have no href), then falls back to
-      // window.location.href = '/hero/inventory' which works reliably.
-      await this.sendToContentScript({
-        type: 'EXECUTE', action: 'navigateTo', params: { page: 'heroInventory' }
-      });
-      await this._randomDelay();
-      var invReady = await this._waitForContentScript(15000);
-      if (!invReady) {
-        TravianLogger.log('WARN', '[BotEngine] Hero inventory page did not load in time');
-        return false;
-      }
-
-      // Scan inventory items (also detects UI version)
-      const scanResult = await this.sendToContentScript({
-        type: 'EXECUTE', action: 'scanHeroInventory', params: {}
-      });
-
-      if (!scanResult || !scanResult.success || !scanResult.data) {
-        TravianLogger.log('WARN', '[BotEngine] No hero inventory data');
-        return false;
-      }
-
-      // Robust data extraction: scanResult.data may contain items directly
-      // or nested under scanResult.data.data (double-wrapped response)
-      const rawData = scanResult.data || {};
-      const items = rawData.items || (rawData.data && rawData.data.items) || [];
-      const uiVersion = rawData.uiVersion || (rawData.data && rawData.data.uiVersion) || 'v1';
-
-      if (items.length === 0) {
-        TravianLogger.log('WARN', '[BotEngine] Hero inventory scan returned no items');
-        return false;
-      }
-
-      const usableResources = items.filter(item => item.isResource && item.hasUseButton);
-
-      if (usableResources.length === 0) {
-        TravianLogger.log('INFO', '[BotEngine] No claimable resource items in hero inventory');
-        return false;
-      }
-
-      // ── Route: V2 bulk transfer (post-Changelog-367) vs V1 one-at-a-time ──
-      if (uiVersion === 'v2') {
-        return await this._claimHeroResourcesV2(deficit, usableResources);
-      }
-      return await this._claimHeroResourcesV1(deficit, usableResources);
-
-    } catch (err) {
-      TravianLogger.log('WARN', '[BotEngine] Hero resource claim failed: ' + err.message);
-      return false;
-    }
-  }
-
-  /**
-   * V1 hero resource claim: one resource at a time via per-item dialog.
-   * (Pre-Changelog-367 legacy path)
-   */
-  async _claimHeroResourcesV1(deficit, usableResources) {
-    const itemClassToRes = {
-      item145: 'wood', item176: 'wood',
-      item146: 'clay', item177: 'clay',
-      item147: 'iron', item178: 'iron',
-      item148: 'crop', item179: 'crop'
-    };
-
-    let claimed = false;
-    for (const item of usableResources) {
-      // Determine resource type from itemClass
-      let resType = null;
-      const cls = item.itemClass || '';
-      for (const [pattern, type] of Object.entries(itemClassToRes)) {
-        if (cls.indexOf(pattern) !== -1) { resType = type; break; }
-      }
-      if (!resType) continue;
-
-      // Calculate exact amount needed for THIS resource type
-      const needed = deficit[resType] || 0;
-      if (needed <= 0) {
-        TravianLogger.log('DEBUG', `[BotEngine] Skipping ${resType} — not short`);
-        continue;
-      }
-
-      // Cap at available amount (don't try to transfer more than hero has)
-      const available = parseInt(item.count) || 0;
-      const transferAmount = Math.min(Math.ceil(needed), available);
-      if (transferAmount <= 0) {
-        TravianLogger.log('DEBUG', `[BotEngine] Skipping ${resType} — hero has none available`);
-        continue;
-      }
-
-      TravianLogger.log('INFO', `[BotEngine] V1 claiming ${transferAmount} ${resType} from hero (deficit=${Math.ceil(needed)}, heroHas=${available})`);
-
-      const useResult = await this.sendToContentScript({
-        type: 'EXECUTE', action: 'useHeroItem',
-        params: { itemIndex: item.index, amount: transferAmount }
-      });
-
-      if (useResult && useResult.success) {
-        TravianLogger.log('INFO', `[BotEngine] ${resType} claimed (${transferAmount} resources)`);
-        claimed = true;
-      } else {
-        TravianLogger.log('WARN', `[BotEngine] Failed to claim ${resType} from hero`);
-      }
-
-      await this._randomDelay();
-    }
-
-    if (claimed) {
-      TravianLogger.log('INFO', '[BotEngine] V1 hero resource(s) claimed successfully');
-    }
-    return claimed;
-  }
-
-  /**
-   * V2 hero resource claim: bulk transfer all resources in one action.
-   * (Post-Changelog-367 — transfers all 4 resource types at once)
-   */
-  async _claimHeroResourcesV2(deficit, usableResources) {
-    const itemClassToRes = {
-      item145: 'wood', item176: 'wood',
-      item146: 'clay', item177: 'clay',
-      item147: 'iron', item178: 'iron',
-      item148: 'crop', item179: 'crop'
-    };
-
-    // Build amounts map: for each resource type, min(deficit, available)
-    const amounts = { wood: 0, clay: 0, iron: 0, crop: 0 };
-    for (const item of usableResources) {
-      let resType = null;
-      const cls = item.itemClass || '';
-      for (const [pattern, type] of Object.entries(itemClassToRes)) {
-        if (cls.indexOf(pattern) !== -1) { resType = type; break; }
-      }
-      if (!resType) continue;
-
-      const needed = deficit[resType] || 0;
-      if (needed <= 0) continue;
-
-      const available = parseInt(item.count) || 0;
-      const transferAmount = Math.min(Math.ceil(needed), available);
-      if (transferAmount <= 0) continue;
-
-      // Accumulate (in case multiple items map to same resource type)
-      amounts[resType] = Math.max(amounts[resType], transferAmount);
-    }
-
-    const totalTransfer = amounts.wood + amounts.clay + amounts.iron + amounts.crop;
-    if (totalTransfer <= 0) {
-      TravianLogger.log('INFO', '[BotEngine] V2: no resources to transfer');
-      return false;
-    }
-
-    TravianLogger.log('INFO', `[BotEngine] V2 bulk transfer: ${JSON.stringify(amounts)}`);
-
-    const bulkResult = await this.sendToContentScript({
-      type: 'EXECUTE', action: 'useHeroItemBulk',
-      params: { amounts: amounts }
-    });
-
-    if (bulkResult && bulkResult.success) {
-      TravianLogger.log('INFO', '[BotEngine] V2 bulk hero resource claim successful');
-      return true;
-    } else {
-      // V2 detected but bulk transfer failed — V1 won't work on the new UI either
-      // (old .heroConsumablesPopup dialog no longer exists on V2 servers)
-      const reason = (bulkResult && bulkResult.reason) || 'unknown';
-      TravianLogger.log('WARN', '[BotEngine] V2 bulk transfer failed: ' + reason);
-      return false;
-    }
-  }
-
-  /**
-   * Check if hero resources should be proactively claimed.
-   * Triggers when any resource is below 5% of warehouse capacity,
-   * hero is at home, and cooldown has elapsed.
-   */
-  _shouldProactivelyClaimHero() {
-    // Cooldown check
-    if (this._heroClaimCooldown && Date.now() < this._heroClaimCooldown) return false;
-
-    // Hero must be home
-    const hero = this.gameState && this.gameState.hero;
-    if (hero && (hero.isAway || hero.isDead)) return false;
-
-    const res = this.gameState && this.gameState.resources;
-    const cap = this.gameState && this.gameState.resourceCapacity;
-    if (!res || !cap) return false;
-
-    const wCap = cap.warehouse || 0;
-    const gCap = cap.granary || wCap;
-    if (wCap === 0) return false;
-
-    // Configurable trigger threshold (default 20%)
-    const hc = this.config && this.config.heroConfig;
-    var threshold = (hc && hc.claimThreshold != null) ? hc.claimThreshold / 100 : 0.20;
-    return (res.wood || 0) < wCap * threshold ||
-           (res.clay || 0) < wCap * threshold ||
-           (res.iron || 0) < wCap * threshold ||
-           (res.crop || 0) < gCap * threshold;
-  }
-
-  /**
-   * Proactively claim hero resources to fill low resource types.
-   * Navigates to hero inventory, scans items, and transfers resources
-   * for any type below 50% of warehouse capacity.
-   * @returns {boolean} true if any resources were claimed
-   */
-  async _proactiveHeroClaim() {
-    try {
-      const res = this.gameState.resources;
-      const cap = this.gameState.resourceCapacity;
-      const wCap = cap.warehouse || 800;
-      const gCap = cap.granary || wCap;
-      // Configurable fill target (default 50%)
-      const hc = this.config && this.config.heroConfig;
-      const targetFill = (hc && hc.claimFillTarget != null) ? hc.claimFillTarget / 100 : 0.50;
-
-      // Calculate how much of each resource we need to reach targetFill
-      const deficit = {
-        wood: Math.max(0, Math.floor(wCap * targetFill) - (res.wood || 0)),
-        clay: Math.max(0, Math.floor(wCap * targetFill) - (res.clay || 0)),
-        iron: Math.max(0, Math.floor(wCap * targetFill) - (res.iron || 0)),
-        crop: Math.max(0, Math.floor(gCap * targetFill) - (res.crop || 0))
-      };
-
-      const totalDeficit = deficit.wood + deficit.clay + deficit.iron + deficit.crop;
-      if (totalDeficit <= 0) return false;
-
-      TravianLogger.log('DEBUG', '[BotEngine] Proactive hero claim deficit: ' + JSON.stringify(deficit));
-
-      // Navigate directly to hero inventory (single step)
-      await this.sendToContentScript({
-        type: 'EXECUTE', action: 'navigateTo', params: { page: 'heroInventory' }
-      });
-      await this._randomDelay();
-      var invReady = await this._waitForContentScript(15000);
-      if (!invReady) {
-        TravianLogger.log('WARN', '[BotEngine] Hero inventory did not load for proactive claim');
-        return false;
-      }
-
-      // Scan inventory (also detects UI version)
-      const scanResult = await this.sendToContentScript({
-        type: 'EXECUTE', action: 'scanHeroInventory', params: {}
-      });
-      if (!scanResult || !scanResult.success || !scanResult.data) {
-        TravianLogger.log('WARN', '[BotEngine] No hero inventory data for proactive claim');
-        return false;
-      }
-      const rawData = scanResult.data || {};
-      const items = rawData.items || (rawData.data && rawData.data.items) || [];
-      const uiVersion = rawData.uiVersion || (rawData.data && rawData.data.uiVersion) || 'v1';
-      const usableResources = items.filter(item => item.isResource && item.hasUseButton);
-      if (usableResources.length === 0) {
-        TravianLogger.log('INFO', '[BotEngine] No hero resource items for proactive claim');
-        return false;
-      }
-
-      // Step 4: Route to V1 or V2 claim (shared with _tryClaimHeroResources)
-      TravianLogger.log('INFO', `[BotEngine] Proactive claim using ${uiVersion} path`);
-      if (uiVersion === 'v2') {
-        return await this._claimHeroResourcesV2(deficit, usableResources);
-      }
-      return await this._claimHeroResourcesV1(deficit, usableResources);
-    } catch (err) {
-      TravianLogger.log('WARN', '[BotEngine] Proactive hero claim error: ' + err.message);
-      return false;
-    }
-  }
-
-  /**
-   * Calculate how much of each resource we're short of for a failed task.
-   * Uses TravianGameData to look up building costs and compares with current resources.
-   * @param {object} task - The failed task
-   * @returns {object|null} { wood, clay, iron, crop } deficit (positive = need more), or null if can't calculate
-   */
-  _calcResourceDeficit(task) {
-    try {
-      const GameData = typeof self !== 'undefined' && self.TravianGameData;
-      if (!GameData || !this.gameState || !this.gameState.resources) return null;
-
-      const current = this.gameState.resources;
-      let cost = null;
-
-      if (task.type === 'build_new' && task.params && task.params.gid) {
-        // New building: level 0 → 1
-        const key = GameData.gidToKey(Number(task.params.gid));
-        if (key) cost = GameData.getUpgradeCost(key, 0);
-
-      } else if (task.type === 'upgrade_resource' && task.params) {
-        // Upgrade resource field: params have { fieldId } — look up from gameState
-        // Note: domScanner.getResourceFields returns { id, type, level } but no gid.
-        // We map type back to gid: wood→1, clay→2, iron→3, crop→4.
-        const resTypeToGid = { wood: 1, clay: 2, iron: 3, crop: 4 };
-        const fieldId = task.params.fieldId || task.params.slot;
-        let gid = task.params.gid; // may exist in some cases
-        let level = task.params.level || 0;
-
-        // Look up field in gameState.resourceFields (from domScanner.getFullState)
-        const fieldArray = this.gameState.resourceFields || this.gameState.resources_fields || [];
-        if (!gid && fieldId && fieldArray.length > 0) {
-          const field = fieldArray.find(function (f) {
-            return f.id == fieldId || f.position == fieldId;
-          });
-          if (field) {
-            // field.type is "wood"/"clay"/"iron"/"crop", convert to gid
-            gid = field.gid || resTypeToGid[field.type] || null;
-            level = field.level || 0;
-          }
-        }
-
-        if (gid) {
-          const key = GameData.gidToKey(Number(gid));
-          if (key) cost = GameData.getUpgradeCost(key, level);
-        }
-
-      } else if (task.type === 'upgrade_building' && task.params) {
-        // Upgrade building: params have { slot } — look up gid from gameState
-        const slot = task.params.slot || task.params.buildingSlot;
-        let gid = task.params.gid || task.params.buildingGid;
-        let level = task.params.level || task.params.currentLevel || 0;
-
-        if (!gid && slot && this.gameState.buildings) {
-          // Note: domScanner.getBuildings returns { id: gid, slot: slotId }
-          // where 'id' is the building type (gid), not the slot number.
-          // Match by slot only to avoid false matches.
-          const building = this.gameState.buildings.find(function (b) {
-            return b.slot == slot;
-          });
-          if (building) {
-            gid = building.id; // building.id IS the gid (building type)
-            level = building.level || 0;
-          }
-        }
-
-        if (gid) {
-          const key = GameData.gidToKey(Number(gid));
-          if (key) cost = GameData.getUpgradeCost(key, level);
-        }
-      }
-
-      if (!cost) {
-        // Fallback: when we can't look up the exact cost, use a capacity-based
-        // deficit instead of returning null (which would block the claim entirely).
-        // Fill each resource to 50% of warehouse capacity — enough for most upgrades.
-        TravianLogger.log('WARN', '[BotEngine] _calcResourceDeficit: could not determine cost for ' + task.type + ' ' + JSON.stringify(task.params) + ' — using capacity-based fallback');
-        const cap = this.gameState.resourceCapacity || {};
-        const wCap = cap.warehouse || 8000;
-        const gCap = cap.granary || wCap;
-        const targetFill = 0.5;
-        return {
-          wood: Math.max(0, Math.floor(wCap * targetFill) - (current.wood || 0)),
-          clay: Math.max(0, Math.floor(wCap * targetFill) - (current.clay || 0)),
-          iron: Math.max(0, Math.floor(wCap * targetFill) - (current.iron || 0)),
-          crop: Math.max(0, Math.floor(gCap * targetFill) - (current.crop || 0))
-        };
-      }
-
-      const deficit = {
-        wood: Math.max(0, (cost.wood || 0) - (current.wood || 0)),
-        clay: Math.max(0, (cost.clay || 0) - (current.clay || 0)),
-        iron: Math.max(0, (cost.iron || 0) - (current.iron || 0)),
-        crop: Math.max(0, (cost.crop || 0) - (current.crop || 0))
-      };
-      TravianLogger.log('DEBUG', '[BotEngine] _calcResourceDeficit: cost=' + JSON.stringify(cost) + ' current=' + JSON.stringify(current) + ' deficit=' + JSON.stringify(deficit));
-      return deficit;
-    } catch (e) {
-      TravianLogger.log('WARN', '[BotEngine] _calcResourceDeficit error: ' + e.message);
-      // Even on exception, try capacity-based fallback
-      try {
-        const current2 = (this.gameState && this.gameState.resources) || {};
-        const cap2 = (this.gameState && this.gameState.resourceCapacity) || {};
-        const wCap2 = cap2.warehouse || 8000;
-        const gCap2 = cap2.granary || wCap2;
-        return {
-          wood: Math.max(0, Math.floor(wCap2 * 0.5) - (current2.wood || 0)),
-          clay: Math.max(0, Math.floor(wCap2 * 0.5) - (current2.clay || 0)),
-          iron: Math.max(0, Math.floor(wCap2 * 0.5) - (current2.iron || 0)),
-          crop: Math.max(0, Math.floor(gCap2 * 0.5) - (current2.crop || 0))
-        };
-      } catch (_) {
-        return null;
-      }
-    }
-  }
+  // Hero resource claiming methods (_tryClaimHeroResources, _claimHeroResourcesV1,
+  // _claimHeroResourcesV2, _shouldProactivelyClaimHero, _proactiveHeroClaim,
+  // _calcResourceDeficit) have been extracted to core/heroManager.js
 
   /**
    * Adjust the main loop interval based on current activity level.
