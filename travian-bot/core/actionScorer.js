@@ -130,7 +130,11 @@
         if (bld.empty || bld.upgrading) continue;
 
         const gid = bld.id || bld.gid;
-        const targetLevel = config.buildingTargets?.[`b${gid}`] || null;
+        // Popup saves upgradeTargets keyed by slot string: { "18": { enabled: true, targetLevel: 10 } }
+        // Legacy buildingTargets['b'+gid] kept for backward compat
+        const slotTarget = config.upgradeTargets?.[String(bld.slot)];
+        const targetLevel = (slotTarget && slotTarget.enabled) ? slotTarget.targetLevel
+                          : config.buildingTargets?.[`b${gid}`] || null;
         if (targetLevel && bld.level >= targetLevel) continue;
 
         // Cost-aware scoring with utility multipliers
@@ -201,7 +205,8 @@
 
       const lastFarm = state.lastFarmTime || 0;
       const elapsed = Date.now() - lastFarm;
-      const interval = (farmConfig.farmInterval || 300) * 1000;
+      // Popup saves intervalMs (already in ms); legacy farmInterval is in seconds
+      const interval = farmConfig.intervalMs || (farmConfig.farmInterval || 300) * 1000;
       if (elapsed < interval) return actions;
 
       const outgoing = state.troopMovements?.outgoing || 0;

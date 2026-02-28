@@ -53,7 +53,9 @@
       cranny:        { wood: 40,  clay: 50,  iron: 30,  crop: 10,  time: 500,  category: 'defense',  gid: 23 },
       rallyPoint:    { wood: 110, clay: 160, iron: 90,  crop: 70,  time: 2400, category: 'military', gid: 16 },
       townHall:      { wood: 1250,clay: 1110,iron: 1260,crop: 600, time: 15000,category: 'infra',    gid: 24 },
-      wall:          { wood: 120, clay: 200, iron: 0,   crop: 80,  time: 2000, category: 'defense',  gid: 31 },
+      wall:          { wood: 120, clay: 200, iron: 0,   crop: 80,  time: 2000, category: 'defense',  gid: 31 }, // City Wall (Roman)
+      earthWall:     { wood: 120, clay: 200, iron: 0,   crop: 80,  time: 2000, category: 'defense',  gid: 32 }, // Earth Wall (Gaul)
+      palisade:      { wood: 160, clay: 100, iron: 80,  crop: 60,  time: 1800, category: 'defense',  gid: 33 }, // Palisade (Teuton)
       sawmill:       { wood: 520, clay: 380, iron: 290, crop: 90,  time: 6000, category: 'bonus',    gid: 5 },
       brickyard:     { wood: 440, clay: 480, iron: 320, crop: 50,  time: 5600, category: 'bonus',    gid: 6 },
       ironFoundry:   { wood: 200, clay: 450, iron: 510, crop: 120, time: 7200, category: 'bonus',    gid: 7 },

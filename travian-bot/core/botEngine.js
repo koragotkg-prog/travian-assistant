@@ -278,13 +278,21 @@ class BotEngine {
             for (const task of savedState.taskQueue) {
               // Only restore tasks that were pending or running (running gets reset to pending)
               if (task.status === 'pending' || task.status === 'running') {
-                this.taskQueue.add(
+                const newId = this.taskQueue.add(
                   task.type,
                   task.params || {},
                   task.priority || 5,
                   task.villageId || null,
                   task.scheduledFor || null
                 );
+                // Preserve retry metadata so tasks don't re-exhaust retries after SW restart
+                if (newId && task.retries > 0) {
+                  const restored = this.taskQueue.queue.find(t => t.id === newId);
+                  if (restored) {
+                    restored.retries = task.retries;
+                    restored.maxRetries = task.maxRetries || this.taskQueue.maxRetries;
+                  }
+                }
                 restoredCount++;
               }
             }

@@ -111,14 +111,18 @@
         if (!engine.config.farmConfig) engine.config.farmConfig = {};
         engine.config.farmConfig._taskFarmListId = task.params.farmListId;
       }
-      var farmResult = await engine._farmManager.executeFarmCycle(
-        engine.config,
-        engine.gameState,
-        function(msg) { return engine.sendToContentScript(msg); },
-        function(ms) { return engine._waitForContentScript(ms); }
-      );
-      // Clean up task-specific param
-      if (engine.config.farmConfig) delete engine.config.farmConfig._taskFarmListId;
+      var farmResult;
+      try {
+        farmResult = await engine._farmManager.executeFarmCycle(
+          engine.config,
+          engine.gameState,
+          function(msg) { return engine.sendToContentScript(msg); },
+          function(ms) { return engine._waitForContentScript(ms); }
+        );
+      } finally {
+        // Always clean up task-specific param, even if executeFarmCycle throws
+        if (engine.config.farmConfig) delete engine.config.farmConfig._taskFarmListId;
+      }
       if (farmResult && (farmResult.success || farmResult.recovered)) {
         // Treat recovered cycles as soft success — don't eat retry budget
         engine._lastFarmTime = Date.now();
@@ -185,9 +189,9 @@
     // claim_hero_resources — Navigate to hero page, use resource item
     // -----------------------------------------------------------------------
     claim_hero_resources: async function(engine, task) {
-      // Navigate to hero page and claim resource items
+      // Navigate to hero INVENTORY page (not hero overview) where consumable items are
       await engine.sendToContentScript({
-        type: 'EXECUTE', action: 'navigateTo', params: { page: 'hero' }
+        type: 'EXECUTE', action: 'navigateTo', params: { page: 'heroInventory' }
       });
       await engine._randomDelay();
       await engine._waitForContentScript(15000);

@@ -295,8 +295,12 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
         case 'STOP_BOT': {
           var stopInst = resolveInstance(message, sender);
           if (stopInst && stopInst.engine.running) {
-            stopInst.engine.stop();
-            notify('Stopped', 'Bot stopped on ' + stopInst.serverKey);
+            stopInst.engine.stop().then(function() {
+              notify('Stopped', 'Bot stopped on ' + stopInst.serverKey);
+            }).catch(function(err) {
+              console.error('[SW] Error during STOP_BOT:', err);
+              notify('Stopped', 'Bot stopped on ' + stopInst.serverKey + ' (with errors)');
+            });
           }
           sendResponse({ success: true, data: stopInst ? stopInst.engine.getStatus() : null });
           break;
