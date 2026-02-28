@@ -596,6 +596,29 @@
     getConstructionQueue: function () {
       try {
         var items = [];
+        var now = Date.now();
+
+        // Helper: parse timer text "H:MM:SS" or "MM:SS" into remaining seconds
+        function parseTimerText(text) {
+          if (!text) return 0;
+          var parts = text.replace(/[^\d:]/g, '').split(':').map(Number);
+          if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+          if (parts.length === 2) return parts[0] * 60 + parts[1];
+          return parts[0] || 0;
+        }
+
+        // Helper: extract seconds remaining from a timer element.
+        // Tries the "value" attribute first (Travian sometimes stores seconds there),
+        // then falls back to parsing the displayed text.
+        function extractSecondsRemaining(timerEl) {
+          if (!timerEl) return 0;
+          var valAttr = timerEl.getAttribute('value');
+          if (valAttr) {
+            var parsed = parseInt(valAttr, 10);
+            if (parsed > 0) return parsed;
+          }
+          return parseTimerText(timerEl.textContent.trim());
+        }
 
         // Method 1: Build duration elements
         var queueElements = trySelectorAll([
@@ -616,9 +639,14 @@
           var timerEl = qs('.timer', el) || qs('span.timer', el) || el;
           var finishTime = timerEl ? timerEl.textContent.trim() : '';
 
+          // Compute absolute finish timestamp (ms since epoch)
+          var secsLeft = extractSecondsRemaining(timerEl);
+          var finishTimestamp = secsLeft > 0 ? now + secsLeft * 1000 : 0;
+
           items.push({
             name: name,
-            finishTime: finishTime
+            finishTime: finishTime,
+            finishTimestamp: finishTimestamp
           });
         });
 
@@ -634,10 +662,14 @@
             var nameEl = qs('.name', row) || qs('a', row);
             var timeEl = qs('.timer', row) || qs('.buildDuration', row);
 
+            var secsLeft = extractSecondsRemaining(timeEl);
+            var finishTimestamp = secsLeft > 0 ? now + secsLeft * 1000 : 0;
+
             if (nameEl || timeEl) {
               items.push({
                 name: nameEl ? nameEl.textContent.trim() : 'Unknown',
-                finishTime: timeEl ? timeEl.textContent.trim() : ''
+                finishTime: timeEl ? timeEl.textContent.trim() : '',
+                finishTimestamp: finishTimestamp
               });
             }
           });
@@ -650,10 +682,20 @@
           maxCount = 2;
         }
 
+        // Compute earliest finish timestamp across all queue items
+        var earliestFinish = 0;
+        for (var i = 0; i < items.length; i++) {
+          var ts = items[i].finishTimestamp;
+          if (ts > 0 && (earliestFinish === 0 || ts < earliestFinish)) {
+            earliestFinish = ts;
+          }
+        }
+
         return {
           count: items.length,
           maxCount: maxCount,
-          items: items
+          items: items,
+          earliestFinishTime: earliestFinish
         };
       } catch (e) {
         console.warn('[TravianScanner] getConstructionQueue error:', e);

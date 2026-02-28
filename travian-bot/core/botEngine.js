@@ -132,10 +132,10 @@ class BotEngine {
 
     // Cached buildings data from dorf2 scans.
     // getBuildings() only works on dorf2 but the bot rests on dorf1.
-    // We cache the last dorf2 scan and refresh every N cycles.
+    // We cache the last dorf2 scan and refresh when a build timer expires or after max staleness.
     this._cachedBuildings = null;
     this._buildingsScanCycle = 0;       // last cycle that scanned dorf2
-    this._buildingsScanInterval = 3;    // rescan dorf2 every N cycles
+    this._buildQueueEarliestFinish = 0; // ms epoch: when the earliest queued build completes
   }
 
   // ---------------------------------------------------------------------------
@@ -600,13 +600,13 @@ class BotEngine {
         }
       }
 
-      // ── Dorf2 buildings scan (cached, refreshed every N cycles) ──
+      // ── Dorf2 buildings scan (event-driven) ──
       // getBuildings() only returns data on dorf2 pages. Since the bot rests
       // on dorf1, buildings[] is always empty unless we navigate to dorf2.
-      // We do this periodically (every _buildingsScanInterval cycles) and
-      // cache the result so the decision engine can create upgrade_building tasks.
+      // We refresh when a build queue timer expires or after max staleness,
+      // rather than polling every N cycles, to avoid unnecessary navigations.
       var needBuildingScan = (this.config.autoUpgradeBuildings || this.config.autoBuildingUpgrade) &&
-        (!this._cachedBuildings || (this._cycleCounter - this._buildingsScanCycle) >= this._buildingsScanInterval);
+        this._shouldRefreshBuildings();
 
       if (needBuildingScan) {
         try {
@@ -624,6 +624,11 @@ class BotEngine {
             // Also update construction queue from dorf2 (more accurate)
             if (dorf2Scan.data.constructionQueue) {
               this.gameState.constructionQueue = dorf2Scan.data.constructionQueue;
+              // Capture earliest finish time so _shouldRefreshBuildings() can
+              // trigger the next scan when a build completes.
+              this._buildQueueEarliestFinish = dorf2Scan.data.constructionQueue.earliestFinishTime || 0;
+            } else {
+              this._buildQueueEarliestFinish = 0;
             }
           }
         } catch (e) {
@@ -1528,6 +1533,39 @@ class BotEngine {
   }
 
   // ---------------------------------------------------------------------------
+  // Dorf2 Scan Heuristics
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Decide whether to refresh cached buildings from dorf2.
+   * Event-driven: triggers when a build queue timer has expired since the last
+   * scan, or after a maximum staleness window (20 cycles) as a safety net.
+   * @returns {boolean}
+   */
+  _shouldRefreshBuildings() {
+    // Always scan if we have no cache at all
+    if (!this._cachedBuildings) return true;
+
+    // Check if any build queue timer has expired since last scan.
+    // _buildQueueEarliestFinish is an absolute ms-epoch timestamp captured
+    // when we last scanned dorf2's construction queue.
+    if (this._buildQueueEarliestFinish > 0 && Date.now() >= this._buildQueueEarliestFinish) {
+      return true;
+    }
+
+    // Also check the live constructionQueue from the most recent dorf1 scan —
+    // it may have been updated more recently than the cached dorf2 value.
+    var queue = this.gameState && this.gameState.constructionQueue;
+    if (queue && queue.earliestFinishTime > 0 && Date.now() >= queue.earliestFinishTime) {
+      return true;
+    }
+
+    // Fallback: max staleness of 20 cycles (~5-10 min at typical intervals)
+    var staleness = this._cycleCounter - this._buildingsScanCycle;
+    return staleness >= 20;
+  }
+
+  // ---------------------------------------------------------------------------
   // Structured Logging (FIX 8)
   // ---------------------------------------------------------------------------
 
@@ -1896,6 +1934,10 @@ class BotEngine {
         if (dorf2Resp && dorf2Resp.success && dorf2Resp.data && dorf2Resp.data.buildings && dorf2Resp.data.buildings.length > 0) {
           this._cachedBuildings = dorf2Resp.data.buildings;
           this._buildingsScanCycle = this._cycleCounter;
+          // Update earliest finish time for event-driven scan trigger
+          if (dorf2Resp.data.constructionQueue) {
+            this._buildQueueEarliestFinish = dorf2Resp.data.constructionQueue.earliestFinishTime || 0;
+          }
         }
       }
 
