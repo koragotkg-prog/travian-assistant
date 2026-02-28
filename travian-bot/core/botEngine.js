@@ -89,6 +89,9 @@ class BotEngine {
 
     // Hero resource claiming — delegated to HeroManager.
     // Owns proactive/reactive claim logic, deficit calculation, V1/V2 paths, and cooldown.
+    if (!self.TravianHeroManager) {
+      console.error('[BotEngine] TravianHeroManager not loaded — hero resource claiming disabled');
+    }
     this._heroManager = new (self.TravianHeroManager || Object)(
       this._bridge,
       (...args) => this._slog(...args),
@@ -737,7 +740,8 @@ class BotEngine {
         // FIX: Navigate back home after hero claim — otherwise next SCAN reads hero inventory page
         try {
           await this.sendToContentScript({ type: 'EXECUTE', action: 'navigateTo', params: { page: 'dorf1' } });
-          await TravianDelay.humanDelay(1500, 2500);
+          await this._bridge.waitForReady(10000);
+          await this._randomDelay();
         } catch (_navErr) { /* best effort */ }
         if (claimed) {
           this._heroManager.setCooldown(300000); // 5 min cooldown
@@ -1458,6 +1462,7 @@ class BotEngine {
       await this.sendToContentScript({
         type: 'EXECUTE', action: 'navigateTo', params: { page: 'dorf1' }
       });
+      await this._bridge.waitForReady(10000);
       console.log('[BotEngine] Returned to dorf1');
     } catch (err) {
       // Non-critical — just log and continue

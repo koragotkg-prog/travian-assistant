@@ -26,10 +26,10 @@
       if (config.autoBuildingUpgrade || config.autoUpgradeBuildings) {
         actions.push(...this._scoreBuildingUpgrades(gameState, config));
       }
-      if (config.autoTroopTraining) {
+      if (config.autoTrainTroops || config.autoTroopTraining) {
         actions.push(...this._scoreTroopTraining(gameState, config));
       }
-      if (config.autoFarming) {
+      if (config.autoFarm || config.autoFarming) {
         actions.push(...this._scoreFarming(gameState, config));
       }
       if (config.autoHeroAdventure) {
@@ -197,7 +197,7 @@
     _scoreFarming(state, config) {
       const actions = [];
       const farmConfig = config.farmConfig || config;
-      if (!farmConfig.autoFarming && !config.autoFarming) return actions;
+      if (!farmConfig.autoFarming && !config.autoFarming && !config.autoFarm) return actions;
 
       const lastFarm = state.lastFarmTime || 0;
       const elapsed = Date.now() - lastFarm;

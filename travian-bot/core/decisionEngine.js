@@ -92,6 +92,10 @@ class DecisionEngine {
       return newTasks;
     }
 
+    // Store references for helper methods (e.g., _estimateGameDay)
+    this._gameState = gameState;
+    this._config = config;
+
     // 1. Safety checks — always first, independent of strategy engine
     if (gameState.captcha || gameState.error) {
       newTasks.push({
