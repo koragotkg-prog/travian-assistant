@@ -5,24 +5,7 @@
 
   class GameStateCollector {
     constructor() {
-      this._fullScanInterval = 5; // do full scan every N cycles
-      this._cycleCount = 0;
       this._cachedExtras = {}; // quest data, trap info, etc.
-    }
-
-    /**
-     * Determine if this cycle should do a full multi-page scan
-     */
-    shouldDoFullScan() {
-      this._cycleCount++;
-      return this._cycleCount >= this._fullScanInterval;
-    }
-
-    /**
-     * Reset full scan counter after completing one
-     */
-    resetFullScanCounter() {
-      this._cycleCount = 0;
     }
 
     /**
@@ -45,19 +28,6 @@
       this._cachedExtras = { ...this._cachedExtras, ...extras };
     }
 
-    /**
-     * Get the list of pages to scan in a full scan cycle
-     * Returns array of {page, scanAction} to execute in order
-     */
-    getFullScanSequence() {
-      return [
-        { page: 'dorf1', action: 'fullScan', description: 'Resources + troops + queue' },
-        { page: 'dorf2', action: 'fullScan', description: 'Buildings' },
-        // These are optional scans — only when needed
-        // { page: 'tasks', action: 'scanQuests', description: 'Quest progress' },
-        // { page: 'heroInventory', action: 'scanHeroInventory', description: 'Hero items' },
-      ];
-    }
   }
 
   root.TravianGameStateCollector = GameStateCollector;
