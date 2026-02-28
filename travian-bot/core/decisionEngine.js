@@ -26,7 +26,7 @@ class DecisionEngine {
     /** @type {object|null} Last AI-scored action for popup display */
     this.lastAIAction = null;
 
-    /** @type {string} Detected game phase */
+    /** @type {string} Detected game phase (early/mid/late — derived from GlobalPlanner as single authority) */
     this.currentPhase = 'early';
 
     /** @type {Array<object>} Last prerequisite resolution results for UI display */
@@ -112,11 +112,14 @@ class DecisionEngine {
 
     // 2b-pre. GlobalPlanner strategic context (runs BEFORE ActionScorer)
     //         Returns score multipliers that bias AI scoring toward current strategy.
+    //         GlobalPlanner is the SINGLE AUTHORITY for phase detection.
     let metaContext = null;
     if (this.globalPlanner) {
       try {
         metaContext = this.globalPlanner.advise(gameState, config);
         this.lastPlannerContext = metaContext;
+        // Derive currentPhase from GlobalPlanner (single authority)
+        this.currentPhase = this._mapPlannerPhaseToLegacy(metaContext.phase);
         TravianLogger.log('DEBUG', `[Planner] ${metaContext.advice}`);
       } catch (err) {
         console.warn('[DecisionEngine] GlobalPlanner.advise() failed:', err.message);
@@ -182,7 +185,9 @@ class DecisionEngine {
       // AI handles scoring for upgrades/troops, but safety rules always run.
     }
 
-    // 4. Run strategy analysis (if available)
+    // 4. Run strategy analysis (if available) — used for build optimization,
+    //    risk assessment, expansion timing, etc. Phase detection from
+    //    StrategyEngine is only used as FALLBACK when GlobalPlanner is unavailable.
     if (this.strategyEngine) {
       try {
         this.lastAnalysis = this.strategyEngine.analyze({
@@ -204,7 +209,10 @@ class DecisionEngine {
           origin: config.origin || { x: 0, y: 0 },
           enemies: config.enemies || [],
         });
-        this.currentPhase = this.lastAnalysis.phaseDetection.phase;
+        // Only use StrategyEngine phase as fallback if GlobalPlanner didn't set it
+        if (!this.globalPlanner || !metaContext) {
+          this.currentPhase = this.lastAnalysis.phaseDetection.phase;
+        }
       } catch (err) {
         console.warn('[DecisionEngine] Strategy analysis failed:', err.message);
         this.lastAnalysis = null;
@@ -672,10 +680,41 @@ class DecisionEngine {
   }
 
   /**
-   * Get current detected phase.
+   * Get current detected phase (legacy early/mid/late format).
+   * Derived from GlobalPlanner (single authority) with StrategyEngine fallback.
    */
   getPhase() {
     return this.currentPhase;
+  }
+
+  /**
+   * Map GlobalPlanner's 6-phase system to the legacy early/mid/late used by
+   * BuildOptimizer and MilitaryPlanner. GlobalPlanner is the single authority
+   * for phase detection; this mapping ensures backward compatibility.
+   *
+   * GlobalPlanner phases → legacy mapping:
+   *   BOOTSTRAP, EARLY_ECON         → 'early'
+   *   EXPANSION_WINDOW               → 'mid'
+   *   MILITARY_BUILDUP, POWER_SPIKE  → 'mid' (transitioning to late)
+   *   DEFENSIVE_STABILIZE             → 'late'
+   *
+   * @param {string} plannerPhase - GlobalPlanner phase name
+   * @returns {string} Legacy phase: 'early', 'mid', or 'late'
+   */
+  _mapPlannerPhaseToLegacy(plannerPhase) {
+    switch (plannerPhase) {
+      case 'BOOTSTRAP':
+      case 'EARLY_ECON':
+        return 'early';
+      case 'EXPANSION_WINDOW':
+      case 'MILITARY_BUILDUP':
+        return 'mid';
+      case 'POWER_SPIKE':
+      case 'DEFENSIVE_STABILIZE':
+        return 'late';
+      default:
+        return 'early';
+    }
   }
 
   // ---------------------------------------------------------------------------

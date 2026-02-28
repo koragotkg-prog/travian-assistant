@@ -45,6 +45,12 @@
   /**
    * Detect the current game phase based on game state indicators.
    *
+   * @deprecated Phase detection is now unified under GlobalPlanner as the
+   *   single authority. This method is retained for backward compatibility
+   *   (used by StrategyEngine.analyze() for phaseDetection output) but
+   *   DecisionEngine derives its currentPhase from GlobalPlanner instead.
+   *   Do NOT add new consumers of this method; use GlobalPlanner.phase.
+   *
    * @param {object} params
    *   { gameDay, serverSpeed, villageCount, totalPopulation, armySize,
    *     highestBuildingLevel, totalResourceProduction }
