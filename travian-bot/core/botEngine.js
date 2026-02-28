@@ -549,8 +549,10 @@ class BotEngine {
         return;
       }
 
-      // Scan succeeded — reset circuit breaker
-      this._consecutiveFailures = 0;
+      // FIX: Scan success no longer resets the circuit breaker.
+      // Previously this masked all task failures because scans almost always succeed.
+      // The counter now only resets on TASK success (line in executeTask).
+      // Scan failures still increment it (above), so a dead content script still triggers the breaker.
 
       this.gameState = scanResponse.data;
 
@@ -1122,7 +1124,8 @@ class BotEngine {
 
         this._slog('INFO', 'Task completed: ' + task.type, { taskId: task.id, duration_ms: Date.now() - _taskStart });
       } else {
-        const errorMsg = (response && response.error) || 'Unknown error from content script';
+        // FIX: actionExecutor returns {message:} not {error:} — read both
+        const errorMsg = (response && (response.error || response.message)) || 'Unknown error from content script';
         const reason = (response && response.reason) || '';
 
         this._consecutiveFailures++; // Circuit breaker: increment on failure
@@ -1136,10 +1139,17 @@ class BotEngine {
           this.taskQueue.markFailed(task.id, errorMsg);
           this.stats.tasksFailed++;
 
-          // Set per-slot failure cooldown so decision engine doesn't recreate
-          // immediately, but other slots of the same type can still proceed
+          // Set failure cooldown so decision engine doesn't recreate immediately.
+          // FIX: queue_full and insufficient_resources affect ALL slots of the same type,
+          // not just this slot — use type-level cooldown to prevent cycling through every slot.
           const failCooldown = this._getFailCooldownForReason(reason, task.type);
-          this.decisionEngine.setCooldown(this._getCooldownKey(task), failCooldown);
+          if (reason === 'queue_full' || reason === 'insufficient_resources') {
+            // Type-level cooldown: blocks ALL upgrade_resource or upgrade_building tasks
+            this.decisionEngine.setCooldown(task.type, failCooldown);
+          } else {
+            // Per-slot cooldown: only blocks this specific slot
+            this.decisionEngine.setCooldown(this._getCooldownKey(task), failCooldown);
+          }
 
           this._slog('WARN', 'Task skipped (' + reason + '): ' + task.type, { taskId: task.id, reason, duration_ms: Date.now() - _taskStart });
 

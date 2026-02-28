@@ -100,9 +100,12 @@ class DecisionEngine {
     if (this.actionScorer && config.useAIScoring !== false) {
       const scoredActions = this.actionScorer.scoreAll(gameState, config, taskQueue);
 
-      if (scoredActions.length > 0) {
+      // FIX: Filter out actions that are on cooldown — AI path previously bypassed this
+      const available = scoredActions.filter(a => !this.isCoolingDown(a.type));
+
+      if (available.length > 0) {
         // Take the top-scored action
-        const best = scoredActions[0];
+        const best = available[0];
         TravianLogger.log('INFO', `[AI] Best action: ${best.type} (score: ${best.score.toFixed(1)}) — ${best.reason}`);
         this.lastAIAction = { type: best.type, score: best.score, reason: best.reason };
 
@@ -118,8 +121,8 @@ class DecisionEngine {
         }
 
         // Log runner-up for transparency
-        if (scoredActions.length > 1) {
-          const second = scoredActions[1];
+        if (available.length > 1) {
+          const second = available[1];
           TravianLogger.log('DEBUG', `[AI] Runner-up: ${second.type} (score: ${second.score.toFixed(1)}) — ${second.reason}`);
         }
       }

@@ -59,6 +59,10 @@
       const resources = state.resources || {};
       const capacity = state.resourceCapacity || {};
 
+      // FIX: Check build queue — resource upgrades use the same construction queue
+      const buildQueue = state.constructionQueue || { count: 0 };
+      if (buildQueue.count >= (buildQueue.maxCount || 1)) return actions;
+
       for (const field of fields) {
         if (field.upgrading) continue;
 
@@ -155,6 +159,8 @@
       const slots = tc.slots || [];
       const troopType = tc.defaultTroopType || tc.type || (slots[0] && slots[0].troopType) || 't1';
       const trainCount = tc.trainCount || tc.trainBatchSize || (slots[0] && slots[0].batchSize) || 5;
+      // FIX: Include buildingType so execution navigates to the correct building
+      const buildingType = tc.trainingBuilding || (slots[0] && slots[0].building) || 'barracks';
 
       // Crop awareness: don't train if free crop is very low (skip penalty if data unavailable)
       const freeCrop = state.freeCrop;
@@ -164,9 +170,9 @@
 
       actions.push({
         type: 'train_troops',
-        params: { troopType, count: trainCount },
+        params: { troopType, count: trainCount, buildingType },
         score,
-        reason: `Train ${trainCount}x ${troopType} (troops: ${totalTroops})`
+        reason: `Train ${trainCount}x ${troopType} @ ${buildingType} (troops: ${totalTroops})`
       });
 
       return actions;
