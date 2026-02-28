@@ -25,6 +25,9 @@ importScripts(
   '../core/decisionEngine.js',
   '../core/gameStateCollector.js', // TravianGameStateCollector
   '../core/mapScanner.js',
+  '../core/farmIntelligence.js',  // Farm stack: intelligence layer
+  '../core/farmScheduler.js',     // Farm stack: timing/priority layer
+  '../core/farmManager.js',       // Farm stack: orchestration FSM
   '../core/botEngine.js',
   '../core/instanceManager.js'
 );

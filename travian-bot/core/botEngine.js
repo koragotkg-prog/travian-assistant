@@ -294,6 +294,20 @@ class BotEngine {
       console.warn('[BotEngine] Could not restore saved state:', err);
     }
 
+    // Initialize Farm Stack (Intelligence → Scheduler → Manager)
+    if (this.serverKey && self.TravianFarmIntelligence) {
+      try {
+        var farmIntel = new self.TravianFarmIntelligence(this.serverKey);
+        await farmIntel.load();
+        var farmSched = new self.TravianFarmScheduler(farmIntel);
+        this._farmManager = new self.TravianFarmManager(this.serverKey, farmIntel, farmSched);
+        this._farmIntelligence = farmIntel;
+        if (this.decisionEngine) this.decisionEngine._farmIntelligence = farmIntel;
+      } catch (err) {
+        console.warn('[BotEngine] Farm stack init failed (will retry on first farm task):', err);
+      }
+    }
+
     // Start the scheduler
     this.scheduler.start();
 
@@ -911,145 +925,40 @@ class BotEngine {
           break;
 
         case 'send_farm':
-          // Step 1: Navigate to rally point
-          await this.sendToContentScript({
-            type: 'EXECUTE', action: 'navigateTo', params: { page: 'rallyPoint' }
-          });
-          await this._randomDelay();
-          await this._waitForContentScript(15000);
-          // Step 2: Click the farm list tab (tt=99) - causes page reload
-          await this.sendToContentScript({
-            type: 'EXECUTE', action: 'clickFarmListTab', params: {}
-          });
-          await this._randomDelay();
-          // Wait for content script to re-inject after page reload
-          await this._waitForContentScript(15000);
-          // Step 3: Send farm lists (smart selective or legacy send-all)
-          var farmCfg = this.config && this.config.farmConfig;
-          var smartFarming = farmCfg && farmCfg.smartFarming !== false; // default ON when field missing
-          if (smartFarming) {
-            // Smart farming: only send to profitable targets
-            var minLoot = (this.config.farmConfig && this.config.farmConfig.minLoot) || 30;
-            var skipLosses = this.config.farmConfig.skipLosses !== false;
-            TravianLogger.log('INFO', '[BotEngine] Smart farming: minLoot=' + minLoot + ' skipLosses=' + skipLosses);
-            response = await this.sendToContentScript({
-              type: 'EXECUTE', action: 'selectiveFarmSend', params: {
-                minLoot: minLoot,
-                skipLosses: skipLosses
-              }
-            });
-            if (response && response.sent != null) {
-              TravianLogger.log('INFO', '[BotEngine] Smart farm result: sent=' + response.sent + ' skipped=' + response.skipped + ' total=' + response.total);
-            }
-          } else if (task.params.farmListId != null) {
-            // Send a specific farm list
-            response = await this.sendToContentScript({
-              type: 'EXECUTE', action: 'sendFarmList', params: {
-                farmListId: task.params.farmListId
-              }
-            });
-          } else {
-            // Legacy: Send all farm lists on the page
-            response = await this.sendToContentScript({
-              type: 'EXECUTE', action: 'sendAllFarmLists', params: {}
-            });
+          // Delegate to FarmManager FSM (4-layer farm stack)
+          if (!this._farmManager) {
+            var farmIntel = new self.TravianFarmIntelligence(this.serverKey);
+            await farmIntel.load();
+            var farmSched = new self.TravianFarmScheduler(farmIntel);
+            this._farmManager = new self.TravianFarmManager(this.serverKey, farmIntel, farmSched);
+            this._farmIntelligence = farmIntel;
+            // Wire intelligence to DecisionEngine for all-blacklisted check
+            if (this.decisionEngine) this.decisionEngine._farmIntelligence = farmIntel;
           }
-          // FIX: Only update farm time on success — failed sends should retry sooner
-          if (response && response.success) {
+          // Pass specific farm list ID through config if task specifies one
+          if (task.params.farmListId != null) {
+            if (!this.config.farmConfig) this.config.farmConfig = {};
+            this.config.farmConfig._taskFarmListId = task.params.farmListId;
+          }
+          var farmResult = await this._farmManager.executeFarmCycle(
+            this.config,
+            this.gameState,
+            (msg) => this.sendToContentScript(msg),
+            (ms) => this._waitForContentScript(ms)
+          );
+          // Clean up task-specific param
+          if (this.config.farmConfig) delete this.config.farmConfig._taskFarmListId;
+          if (farmResult && (farmResult.success || farmResult.recovered)) {
+            // Treat recovered cycles as soft success — don't eat retry budget
             this._lastFarmTime = Date.now();
-            this.stats.farmRaidsSent++;
-
-            // Re-raid bounty-full targets with TT via rally point (if enabled)
-            // Flow: scan farm list for bounty-full → navigate to rally point → send TT per target
-            var reRaidEnabled = farmCfg && farmCfg.enableReRaid;
-            if (reRaidEnabled) {
-              try {
-                TravianLogger.log('INFO', '[BotEngine] Re-raid: scanning bounty-full targets...');
-                await TravianDelay.humanDelay(2000, 3500); // wait for UI to update after initial send
-                await this._waitForContentScript(10000);
-                var reRaidMinLoot = (farmCfg.reRaidMinLoot != null) ? farmCfg.reRaidMinLoot : 100;
-
-                // Step 1: Scan farm list for bounty-full + no-loss targets
-                var scanResult = await this.sendToContentScript({
-                  type: 'EXECUTE', action: 'scanReRaidTargets', params: { minLoot: reRaidMinLoot }
-                });
-
-                if (!scanResult || !scanResult.success || !scanResult.targets || scanResult.targets.length === 0) {
-                  TravianLogger.log('DEBUG', '[BotEngine] Re-raid: no bounty-full targets found');
-                } else {
-                  var reRaidTroopType = (farmCfg.reRaidTroopType) || 't4'; // TT for Gauls
-                  var reRaidTroopCount = (farmCfg.reRaidTroopCount != null) ? farmCfg.reRaidTroopCount : 5;
-                  var targets = scanResult.targets;
-                  var reRaidSent = 0;
-                  var reRaidFailed = 0;
-
-                  TravianLogger.log('INFO', '[BotEngine] Re-raid: ' + targets.length + ' targets, sending ' + reRaidTroopCount + 'x ' + reRaidTroopType + ' each');
-
-                  for (var ri = 0; ri < targets.length; ri++) {
-                    var reTarget = targets[ri];
-                    TravianLogger.log('DEBUG', '[BotEngine] Re-raid [' + (ri + 1) + '/' + targets.length + ']: (' + reTarget.x + '|' + reTarget.y + ') ' + reTarget.name + ' loot=' + reTarget.lastLoot);
-
-                    // Step 2: Navigate to rally point send troops tab (tt=2)
-                    await this.sendToContentScript({
-                      type: 'EXECUTE', action: 'navigateTo', params: { page: 'rallyPointSend' }
-                    });
-                    await TravianDelay.humanDelay(1500, 3000);
-                    await this._waitForContentScript(15000);
-
-                    // Step 3: Fill form and submit (triggers page reload to confirmation)
-                    var troops = {};
-                    troops[reRaidTroopType] = reRaidTroopCount;
-                    var sendResult = await this.sendToContentScript({
-                      type: 'EXECUTE', action: 'sendAttack', params: {
-                        target: { x: reTarget.x, y: reTarget.y },
-                        troops: troops,
-                        opts: { eventType: 4 } // 4 = raid (ปล้น)
-                      }
-                    });
-
-                    if (!sendResult || !sendResult.success) {
-                      TravianLogger.log('WARN', '[BotEngine] Re-raid: sendAttack failed for (' + reTarget.x + '|' + reTarget.y + '): ' + (sendResult && sendResult.message || 'unknown'));
-                      reRaidFailed++;
-                      continue;
-                    }
-
-                    // Step 4: Wait for confirmation page reload, then confirm
-                    await TravianDelay.humanDelay(2000, 4000);
-                    await this._waitForContentScript(15000);
-
-                    var confirmResult = await this.sendToContentScript({
-                      type: 'EXECUTE', action: 'confirmAttack', params: {}
-                    });
-
-                    if (confirmResult && confirmResult.success) {
-                      reRaidSent++;
-                      TravianLogger.log('INFO', '[BotEngine] Re-raid: sent to (' + reTarget.x + '|' + reTarget.y + ') ' + reTarget.name);
-                    } else {
-                      reRaidFailed++;
-                      TravianLogger.log('WARN', '[BotEngine] Re-raid: confirm failed for (' + reTarget.x + '|' + reTarget.y + '): ' + (confirmResult && confirmResult.message || 'unknown'));
-                    }
-
-                    // Wait between targets for human-like behavior
-                    if (ri < targets.length - 1) {
-                      await TravianDelay.humanDelay(2000, 5000);
-                    }
-                  }
-
-                  TravianLogger.log('INFO', '[BotEngine] Re-raid complete: sent=' + reRaidSent + ' failed=' + reRaidFailed + ' total=' + targets.length);
-                  this.stats.farmRaidsSent += reRaidSent;
-                }
-              } catch (reRaidErr) {
-                TravianLogger.log('WARN', '[BotEngine] Re-raid error: ' + (reRaidErr.message || reRaidErr));
-              }
-            }
+            this.stats.farmRaidsSent += (farmResult.sent || 0) + (farmResult.reRaidSent || 0);
+            if (farmResult.recovered) farmResult.success = true;  // Mark as success for task completion
           }
-          // Navigate back to dorf1 so the next scan cycle works correctly
-          try {
-            await this.sendToContentScript({
-              type: 'EXECUTE', action: 'navigateTo', params: { page: 'dorf1' }
-            });
-            await this._waitForContentScript(10000);
-          } catch (_) { /* best effort */ }
+          // Persist intelligence after each cycle
+          if (this._farmIntelligence) {
+            try { await this._farmIntelligence.persist(); } catch (_) {}
+          }
+          response = farmResult;
           break;
 
         case 'build_traps':

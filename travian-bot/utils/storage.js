@@ -18,6 +18,8 @@
     REGISTRY: 'bot_config_registry',
     VILLAGE_PREFIX: 'village_config_',
     FARM_TARGETS: 'farm_targets',
+    FARM_DATA_PREFIX: 'farm_data__',
+    FARM_CYCLE_PREFIX: 'farm_cycle__',
   };
 
   // ── FIX-P2: Write Serialization ────────────────────────────────────

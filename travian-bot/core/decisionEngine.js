@@ -523,6 +523,15 @@ class DecisionEngine {
   evaluateFarming(state, config) {
     if (!config.farmConfig) return null;
 
+    // Skip if farm intelligence reports all targets blacklisted/paused
+    if (this._farmIntelligence) {
+      var activeTargets = this._farmIntelligence.getActiveTargets();
+      if (activeTargets.length === 0 && Object.keys(this._farmIntelligence._targets || {}).length > 0) {
+        TravianLogger.log('DEBUG', '[DecisionEngine] Skipping farm — all targets blacklisted/paused');
+        return null;
+      }
+    }
+
     const farmInterval = config.farmConfig.intervalMs || 300000;
     const lastFarmTime = state.lastFarmTime || 0;
     if (Date.now() - lastFarmTime < farmInterval) return null;
