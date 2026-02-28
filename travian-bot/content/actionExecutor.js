@@ -509,6 +509,7 @@
           reports:     ['a[href*="berichte"]', 'a[href*="report"]', '#navigation .reports a'],
           messages:    ['a[href*="nachrichten"]', 'a[href*="messages"]', '#navigation .messages a'],
           rallyPoint:  ['a[href*="build.php?id=39"]', 'a[href*="build.php?gid=16"]'],
+          rallyPointSend: ['a[href*="tt=2"][href*="id=39"]', 'a[href*="tt=2"][href*="gid=16"]'],
           barracks:    ['a[href*="build.php?gid=19"]'],
           stable:      ['a[href*="build.php?gid=20"]'],
           workshop:    ['a[href*="build.php?gid=21"]'],
@@ -535,6 +536,7 @@
           var directUrls = {
             heroInventory: '/hero/inventory',
             heroAdventures: '/hero/adventures',
+            rallyPointSend: '/build.php?id=39&tt=2',
             hero: '/hero',
             dorf1: '/dorf1.php',
             resources: '/dorf1.php',
@@ -1348,6 +1350,94 @@
     },
 
     /**
+     * Scan farm list for bounty-full targets eligible for re-raid with TT.
+     * Read-only scan — does NOT send any troops. Returns target coordinates
+     * so BotEngine can send TT via rally point sendAttack().
+     *
+     * Must be on farm list tab (tt=99).
+     * Filters: bounty_full + won without losses + not ongoing + loot >= minLoot.
+     *
+     * @param {object} opts - { minLoot: number (default 100) }
+     * @returns {{ success: boolean, targets: Array<{x, y, name, lastLoot, distance}>, scanned: number, skipped: number }}
+     */
+    scanReRaidTargets: function (opts) {
+      try {
+        opts = opts || {};
+        var minLoot = opts.minLoot || 100;
+
+        Logger.log('scanReRaidTargets: minLoot=' + minLoot);
+
+        // Must be on farm list tab
+        if (window.location.href.indexOf('tt=99') === -1) {
+          Logger.warn('scanReRaidTargets: not on farm list tab');
+          return { success: false, targets: [], scanned: 0, skipped: 0 };
+        }
+
+        var slots = qsa('.slot');
+        var targets = [];
+        var scanned = 0;
+        var skipped = 0;
+
+        for (var i = 0; i < slots.length; i++) {
+          var slot = slots[i];
+          var checkbox = qs('input[type="checkbox"][name="selectOne"]', slot);
+          if (!checkbox) continue;
+          scanned++;
+
+          // Skip if troops already on the way
+          var stateTd = qs('td.state', slot);
+          var ongoingIcon = stateTd ? qs('i', stateTd) : null;
+          if (ongoingIcon) { skipped++; continue; }
+
+          // Read bounty level
+          var bountyIcon = qs('.lastRaidBounty i', slot);
+          var bountyClass = bountyIcon ? (bountyIcon.className || '') : '';
+          if (bountyClass.indexOf('bounty_full') === -1) { skipped++; continue; }
+
+          // Read raid status — only re-raid if last raid was clean
+          var raidIcon = qs('i.lastRaidState', slot);
+          var raidClass = raidIcon ? (raidIcon.className || '') : '';
+          if (raidClass.indexOf('withoutLosses') === -1) { skipped++; continue; }
+
+          // Read last loot
+          var bountyVal = qs('.lastRaidBounty .value', slot);
+          var lastLoot = bountyVal ? (parseInt(bountyVal.textContent.replace(/[^\d]/g, ''), 10) || 0) : 0;
+          if (lastLoot < minLoot) { skipped++; continue; }
+
+          // Extract coordinates from target link
+          var link = qs('td.target a, .villageNameWrapper a', slot);
+          if (!link || !link.href) { skipped++; continue; }
+          try {
+            var url = new URL(link.href);
+            var x = parseInt(url.searchParams.get('x'), 10);
+            var y = parseInt(url.searchParams.get('y'), 10);
+            if (isNaN(x) || isNaN(y)) { skipped++; continue; }
+
+            var distEl = qs('td.distance .value, td.distance span, .distance', slot);
+            targets.push({
+              x: x,
+              y: y,
+              name: link.textContent.trim(),
+              lastLoot: lastLoot,
+              distance: distEl ? (parseFloat(distEl.textContent) || 0) : 0
+            });
+          } catch (urlErr) {
+            skipped++;
+          }
+        }
+
+        // Sort by distance (nearest first) for efficient raiding
+        targets.sort(function (a, b) { return a.distance - b.distance; });
+
+        Logger.log('scanReRaidTargets: found ' + targets.length + ' targets (scanned=' + scanned + ' skipped=' + skipped + ')');
+        return { success: true, targets: targets, scanned: scanned, skipped: skipped };
+      } catch (e) {
+        Logger.error('scanReRaidTargets error:', e);
+        return { success: false, targets: [], scanned: 0, skipped: 0 };
+      }
+    },
+
+    /**
      * Add a target to a farm list by coordinates using direct REST API.
      * Bypasses Travian FormV2 which blocks programmatic form submission.
      * Must be called while on the rally point farm list page (tt=99).
@@ -1414,19 +1504,34 @@
     },
 
     /**
-     * Fill in the rally point attack form and send an attack.
+     * Fill in the rally point attack form and click Send.
+     * Must be on rally point send troops page (tt=2).
+     * NOTE: Clicking Send causes a page reload (POST form). The content script
+     * will be destroyed. BotEngine must call confirmAttack() separately after
+     * waiting for the confirmation page to load.
      *
      * @param {{ x: number, y: number }} target - Target coordinates
-     * @param {Object} troops - Map of troop type/input name to count
-     * @returns {Promise<boolean>}
+     * @param {Object} troops - Map of troop input key (e.g. 't4') to count
+     * @param {Object} [opts] - Options
+     * @param {number} [opts.eventType=4] - 3=normal attack, 4=raid, 5=reinforce
+     * @returns {Promise<{success:boolean, reason?:string, message?:string}>}
      */
-    sendAttack: async function (target, troops) {
+    sendAttack: async function (target, troops, opts) {
       try {
-        Logger.log('sendAttack: target', target, 'troops', troops);
+        opts = opts || {};
+        var eventType = opts.eventType != null ? opts.eventType : 4; // 4 = raid (ปล้น)
+        Logger.log('sendAttack: target=(' + target.x + '|' + target.y + ') eventType=' + eventType + ' troops=' + JSON.stringify(troops));
 
         if (!target || target.x == null || target.y == null) {
           Logger.warn('sendAttack: invalid target', target);
-          return false;
+          return { success: false, reason: 'wrong_page', message: 'Invalid target coordinates' };
+        }
+
+        // Verify we're on rally point send troops page
+        var loc = window.location.href;
+        if (loc.indexOf('id=39') === -1 && loc.indexOf('gid=16') === -1) {
+          Logger.warn('sendAttack: not on rally point page');
+          return { success: false, reason: 'wrong_page', message: 'Not on rally point page' };
         }
 
         await humanDelay(300, 600);
@@ -1445,88 +1550,109 @@
 
         if (!xFilled || !yFilled) {
           Logger.warn('sendAttack: could not fill coordinate inputs');
-          return false;
+          return { success: false, reason: 'input_not_found', message: 'Coordinate inputs not found' };
         }
 
         await humanDelay(200, 500);
 
         // Fill in troop counts
+        // Troop input names in Travian DOM: troop[t1], troop[t2], ..., troop[t10]
         var troopKeys = Object.keys(troops);
+        var anyFilled = false;
         for (var i = 0; i < troopKeys.length; i++) {
-          var troopType = troopKeys[i];
+          var troopType = troopKeys[i]; // e.g. 't4'
           var troopCount = troops[troopType];
 
           if (troopCount > 0) {
             var troopInputSelectors = [
-              'input[name="' + troopType + '"]',
-              'input[name="troops[' + troopType + ']"]',
-              'input#' + troopType,
-              'input.troop' + troopType
+              'input[name="troop[' + troopType + ']"]',   // actual Travian DOM format
+              'input[name="troops[' + troopType + ']"]',  // alternative format
+              'input[name="' + troopType + '"]',          // bare name fallback
+              'input#' + troopType
             ];
 
-            await fillInput(troopInputSelectors, troopCount);
+            var filled = await fillInput(troopInputSelectors, troopCount);
+            if (filled) anyFilled = true;
             await humanDelay(150, 350);
           }
+        }
+
+        if (!anyFilled) {
+          Logger.warn('sendAttack: could not fill any troop inputs');
+          return { success: false, reason: 'input_not_found', message: 'No troop inputs found' };
         }
 
         await humanDelay(300, 600);
 
         // Select attack mode (radio button)
         var attackRadio = trySelectors([
-          'input[name="eventType"][value="4"]',  // attack/raid
-          'input[name="c"][value="4"]',
-          'input#attack',
-          'input[value="attack"]',
-          'label.attack input[type="radio"]'
+          'input[name="eventType"][value="' + eventType + '"]',
+          'input[name="c"][value="' + eventType + '"]'
         ]);
 
         if (attackRadio) {
           await simulateHumanClick(attackRadio);
           await humanDelay(200, 400);
+        } else {
+          Logger.warn('sendAttack: attack radio for eventType=' + eventType + ' not found');
         }
 
-        // Click the send / confirm button
+        // Click the send button — this triggers a form POST (page reload)
         var sendBtn = trySelectors([
-          'button#btn_ok',
+          'button#ok',
           'button.green[type="submit"]',
-          'button.sendTroops',
-          '#btn_ok',
-          'input[type="submit"][name="ok"]',
-          'button[value="ok"]'
+          '#ok',
+          'button#btn_ok',
+          '#btn_ok'
         ]);
 
         if (!sendBtn) {
           Logger.warn('sendAttack: send button not found');
-          return false;
+          return { success: false, reason: 'button_not_found', message: 'Send button not found' };
         }
 
+        // Return success BEFORE click triggers page reload.
+        // simulateHumanClick dispatches events; page navigation is async.
         await simulateHumanClick(sendBtn);
-        Logger.log('sendAttack: first form submitted, waiting for confirmation');
-
-        // Wait for confirmation page
-        await humanDelay(800, 1500);
-
-        // Click the confirm button on the confirmation page
-        var confirmBtn = trySelectors([
-          'button#btn_ok',
-          'button.green[type="submit"]',
-          'button.rallyPointConfirm',
-          '#btn_ok',
-          'input[type="submit"][name="s1"]',
-          'button[value="Confirm"]'
-        ]);
-
-        if (confirmBtn) {
-          await simulateHumanClick(confirmBtn);
-          Logger.log('sendAttack: confirmed attack');
-        } else {
-          Logger.warn('sendAttack: confirmation button not found (attack may have been sent on first click)');
-        }
-
-        return true;
+        Logger.log('sendAttack: form submitted for (' + target.x + '|' + target.y + ')');
+        return { success: true, message: 'Form submitted, awaiting confirmation page' };
       } catch (e) {
         Logger.error('sendAttack error:', e);
-        return false;
+        return { success: false, reason: 'button_not_found', message: e.message };
+      }
+    },
+
+    /**
+     * Click the confirm button on the rally point confirmation page.
+     * Called after sendAttack() triggers page reload to confirmation.
+     *
+     * @returns {Promise<{success:boolean, reason?:string, message?:string}>}
+     */
+    confirmAttack: async function () {
+      try {
+        Logger.log('confirmAttack: looking for confirm button');
+        await humanDelay(300, 600);
+
+        var confirmBtn = trySelectors([
+          'button#s1',
+          'button#btn_ok',
+          'button.green[type="submit"]',
+          '#s1',
+          '#btn_ok',
+          'input[type="submit"][name="s1"]'
+        ]);
+
+        if (!confirmBtn) {
+          Logger.warn('confirmAttack: confirm button not found');
+          return { success: false, reason: 'button_not_found', message: 'Confirm button not found' };
+        }
+
+        await simulateHumanClick(confirmBtn);
+        Logger.log('confirmAttack: attack confirmed');
+        return { success: true, message: 'Attack confirmed and sent' };
+      } catch (e) {
+        Logger.error('confirmAttack error:', e);
+        return { success: false, reason: 'button_not_found', message: e.message };
       }
     },
 
@@ -2450,6 +2576,10 @@
               actionResult = await TravianExecutor.selectiveFarmSend(params);
               break;
 
+            case 'scanReRaidTargets':
+              actionResult = TravianExecutor.scanReRaidTargets(params);
+              break;
+
             case 'scanFarmListSlots':
               actionResult = { success: true, slots: window.TravianScanner ? window.TravianScanner.scanFarmListSlots() : [] };
               break;
@@ -2459,7 +2589,11 @@
               break;
 
             case 'sendAttack':
-              actionResult = await TravianExecutor.sendAttack(params.target, params.troops);
+              actionResult = await TravianExecutor.sendAttack(params.target, params.troops, params.opts);
+              break;
+
+            case 'confirmAttack':
+              actionResult = await TravianExecutor.confirmAttack();
               break;
 
             case 'sendHeroAdventure':

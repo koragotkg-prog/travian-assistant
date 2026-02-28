@@ -298,6 +298,31 @@
             <label class="toggle-pill"><input type="checkbox" id="togSkipLosses" checked><span>Skip Losses</span></label>
           </div>
         </div>
+        <label class="toggle-pill toggle-pill--wide"><input type="checkbox" id="togReRaid"><span>Re-raid Bounty-Full (TT)</span></label>
+        <div id="reRaidConfig" class="form-row" style="margin-top:4px">
+          <div class="form-group form-group--half">
+            <label class="form-label">Min Loot</label>
+            <input type="number" id="reRaidMinLoot" value="100" min="0" max="5000">
+          </div>
+          <div class="form-group form-group--half">
+            <label class="form-label">TT Count</label>
+            <input type="number" id="reRaidTroopCount" value="5" min="1" max="200">
+          </div>
+        </div>
+        <div class="form-row" style="margin-top:2px">
+          <div class="form-group form-group--half">
+            <label class="form-label">Troop Input</label>
+            <select id="reRaidTroopType">
+              <option value="t4" selected>t4 (TT)</option>
+              <option value="t3">t3 (Pathfinder)</option>
+              <option value="t5">t5 (Druidrider)</option>
+              <option value="t6">t6 (Haeduan)</option>
+            </select>
+          </div>
+          <div class="form-group form-group--half">
+            <span class="info-text" style="font-size:10px;line-height:1.3">Sends TT via rally point to bounty-full targets after farm lists.</span>
+          </div>
+        </div>
         <div id="farmListInfo" class="info-text">
           Smart Farming selectively sends only to profitable targets. Disable for legacy send-all.
         </div>

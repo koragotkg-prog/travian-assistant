@@ -955,6 +955,90 @@ class BotEngine {
           if (response && response.success) {
             this._lastFarmTime = Date.now();
             this.stats.farmRaidsSent++;
+
+            // Re-raid bounty-full targets with TT via rally point (if enabled)
+            // Flow: scan farm list for bounty-full → navigate to rally point → send TT per target
+            var reRaidEnabled = farmCfg && farmCfg.enableReRaid;
+            if (reRaidEnabled && smartFarming) {
+              try {
+                TravianLogger.log('INFO', '[BotEngine] Re-raid: scanning bounty-full targets...');
+                await TravianDelay.humanDelay(2000, 3500); // wait for UI to update after initial send
+                await this._waitForContentScript(10000);
+                var reRaidMinLoot = (farmCfg.reRaidMinLoot != null) ? farmCfg.reRaidMinLoot : 100;
+
+                // Step 1: Scan farm list for bounty-full + no-loss targets
+                var scanResult = await this.sendToContentScript({
+                  type: 'EXECUTE', action: 'scanReRaidTargets', params: { minLoot: reRaidMinLoot }
+                });
+
+                if (!scanResult || !scanResult.success || !scanResult.targets || scanResult.targets.length === 0) {
+                  TravianLogger.log('DEBUG', '[BotEngine] Re-raid: no bounty-full targets found');
+                } else {
+                  var reRaidTroopType = (farmCfg.reRaidTroopType) || 't4'; // TT for Gauls
+                  var reRaidTroopCount = (farmCfg.reRaidTroopCount != null) ? farmCfg.reRaidTroopCount : 5;
+                  var targets = scanResult.targets;
+                  var reRaidSent = 0;
+                  var reRaidFailed = 0;
+
+                  TravianLogger.log('INFO', '[BotEngine] Re-raid: ' + targets.length + ' targets, sending ' + reRaidTroopCount + 'x ' + reRaidTroopType + ' each');
+
+                  for (var ri = 0; ri < targets.length; ri++) {
+                    var reTarget = targets[ri];
+                    TravianLogger.log('DEBUG', '[BotEngine] Re-raid [' + (ri + 1) + '/' + targets.length + ']: (' + reTarget.x + '|' + reTarget.y + ') ' + reTarget.name + ' loot=' + reTarget.lastLoot);
+
+                    // Step 2: Navigate to rally point send troops tab (tt=2)
+                    await this.sendToContentScript({
+                      type: 'EXECUTE', action: 'navigateTo', params: { page: 'rallyPointSend' }
+                    });
+                    await TravianDelay.humanDelay(1500, 3000);
+                    await this._waitForContentScript(15000);
+
+                    // Step 3: Fill form and submit (triggers page reload to confirmation)
+                    var troops = {};
+                    troops[reRaidTroopType] = reRaidTroopCount;
+                    var sendResult = await this.sendToContentScript({
+                      type: 'EXECUTE', action: 'sendAttack', params: {
+                        target: { x: reTarget.x, y: reTarget.y },
+                        troops: troops,
+                        opts: { eventType: 4 } // 4 = raid (ปล้น)
+                      }
+                    });
+
+                    if (!sendResult || !sendResult.success) {
+                      TravianLogger.log('WARN', '[BotEngine] Re-raid: sendAttack failed for (' + reTarget.x + '|' + reTarget.y + '): ' + (sendResult && sendResult.message || 'unknown'));
+                      reRaidFailed++;
+                      continue;
+                    }
+
+                    // Step 4: Wait for confirmation page reload, then confirm
+                    await TravianDelay.humanDelay(2000, 4000);
+                    await this._waitForContentScript(15000);
+
+                    var confirmResult = await this.sendToContentScript({
+                      type: 'EXECUTE', action: 'confirmAttack', params: {}
+                    });
+
+                    if (confirmResult && confirmResult.success) {
+                      reRaidSent++;
+                      TravianLogger.log('INFO', '[BotEngine] Re-raid: sent to (' + reTarget.x + '|' + reTarget.y + ') ' + reTarget.name);
+                    } else {
+                      reRaidFailed++;
+                      TravianLogger.log('WARN', '[BotEngine] Re-raid: confirm failed for (' + reTarget.x + '|' + reTarget.y + '): ' + (confirmResult && confirmResult.message || 'unknown'));
+                    }
+
+                    // Wait between targets for human-like behavior
+                    if (ri < targets.length - 1) {
+                      await TravianDelay.humanDelay(2000, 5000);
+                    }
+                  }
+
+                  TravianLogger.log('INFO', '[BotEngine] Re-raid complete: sent=' + reRaidSent + ' failed=' + reRaidFailed + ' total=' + targets.length);
+                  this.stats.farmRaidsSent += reRaidSent;
+                }
+              } catch (reRaidErr) {
+                TravianLogger.log('WARN', '[BotEngine] Re-raid error: ' + (reRaidErr.message || reRaidErr));
+              }
+            }
           }
           break;
 

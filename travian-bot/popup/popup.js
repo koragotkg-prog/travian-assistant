@@ -81,6 +81,10 @@ const dom = {
   togSmartFarming: document.getElementById('togSmartFarming'),
   farmMinLoot: document.getElementById('farmMinLoot'),
   togSkipLosses: document.getElementById('togSkipLosses'),
+  togReRaid: document.getElementById('togReRaid'),
+  reRaidMinLoot: document.getElementById('reRaidMinLoot'),
+  reRaidTroopCount: document.getElementById('reRaidTroopCount'),
+  reRaidTroopType: document.getElementById('reRaidTroopType'),
   scanMyX: document.getElementById('scanMyX'),
   scanMyY: document.getElementById('scanMyY'),
   scanRadius: document.getElementById('scanRadius'),
@@ -1676,6 +1680,10 @@ function collectConfig() {
       smartFarming: dom.togSmartFarming.checked,
       minLoot: parseInt(dom.farmMinLoot.value, 10) || 30,
       skipLosses: dom.togSkipLosses.checked,
+      enableReRaid: dom.togReRaid ? dom.togReRaid.checked : false,
+      reRaidMinLoot: dom.reRaidMinLoot ? (parseInt(dom.reRaidMinLoot.value, 10) || 100) : 100,
+      reRaidTroopCount: dom.reRaidTroopCount ? (parseInt(dom.reRaidTroopCount.value, 10) || 5) : 5,
+      reRaidTroopType: dom.reRaidTroopType ? dom.reRaidTroopType.value : 't4',
       scanMyX: dom.scanMyX && dom.scanMyX.value !== '' ? parseInt(dom.scanMyX.value, 10) : null,
       scanMyY: dom.scanMyY && dom.scanMyY.value !== '' ? parseInt(dom.scanMyY.value, 10) : null,
       scanRadius: parseInt(dom.scanRadius ? dom.scanRadius.value : '20', 10) || 20,
@@ -1864,6 +1872,18 @@ function populateForm(config) {
     }
     if (config.farmConfig.skipLosses !== undefined) {
       dom.togSkipLosses.checked = config.farmConfig.skipLosses;
+    }
+    if (config.farmConfig.enableReRaid !== undefined && dom.togReRaid) {
+      dom.togReRaid.checked = config.farmConfig.enableReRaid;
+    }
+    if (config.farmConfig.reRaidMinLoot !== undefined && dom.reRaidMinLoot) {
+      dom.reRaidMinLoot.value = config.farmConfig.reRaidMinLoot;
+    }
+    if (config.farmConfig.reRaidTroopCount !== undefined && dom.reRaidTroopCount) {
+      dom.reRaidTroopCount.value = config.farmConfig.reRaidTroopCount;
+    }
+    if (config.farmConfig.reRaidTroopType !== undefined && dom.reRaidTroopType) {
+      dom.reRaidTroopType.value = config.farmConfig.reRaidTroopType;
     }
     if (config.farmConfig.scanMyX != null && dom.scanMyX) {
       dom.scanMyX.value = config.farmConfig.scanMyX;
@@ -2523,6 +2543,7 @@ function bindEvents() {
     dom.togUseFarmList,
     dom.togSmartFarming,
     dom.togSkipLosses,
+    dom.togReRaid,
   ].filter(Boolean);
 
   toggles.forEach((toggle) => {
