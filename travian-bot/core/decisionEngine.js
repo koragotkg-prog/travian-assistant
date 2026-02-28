@@ -1191,10 +1191,22 @@ class DecisionEngine {
     return total;
   }
 
-  /** Estimate game day from bot start time */
+  /** Estimate game day from config, population heuristic, or fallback */
   _estimateGameDay() {
-    // If we don't know the server start, estimate from config or default to 15
-    return 15;
+    // Try config first
+    const startDate = this._config?.serverStartDate;
+    if (startDate) {
+      const msPerDay = 24 * 60 * 60 * 1000;
+      const daysSinceStart = Math.floor((Date.now() - new Date(startDate).getTime()) / msPerDay);
+      return Math.max(1, daysSinceStart);
+    }
+    // Fallback: estimate from population (rough heuristic)
+    const pop = this._gameState?.population || 0;
+    if (pop > 0) {
+      // ~50 pop/day in early game, ~200/day in mid game
+      return Math.max(1, Math.round(pop / 80));
+    }
+    return 15; // last resort
   }
 
   /** Get the training building for a troop unit */
