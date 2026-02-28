@@ -1385,10 +1385,8 @@
           if (!checkbox) continue;
           scanned++;
 
-          // Skip if troops already on the way
-          var stateTd = qs('td.state', slot);
-          var ongoingIcon = stateTd ? qs('i', stateTd) : null;
-          if (ongoingIcon) { skipped++; continue; }
+          // NOTE: Do NOT skip targets with ongoing raids — re-raid intentionally
+          // sends additional TT raids to bounty-full targets that were just farm-listed.
 
           // Read bounty level
           var bountyIcon = qs('.lastRaidBounty i', slot);
