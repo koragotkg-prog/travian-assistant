@@ -735,11 +735,15 @@ class BotEngine {
           await TravianDelay.humanDelay(1500, 2500);
         } catch (_navErr) { /* best effort */ }
         if (claimed) {
-          this._heroClaimCooldown = Date.now() + 300000; // 5 min cooldown
+          const hcCfg = this.config && this.config.heroConfig;
+          const successCd = (hcCfg && hcCfg.claimCooldownSuccess != null) ? hcCfg.claimCooldownSuccess * 60000 : 300000;
+          this._heroClaimCooldown = Date.now() + successCd;
           return; // skip this cycle, let resources update
         }
         // Even if failed, set cooldown so we don't spam attempts
-        this._heroClaimCooldown = Date.now() + 120000; // 2 min cooldown on failure
+        const hcCfgF = this.config && this.config.heroConfig;
+        const failCd = (hcCfgF && hcCfgF.claimCooldownFail != null) ? hcCfgF.claimCooldownFail * 60000 : 120000;
+        this._heroClaimCooldown = Date.now() + failCd;
       }
 
       // 6. Circuit breaker check — pause if too many consecutive failures
@@ -2175,10 +2179,9 @@ class BotEngine {
     const gCap = cap.granary || wCap;
     if (wCap === 0) return false;
 
-    // Check if any resource is below 20% of capacity (raised from 5% —
-    // at 5% of 7800 = 390, resources rarely drop that low, so the old
-    // threshold almost never triggered proactive claiming).
-    var threshold = 0.20;
+    // Configurable trigger threshold (default 20%)
+    const hc = this.config && this.config.heroConfig;
+    var threshold = (hc && hc.claimThreshold != null) ? hc.claimThreshold / 100 : 0.20;
     return (res.wood || 0) < wCap * threshold ||
            (res.clay || 0) < wCap * threshold ||
            (res.iron || 0) < wCap * threshold ||
@@ -2197,8 +2200,9 @@ class BotEngine {
       const cap = this.gameState.resourceCapacity;
       const wCap = cap.warehouse || 800;
       const gCap = cap.granary || wCap;
-      const targetFill = 0.50; // fill to 50% of capacity (raised from 25%
-      // so each proactive claim is substantial enough to fund upgrades)
+      // Configurable fill target (default 50%)
+      const hc = this.config && this.config.heroConfig;
+      const targetFill = (hc && hc.claimFillTarget != null) ? hc.claimFillTarget / 100 : 0.50;
 
       // Calculate how much of each resource we need to reach targetFill
       const deficit = {

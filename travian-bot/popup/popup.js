@@ -46,6 +46,10 @@ const dom = {
   togAIScoring: document.getElementById('togAIScoring'),
   togTrapTraining: document.getElementById('togTrapTraining'),
   heroMinHealth: document.getElementById('heroMinHealth'),
+  heroClaimThreshold: document.getElementById('heroClaimThreshold'),
+  heroClaimFillTarget: document.getElementById('heroClaimFillTarget'),
+  heroClaimCdSuccess: document.getElementById('heroClaimCdSuccess'),
+  heroClaimCdFail: document.getElementById('heroClaimCdFail'),
   trapBatchSize: document.getElementById('trapBatchSize'),
 
   // Upgrade targets
@@ -1731,6 +1735,10 @@ function collectConfig() {
     },
     heroConfig: {
       minHealth: parseInt(dom.heroMinHealth.value, 10) || 30,
+      claimThreshold: parseInt(dom.heroClaimThreshold.value, 10) || 20,
+      claimFillTarget: parseInt(dom.heroClaimFillTarget.value, 10) || 50,
+      claimCooldownSuccess: parseInt(dom.heroClaimCdSuccess.value, 10) || 5,
+      claimCooldownFail: parseInt(dom.heroClaimCdFail.value, 10) || 2,
     },
     trapConfig: {
       batchSize: parseInt(dom.trapBatchSize ? dom.trapBatchSize.value : '10', 10) || 10,
@@ -1880,6 +1888,10 @@ function populateForm(config) {
   // Hero config
   if (config.heroConfig) {
     if (config.heroConfig.minHealth !== undefined) dom.heroMinHealth.value = config.heroConfig.minHealth;
+    if (config.heroConfig.claimThreshold !== undefined) dom.heroClaimThreshold.value = config.heroConfig.claimThreshold;
+    if (config.heroConfig.claimFillTarget !== undefined) dom.heroClaimFillTarget.value = config.heroConfig.claimFillTarget;
+    if (config.heroConfig.claimCooldownSuccess !== undefined) dom.heroClaimCdSuccess.value = config.heroConfig.claimCooldownSuccess;
+    if (config.heroConfig.claimCooldownFail !== undefined) dom.heroClaimCdFail.value = config.heroConfig.claimCooldownFail;
   }
 
     // Trap config
