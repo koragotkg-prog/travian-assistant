@@ -63,10 +63,11 @@
       const buildQueue = state.constructionQueue || { count: 0 };
       if (buildQueue.count >= (buildQueue.maxCount || 1)) return actions;
 
+      const gidMap = { wood: 1, clay: 2, iron: 3, crop: 4 };
+
       for (const field of fields) {
         if (field.upgrading) continue;
 
-        const gidMap = { wood: 1, clay: 2, iron: 3, crop: 4 };
         const gid = gidMap[field.type] || 0;
         if (!gid) continue;
 
@@ -142,7 +143,7 @@
         if (this.gameData && this.gameData.getBuildingCost) {
           const cost = this.gameData.getBuildingCost(gid, bld.level + 1);
           const totalCost = cost ? (cost.wood || 0) + (cost.clay || 0) + (cost.iron || 0) + (cost.crop || 0) : 1000;
-          baseValue = (1000 / Math.max(totalCost, 100)) * 10 * utilityMult;
+          baseValue = Math.min((1000 / Math.max(totalCost, 100)) * 10 * utilityMult, 25);
         } else {
           baseValue = 10 * utilityMult * (1 + (10 - bld.level) * 0.1);
         }
