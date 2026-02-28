@@ -37,16 +37,18 @@
    */
   function atomicMerge(key, mergeFn) {
     const prev = _writeChains.get(key) || Promise.resolve();
-    const next = prev.then(async () => {
+    const callerPromise = prev.then(async () => {
       const current = await get(key, {});
       const updated = mergeFn(current);
       await set(key, updated);
       return updated;
-    }).catch(err => {
-      console.warn('[TravianStorage] atomicMerge failed for ' + key + ':', err);
     });
-    _writeChains.set(key, next);
-    return next;
+    // FIX: Chain must always resolve so subsequent writes can proceed.
+    // But return the raw promise to callers so they can detect failures.
+    _writeChains.set(key, callerPromise.catch(err => {
+      console.warn('[TravianStorage] atomicMerge failed for ' + key + ':', err);
+    }));
+    return callerPromise;
   }
 
   // ── Default Configuration ────────────────────────────────────────────
@@ -78,8 +80,9 @@
 
       // Troop training settings
       troopConfig: {
-        slots: [],           // Array of {troopType, building, batchSize} — empty = no auto-training
+        type: null,          // Troop type identifier (game-specific)
         minResources: 1000,  // Don't train if total resources below this
+        trainBatchSize: 5,   // Number of troops to queue per cycle
       },
 
       // Farming / raiding settings

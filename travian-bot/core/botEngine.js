@@ -680,6 +680,11 @@ class BotEngine {
       if (this._shouldProactivelyClaimHero()) {
         TravianLogger.log('INFO', '[BotEngine] Resources critically low — attempting proactive hero claim');
         const claimed = await this._proactiveHeroClaim();
+        // FIX: Navigate back home after hero claim — otherwise next SCAN reads hero inventory page
+        try {
+          await this.sendToContentScript({ type: 'EXECUTE', action: 'navigateTo', params: { page: 'dorf1' } });
+          await TravianDelay.humanDelay(1500, 2500);
+        } catch (_navErr) { /* best effort */ }
         if (claimed) {
           this._heroClaimCooldown = Date.now() + 300000; // 5 min cooldown
           return; // skip this cycle, let resources update
@@ -946,9 +951,11 @@ class BotEngine {
               type: 'EXECUTE', action: 'sendAllFarmLists', params: {}
             });
           }
-          // Update last farm time (persistent, not on gameState which gets overwritten)
-          this._lastFarmTime = Date.now();
-          this.stats.farmRaidsSent++;
+          // FIX: Only update farm time on success — failed sends should retry sooner
+          if (response && response.success) {
+            this._lastFarmTime = Date.now();
+            this.stats.farmRaidsSent++;
+          }
           break;
 
         case 'build_traps':
@@ -1081,8 +1088,10 @@ class BotEngine {
               troops: task.params.troops || {}
             }
           });
-          // Update last farm time (persistent, not on gameState which gets overwritten)
-          this._lastFarmTime = Date.now();
+          // FIX: Only update farm time on success — failed attacks should retry sooner
+          if (response && response.success) {
+            this._lastFarmTime = Date.now();
+          }
           break;
 
         case 'switch_village':
@@ -1168,11 +1177,14 @@ class BotEngine {
           // Normal retry logic
           this.taskQueue.markFailed(task.id, errorMsg);
 
-          if (task.retries + 1 >= task.maxRetries) {
+          // FIX: Check task.status (set by markFailed) instead of manual retries+1 calc.
+          // markFailed() already incremented task.retries — adding +1 double-counts,
+          // causing premature "permanently failed" logging on the 2nd of 3 retries.
+          if (task.status === 'failed') {
             this.stats.tasksFailed++;
             this._slog('ERROR', 'Task permanently failed: ' + task.type, { taskId: task.id, error: errorMsg, duration_ms: Date.now() - _taskStart });
           } else {
-            this._slog('WARN', 'Task failed, will retry: ' + task.type, { taskId: task.id, error: errorMsg, retries: task.retries + 1 });
+            this._slog('WARN', 'Task failed, will retry: ' + task.type, { taskId: task.id, error: errorMsg, retries: task.retries });
           }
         }
       }
@@ -1182,7 +1194,8 @@ class BotEngine {
       this.taskQueue.markFailed(task.id, errorMsg);
       this._consecutiveFailures++; // Circuit breaker: increment on exception
 
-      if (task.retries + 1 >= task.maxRetries) {
+      // FIX: Check task.status (set by markFailed) instead of manual retries+1 calc
+      if (task.status === 'failed') {
         this.stats.tasksFailed++;
       }
 

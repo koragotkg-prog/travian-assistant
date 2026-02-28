@@ -1974,26 +1974,21 @@ function removeFarmTarget(index) {
  */
 function saveAllConfig() {
   const config = collectConfig();
-  var storageKey = currentServerKey ? 'bot_config__' + currentServerKey : 'bot_config';
 
-  chrome.storage.local.set({ [storageKey]: config }, () => {
-    if (chrome.runtime.lastError) {
-      console.warn('[Popup] Failed to save config:', chrome.runtime.lastError.message);
-      return;
-    }
-
-    // Also send config to background service worker
-    sendMessage({ type: 'SAVE_CONFIG', config })
-      .then(() => {
-        dom.btnSaveAll.textContent = 'Saved!';
-        setTimeout(() => {
-          dom.btnSaveAll.textContent = 'Save All Settings';
-        }, 1500);
-      })
-      .catch(() => {
+  // FIX: Save ONLY through service worker's atomicMerge path to prevent race conditions.
+  // Previously also wrote directly via chrome.storage.local.set which could race with
+  // the service worker's atomicMerge on the same key.
+  sendMessage({ type: 'SAVE_CONFIG', config })
+    .then(() => {
+      dom.btnSaveAll.textContent = 'Saved!';
+      setTimeout(() => {
         dom.btnSaveAll.textContent = 'Save All Settings';
-      });
-  });
+      }, 1500);
+    })
+    .catch((err) => {
+      console.warn('[Popup] Failed to save config:', err);
+      dom.btnSaveAll.textContent = 'Save All Settings';
+    });
 }
 
 /**
@@ -2533,14 +2528,8 @@ function bindEvents() {
   toggles.forEach((toggle) => {
     toggle.addEventListener('change', () => {
       const config = collectConfig();
-      var storageKey = currentServerKey ? 'bot_config__' + currentServerKey : 'bot_config';
-      chrome.storage.local.set({ [storageKey]: config }, () => {
-        if (chrome.runtime.lastError) {
-          console.warn('[Popup] Failed to save toggle:', chrome.runtime.lastError.message);
-          return;
-        }
-        sendMessage({ type: 'SAVE_CONFIG', config }).catch(console.warn);
-      });
+      // FIX: Save ONLY through service worker's atomicMerge to prevent race conditions
+      sendMessage({ type: 'SAVE_CONFIG', config }).catch(console.warn);
       // Update target warnings when feature toggles change
       checkTargetToggleWarnings();
     });
@@ -2603,7 +2592,8 @@ function populateServerSelector(registry, activeKey) {
 
   dom.serverSelect.innerHTML = '';
 
-  var servers = registry && registry.servers ? registry.servers : {};
+  // registry is already the unwrapped server map from service worker
+  var servers = (registry && typeof registry === 'object') ? registry : {};
   var keys = Object.keys(servers);
 
   // Sort by lastUsed (most recent first)

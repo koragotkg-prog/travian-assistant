@@ -145,6 +145,7 @@ class TaskQueue {
     const nextTask = readyTasks[0];
     nextTask.status = 'running';
     nextTask._startedAt = Date.now();
+    this._dirtyAt = Date.now(); // FIX: getNext() mutates status — must mark dirty
     return nextTask;
   }
 
@@ -182,11 +183,14 @@ class TaskQueue {
 
     // Only allow updating safe fields
     const allowedFields = ['priority', 'params', 'status', 'scheduledFor', 'villageId', 'error', 'retries', 'maxRetries'];
+    let changed = false;
     for (const key of Object.keys(updates)) {
       if (allowedFields.includes(key)) {
         task[key] = updates[key];
+        changed = true;
       }
     }
+    if (changed) this._dirtyAt = Date.now(); // FIX: update() mutates task — must mark dirty
     return true;
   }
 
@@ -272,7 +276,9 @@ class TaskQueue {
   clearCompleted() {
     const before = this.queue.length;
     this.queue = this.queue.filter(t => t.status !== 'completed');
-    return before - this.queue.length;
+    const removed = before - this.queue.length;
+    if (removed > 0) this._dirtyAt = Date.now(); // FIX: clearCompleted() mutates queue — must mark dirty
+    return removed;
   }
 
   /**
@@ -337,6 +343,7 @@ class TaskQueue {
       }
     }
 
+    if (recovered > 0) this._dirtyAt = Date.now(); // FIX: recoverStuckTasks() mutates tasks — must mark dirty
     return recovered;
   }
 
