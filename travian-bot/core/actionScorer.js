@@ -197,27 +197,34 @@
     _scoreFarming(state, config) {
       const actions = [];
       const farmConfig = config.farmConfig || config;
-
       if (!farmConfig.autoFarming && !config.autoFarming) return actions;
 
-      // Base farming score
       const lastFarm = state.lastFarmTime || 0;
       const elapsed = Date.now() - lastFarm;
       const interval = (farmConfig.farmInterval || 300) * 1000;
-
       if (elapsed < interval) return actions;
 
-      // Check outgoing raids
       const outgoing = state.troopMovements?.outgoing || 0;
       if (outgoing > 0) return actions;
 
-      const score = 20; // farming is generally high value
+      // Dynamic score based on farm intelligence
+      let score = 15; // base (reduced from fixed 20)
+      const farmIntel = state.farmIntelligence;
+      if (farmIntel) {
+        const readyTargets = farmIntel.readyCount || 0;
+        const avgLoot = farmIntel.avgLootPerRaid || 0;
+        // More ready targets and higher avg loot = higher priority
+        score = Math.min(30, 10 + readyTargets * 0.5 + (avgLoot / 500));
+      }
+      // Time urgency: score increases as interval is exceeded
+      const overdueRatio = Math.min(elapsed / interval, 3);
+      score *= (0.7 + 0.3 * overdueRatio);
 
       actions.push({
         type: 'send_farm',
         params: { useRallyPointFarmList: farmConfig.useRallyPointFarmList !== false },
         score,
-        reason: `Farm raid (${Math.floor(elapsed/1000)}s since last)`
+        reason: `Farm raid (${Math.floor(elapsed/1000)}s since last, score: ${score.toFixed(1)})`
       });
 
       return actions;
