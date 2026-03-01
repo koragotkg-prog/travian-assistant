@@ -379,6 +379,9 @@
       return await this._stepNavHome(sendFn);
     }
 
+    // Always feed intelligence after a successful send (even without re-raid)
+    await this._feedIntelligence(sendFn);
+
     // Check if re-raid is enabled
     if (cfg.enableReRaid) {
       return await this._stepScanReRaid(sendFn);
@@ -388,75 +391,76 @@
   };
 
   /**
+   * Feed FarmIntelligence with results from farm list slots.
+   * Called after every successful farm send so intelligence data stays fresh
+   * regardless of whether re-raid is enabled.
+   */
+  FarmManager.prototype._feedIntelligence = async function(sendFn) {
+    if (!this._intelligence) return;
+
+    // Wait for UI to update after farm send (AJAX-based, icons refresh asynchronously)
+    await this._humanDelay(2000, 3500);
+    await this._waitForCSWrapped(sendFn, 10000);
+
+    try {
+      var slotScanRaw = await sendFn({
+        type: 'EXECUTE', action: 'scanFarmListSlots', params: {}
+      });
+      // Unwrap bridge response — .slots lives in .data
+      var slotScan = (slotScanRaw && slotScanRaw.data && typeof slotScanRaw.data === 'object')
+        ? slotScanRaw.data : slotScanRaw;
+      var allSlots = (slotScan && slotScan.success && slotScan.slots) || [];
+      var recorded = 0;
+      for (var si = 0; si < allSlots.length; si++) {
+        var s = allSlots[si];
+        if (s.x == null || s.y == null) continue;
+        if (s.raidStatus === 'unknown') continue;
+
+        if (!this._intelligence.getTarget(s.x, s.y)) {
+          this._intelligence.recordRaidSent(s.x, s.y, {}, Date.now() - 60000, 'farmList');
+        }
+
+        var troopsLost = {};
+        if (s.raidStatus === 'lost') {
+          troopsLost = { _total: 1 };
+        } else if (s.raidStatus === 'won_with_losses') {
+          troopsLost = { _partial: 1 };
+        }
+
+        this._intelligence.recordRaidResult(s.x, s.y, {
+          loot: {
+            wood: Math.round(s.lastLoot / 4),
+            clay: Math.round(s.lastLoot / 4),
+            iron: Math.round(s.lastLoot / 4),
+            crop: Math.round(s.lastLoot / 4)
+          },
+          troopsLost: troopsLost,
+          bountyFull: s.bountyLevel === 'full'
+        });
+
+        this._intelligence.updateTargetInfo(s.x, s.y, {
+          name: s.name || undefined,
+          population: s.population || undefined,
+          distance: s.distance || undefined
+        });
+        recorded++;
+      }
+      if (recorded > 0) {
+        Logger.log('DEBUG', LOG_TAG + ' Intelligence: recorded results for ' + recorded + '/' + allSlots.length + ' farm slots');
+      }
+    } catch (intErr) {
+      Logger.log('WARN', LOG_TAG + ' Intelligence feed error: ' + intErr.message);
+    }
+  };
+
+  /**
    * Step 5: Scan for re-raid targets (bounty-full after farm send)
    */
   FarmManager.prototype._stepScanReRaid = async function(sendFn) {
     if (this._state !== STATES.SCAN_RERAID) { this._transition(STATES.SCAN_RERAID); await this._persistCycle(); }
 
-    // Wait for UI to update after farm send (AJAX-based, needs time for icons to refresh)
-    await this._humanDelay(2000, 3500);
-    await this._waitForCSWrapped(sendFn, 10000);
-
+    // Intelligence was already fed by _feedIntelligence() in _stepSendLists
     var cfg = this._cycle.config;
-
-    // ── Feed FarmIntelligence with results from ALL farm list slots ────────
-    // scanFarmListSlots returns every slot with raidStatus, bountyLevel, lastLoot
-    // and (now) coordinates.  We record observed results for any previously-sent
-    // raids so intelligence can auto-blacklist lossy targets and compute scores.
-    if (this._intelligence) {
-      try {
-        var slotScanRaw = await sendFn({
-          type: 'EXECUTE', action: 'scanFarmListSlots', params: {}
-        });
-        // FIX: Unwrap bridge response — .slots lives in .data
-        var slotScan = (slotScanRaw && slotScanRaw.data && typeof slotScanRaw.data === 'object')
-          ? slotScanRaw.data : slotScanRaw;
-        var allSlots = (slotScan && slotScan.success && slotScan.slots) || [];
-        var recorded = 0;
-        for (var si = 0; si < allSlots.length; si++) {
-          var s = allSlots[si];
-          if (s.x == null || s.y == null) continue;
-          if (s.raidStatus === 'unknown') continue; // No prior raid data
-
-          // Ensure target exists in intelligence (may have been sent via farm list, not tracked)
-          if (!this._intelligence.getTarget(s.x, s.y)) {
-            this._intelligence.recordRaidSent(s.x, s.y, {}, Date.now() - 60000, 'farmList');
-          }
-
-          // Map farm list status to recordRaidResult format
-          var troopsLost = {};
-          if (s.raidStatus === 'lost') {
-            troopsLost = { _total: 1 }; // Signal losses occurred (exact count unknown)
-          } else if (s.raidStatus === 'won_with_losses') {
-            troopsLost = { _partial: 1 }; // Partial losses
-          }
-
-          this._intelligence.recordRaidResult(s.x, s.y, {
-            loot: {
-              wood: Math.round(s.lastLoot / 4),
-              clay: Math.round(s.lastLoot / 4),
-              iron: Math.round(s.lastLoot / 4),
-              crop: Math.round(s.lastLoot / 4)
-            },
-            troopsLost: troopsLost,
-            bountyFull: s.bountyLevel === 'full'
-          });
-
-          // Also update target metadata (name, population, distance)
-          this._intelligence.updateTargetInfo(s.x, s.y, {
-            name: s.name || undefined,
-            population: s.population || undefined,
-            distance: s.distance || undefined
-          });
-          recorded++;
-        }
-        if (recorded > 0) {
-          Logger.log('DEBUG', LOG_TAG + ' Intelligence: recorded results for ' + recorded + '/' + allSlots.length + ' farm slots');
-        }
-      } catch (intErr) {
-        Logger.log('WARN', LOG_TAG + ' Intelligence feed error: ' + intErr.message);
-      }
-    }
 
     Logger.log('INFO', LOG_TAG + ' Scanning for re-raid targets (minLoot=' + cfg.reRaidMinLoot + ')');
 
@@ -692,6 +696,20 @@
       reRaidSent: 0,
       failureReason: reason,
       recovered: true
+    };
+  };
+
+  /**
+   * Get current farm cycle status for UI display.
+   */
+  FarmManager.prototype.getCycleStatus = function() {
+    if (!this._cycle) return null;
+    return {
+      state: this._state,
+      startedAt: this._cycle.startedAt || null,
+      sent: this._cycle.listSendResult ? this._cycle.listSendResult.sent : 0,
+      reRaidSent: this._cycle.reRaidSent || 0,
+      reRaidFailed: this._cycle.reRaidFailed || 0
     };
   };
 

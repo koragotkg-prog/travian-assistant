@@ -313,6 +313,14 @@ class BotEngine {
             }
           }
 
+          // Restore stats (farmRaidsSent, etc.) so counters survive SW restarts
+          if (savedState.stats) {
+            this.stats.farmRaidsSent = savedState.stats.farmRaidsSent || 0;
+            this.stats.tasksCompleted = savedState.stats.tasksCompleted || 0;
+            this.stats.tasksFailed = savedState.stats.tasksFailed || 0;
+            console.log('[BotEngine] Restored stats: farmRaidsSent=' + this.stats.farmRaidsSent);
+          }
+
           // Restore action counter to maintain rate limiting across restarts
           if (savedState.actionsThisHour != null && savedState.hourResetTime) {
             const elapsed = Date.now() - savedState.hourResetTime;
@@ -1274,7 +1282,8 @@ class BotEngine {
       prereqResolutions: this.decisionEngine ? this.decisionEngine.lastPrereqResolutions : [],
       executionLocked: this._executionLocked,
       cycleLock: this._cycleLock,
-      consecutiveFailures: this._consecutiveFailures
+      consecutiveFailures: this._consecutiveFailures,
+      farmCycle: this._farmManager ? this._farmManager.getCycleStatus() : null
     };
   }
 

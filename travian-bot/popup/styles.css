@@ -1320,6 +1320,24 @@ input[type="text"]:focus {
   font-weight: 700;
 }
 
+.farm-cycle-badge {
+  display: none;
+  font-size: 9px;
+  font-weight: 600;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: var(--primary);
+  color: #fff;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  animation: pulse-badge 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse-badge {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
 /* ============================================================
    RESOURCE BARS
    ============================================================ */

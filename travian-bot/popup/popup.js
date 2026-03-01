@@ -177,6 +177,7 @@ const dom = {
   // Dashboard: Info Strip
   nextActionTimer: document.getElementById('nextActionTimer'),
   farmRaidStats: document.getElementById('farmRaidStats'),
+  farmCycleState: document.getElementById('farmCycleState'),
   trapperStatus: document.getElementById('trapperStatus'),
 
   // Dashboard: AI + Quest
@@ -907,9 +908,25 @@ function updateNextAction(nextActionTime) {
 /**
  * Update farm raid stats display.
  */
-function updateFarmStats(stats) {
+function updateFarmStats(stats, farmCycle) {
   if (!dom.farmRaidStats || !stats) return;
   dom.farmRaidStats.textContent = stats.farmRaidsSent || 0;
+
+  // Show farm cycle state badge when a cycle is active
+  if (dom.farmCycleState) {
+    if (farmCycle && farmCycle.state && farmCycle.state !== 'IDLE') {
+      var stateLabels = {
+        NAV_RALLY: 'Rally', CLICK_TAB: 'Tab', WAIT_TAB: 'Wait',
+        SEND_LISTS: 'Sending', SCAN_RERAID: 'Scan', SEND_RERAID: 'ReRaid',
+        NAV_HOME: 'Home', RECOVERING: 'Recover'
+      };
+      dom.farmCycleState.textContent = stateLabels[farmCycle.state] || farmCycle.state;
+      dom.farmCycleState.style.display = '';
+    } else {
+      dom.farmCycleState.textContent = '';
+      dom.farmCycleState.style.display = 'none';
+    }
+  }
 }
 
 /**
@@ -2509,7 +2526,7 @@ function refreshStatus() {
         }
         updateNextAction(s.nextActionTime);
         if (s.stats) {
-          updateFarmStats(s.stats);
+          updateFarmStats(s.stats, s.farmCycle);
         }
 
         // AI + Trapper + Quest + Attack status
