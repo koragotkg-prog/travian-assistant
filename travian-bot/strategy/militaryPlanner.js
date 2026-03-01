@@ -405,11 +405,12 @@
     var primary = this.GD.TROOPS[tribe][plan.primaryUnit];
     if (primary && resources) {
       var maxByRes = Math.min(
-        Math.floor((resources.wood || 0) / primary.cost.wood),
-        Math.floor((resources.clay || 0) / primary.cost.clay),
-        Math.floor((resources.iron || 0) / primary.cost.iron),
-        Math.floor((resources.crop || 0) / primary.cost.crop)
+        primary.cost.wood ? Math.floor((resources.wood || 0) / primary.cost.wood) : Infinity,
+        primary.cost.clay ? Math.floor((resources.clay || 0) / primary.cost.clay) : Infinity,
+        primary.cost.iron ? Math.floor((resources.iron || 0) / primary.cost.iron) : Infinity,
+        primary.cost.crop ? Math.floor((resources.crop || 0) / primary.cost.crop) : Infinity
       );
+      if (!isFinite(maxByRes)) maxByRes = 0; // all costs zero (shouldn't happen)
       plan.affordableCount = Math.max(0, maxByRes);
       plan.queue.push({ unit: plan.primaryUnit, count: Math.min(plan.affordableCount, 20), building: primary.building });
     }

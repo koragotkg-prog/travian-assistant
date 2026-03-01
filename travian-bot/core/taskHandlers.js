@@ -104,8 +104,9 @@
     send_farm: async function(engine, task) {
       // Delegate to FarmManager FSM (4-layer farm stack)
       if (!engine._farmManager) {
-        var farmIntel = new self.TravianFarmIntelligence(engine.serverKey);
-        await farmIntel.load();
+        // Reuse existing intelligence instance if available (e.g. from partial init)
+        var farmIntel = engine._farmIntelligence || new self.TravianFarmIntelligence(engine.serverKey);
+        if (!engine._farmIntelligence) await farmIntel.load();
         var farmSched = new self.TravianFarmScheduler(farmIntel);
         engine._farmManager = new self.TravianFarmManager(engine.serverKey, farmIntel, farmSched);
         engine._farmIntelligence = farmIntel;
@@ -188,21 +189,6 @@
       await engine._waitForContentScript(15000);
       return await engine.sendToContentScript({
         type: 'EXECUTE', action: 'sendHeroAdventure', params: {}
-      });
-    },
-
-    // -----------------------------------------------------------------------
-    // claim_hero_resources — Navigate to hero page, use resource item
-    // -----------------------------------------------------------------------
-    claim_hero_resources: async function(engine, task) {
-      // Navigate to hero INVENTORY page (not hero overview) where consumable items are
-      await engine.sendToContentScript({
-        type: 'EXECUTE', action: 'navigateTo', params: { page: 'heroInventory' }
-      });
-      await engine._randomDelay();
-      await engine._waitForContentScript(15000);
-      return await engine.sendToContentScript({
-        type: 'EXECUTE', action: 'useHeroItem', params: { itemIndex: task.params.itemIndex || 0 }
       });
     },
 

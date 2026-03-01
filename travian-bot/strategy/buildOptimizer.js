@@ -183,7 +183,7 @@
       candidates.push({
         type: 'upgrade_resource',
         buildingKey: key,
-        slot: f.slot || f.id,
+        slot: (f.slot != null) ? f.slot : f.id,
         fromLevel: f.level || 0,
         score: roi.roi * phaseMult,
         payback: roi.paybackHours,

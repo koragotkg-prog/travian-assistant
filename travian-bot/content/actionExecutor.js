@@ -1748,43 +1748,10 @@
     // V2 = post-Changelog-367 (bulk transfer: all 4 resources at once)
     // After inspecting the new DOM via MCP, update the V2 block below.
     _heroSelectors: {
-      // ── V1 selectors (confirmed working pre-367) ──────────────────────
-      v1: {
-        // Item containers on /hero/inventory
-        itemList:   '.heroItems .heroItem, .heroInventory .heroItem, #itemsToSale .heroItem, .inventoryContent .item',
-        // Child element whose class contains the item ID (e.g. "item item145")
-        itemChild:  '[class*="item item"]',
-        // Resource item IDs regex (small: 145-148, large: 176-179)
-        resourceIdPattern: /item14[5678]|item17[6789]/,
-        // Count badge inside each item
-        countChild: '.count',
-        // Dialog that opens when clicking a resource item
-        dialog:     '.heroConsumablesPopup, .dialogContent, .dialog.plain',
-        // Input field inside the dialog to set transfer amount
-        dialogInput: [
-          '.heroConsumablesPopup input[type="text"]',
-          '.dialog input[type="text"]',
-          '.dialogContainer input[type="number"]',
-          '.dialogContainer input',
-          '.heroConsumablesPopup input'
-        ],
-        // Green confirm button in dialog
-        dialogConfirm: [
-          '.heroConsumablesPopup button.green',
-          '.dialog button.green',
-          '.dialogContainer button.green',
-          '.dialogButtonOk',
-          '#ok',
-          'button.green[type="submit"]',
-          'button.green[type="button"]'
-        ],
-        // Grey cancel button in dialog
-        dialogCancel: '.heroConsumablesPopup button.grey, .dialog button.grey, button.textButtonV2.grey'
-      },
-
       // ── V2 selectors (unified 4-resource transfer dialog, Feb 2026) ───
       // Clicking any consumable heroItem opens a dialog with ALL 4 resources.
       // Dialog: #dialogContent with .resourceRow per resource, inputs by name.
+      // V1 (pre-Changelog-367) selectors removed — Travian no longer uses per-item dialogs.
       v2: {
         // Dialog container (appears AFTER clicking any resource heroItem)
         bulkPanel:       '#dialogContent',
@@ -1801,11 +1768,11 @@
         actionButtonSelector: '#dialogContent > .actionButton button.textButtonV2',
         // Close dialog button (X in top right)
         cancelButton:    '.dialogCancelButton',
-        // Item list (same selectors as V1 — items at bottom of inventory page)
+        // Item list on /hero/inventory
         itemList:        '.heroItems .heroItem, .heroInventory .heroItem, #itemsToSale .heroItem, .inventoryContent .item',
-        // Resource count display (same as V1)
+        // Resource count display
         countChild:      '.count',
-        // Item child class for resource type detection (same as V1)
+        // Item child class for resource type detection (e.g. "item item145")
         itemChild:       '[class*="item item"]',
         resourceIdPattern: /item14[5678]|item17[6789]/
       }
@@ -1813,125 +1780,13 @@
 
     /**
      * Detect which hero inventory UI version is active.
-     * Called on /hero/inventory page. Returns 'v2' if new bulk transfer UI
-     * is detected, otherwise 'v1' (legacy one-at-a-time dialog).
+     * Since Travian Changelog-367, only V2 (bulk transfer) exists.
+     * Kept for backward compatibility with callers that check the version.
      *
-     * After MCP inspection, update the v2 detection markers below.
-     *
-     * @returns {string} 'v1' or 'v2'
+     * @returns {string} Always 'v2'
      */
     detectHeroUIVersion: function () {
-      // V2 detection: the new unified dialog opens on-demand (not a static panel).
-      // We detect V2 by checking if consumable heroItems exist AND the page has
-      // the new-style heroItem structure (heroItemV1 class = new Travian UI).
-      // The actual dialog (#dialogContent with .resourceRow) only appears AFTER clicking an item.
-      var consumables = qsa('.heroItem[data-tier="consumable"]');
-      if (consumables && consumables.length > 0) {
-        // Check for new-style heroItem class (present in Feb 2026 Travian)
-        var firstItem = consumables[0];
-        if (firstItem.classList.contains('heroItemV1') || firstItem.classList.contains('consumable')) {
-          Logger.log('detectHeroUIVersion: V2 (unified transfer dialog) detected');
-          return 'v2';
-        }
-      }
-
-      // If a dialog is already open, check for the V2 multi-resource layout
-      var resourceRows = qsa('#dialogContent .resourceRow');
-      if (resourceRows && resourceRows.length >= 4) {
-        Logger.log('detectHeroUIVersion: V2 detected via open dialog (.resourceRow)');
-        return 'v2';
-      }
-
-      // Default: V1 (legacy)
-      Logger.log('detectHeroUIVersion: V1 (legacy)');
-      return 'v1';
-    },
-
-    /**
-     * Use a hero inventory item (resource bucket, etc.) by index.
-     * Must already be on /hero/inventory page.
-     * Uses V1 (legacy one-at-a-time dialog) selectors.
-     *
-     * @param {number} itemIndex - Index of the item to use (0-based among all .heroItem elements)
-     * @param {number} [amount] - Optional specific amount to transfer. If omitted, uses Travian default (fill warehouse).
-     * @returns {Promise<object>}
-     */
-    useHeroItem: async function (itemIndex, amount) {
-      try {
-        Logger.log('useHeroItem: claiming item at index', itemIndex, 'amount:', amount || 'default');
-        await humanDelay(300, 600);
-
-        var sel = this._heroSelectors.v1;
-
-        // In Travian Legends, hero items don't have "use" buttons.
-        // You click the .heroItem element directly → a dialog opens → click green confirm button.
-        // IMPORTANT: Must use same selectors as scanHeroInventory so indices match!
-        var heroItems = qsa(sel.itemList);
-
-        if (!heroItems || heroItems.length === 0) {
-          Logger.warn('useHeroItem: no hero items found on page');
-          return { success: false, reason: 'no_items', message: 'No hero items found on page' };
-        }
-
-        var idx = (itemIndex != null) ? itemIndex : 0;
-        if (idx >= heroItems.length) {
-          Logger.warn('useHeroItem: index ' + idx + ' out of range (' + heroItems.length + ' items)');
-          return { success: false, reason: 'no_items', message: 'Item index out of range' };
-        }
-
-        // Click the item itself to open the consumable dialog
-        await simulateHumanClick(heroItems[idx]);
-        Logger.log('useHeroItem: clicked item at index', idx);
-
-        // Wait for the consumable dialog to appear
-        var dialogPopup = await awaitSelector(sel.dialog, 3000);
-        if (!dialogPopup) {
-          Logger.warn('useHeroItem: dialog did not appear after clicking item');
-          return { success: false, reason: 'no_items', message: 'Item dialog did not open' };
-        }
-        await humanDelay(300, 600);
-
-        // In Travian Legends, hero resource dialog asks for RESOURCE AMOUNT to transfer.
-        // Default is auto-calculated to fill warehouse to capacity — which is wasteful!
-        // SAFETY: If no amount specified, CANCEL dialog to avoid draining hero resources.
-        if (!amount || amount <= 0) {
-          Logger.warn('useHeroItem: no specific amount — cancelling dialog to avoid waste');
-          var cancelBtn2 = qs(sel.dialogCancel);
-          if (cancelBtn2) cancelBtn2.click();
-          return { success: false, reason: 'no_amount', message: 'No transfer amount specified, cancelled to avoid waste' };
-        }
-        var useAmount = Math.ceil(amount);
-        var filled = await fillInput(sel.dialogInput, useAmount);
-        if (filled) {
-          Logger.log('useHeroItem: set transfer amount to', useAmount);
-        } else {
-          // CRITICAL: If we can't set the amount, the dialog default may transfer everything!
-          // Cancel instead of proceeding with unknown amount.
-          Logger.warn('useHeroItem: could not set amount in input — cancelling to avoid waste');
-          var cancelBtn3 = qs(sel.dialogCancel);
-          if (cancelBtn3) cancelBtn3.click();
-          return { success: false, reason: 'button_not_found', message: 'Could not set transfer amount' };
-        }
-        await humanDelay(200, 400);
-
-        // Click the green confirm/transfer button in the dialog
-        var confirmBtn = trySelectors(sel.dialogConfirm);
-        if (confirmBtn) {
-          await simulateHumanClick(confirmBtn);
-          Logger.log('useHeroItem: confirmed transfer');
-          await humanDelay(500, 1000);
-          return { success: true };
-        } else {
-          // Dialog opened but no green button — close it
-          var cancelBtn = qs(sel.dialogCancel);
-          if (cancelBtn) cancelBtn.click();
-          Logger.warn('useHeroItem: no confirm button found in dialog');
-          return { success: false, reason: 'button_not_found', message: 'No confirm button in item dialog' };
-        }
-      } catch (e) {
-        Logger.error('useHeroItem error:', e);
-        return { success: false, reason: 'button_not_found', message: e.message };
-      }
+      return 'v2';
     },
 
     /**
@@ -2059,16 +1914,13 @@
         Logger.log('scanHeroInventory');
         await humanDelay(200, 400);
 
-        // Detect UI version
-        var uiVersion = this.detectHeroUIVersion();
-        var sel = (uiVersion === 'v2' && this._heroSelectors.v2.itemList)
-          ? this._heroSelectors.v2
-          : this._heroSelectors.v1;
-        var resPattern = sel.resourceIdPattern || this._heroSelectors.v1.resourceIdPattern;
+        // V2-only (post-Changelog-367)
+        var sel = this._heroSelectors.v2;
+        var resPattern = sel.resourceIdPattern;
 
         var items = [];
         // Hero inventory items - look for item containers
-        var itemEls = qsa(sel.itemList || this._heroSelectors.v1.itemList);
+        var itemEls = qsa(sel.itemList);
 
         if (itemEls && itemEls.length > 0) {
           for (var i = 0; i < itemEls.length; i++) {
@@ -2081,7 +1933,7 @@
             // Detect resource items by child .item class (Travian item IDs):
             // Small crates: item145=wood, item146=clay, item147=iron, item148=crop
             // Large crates: item176=wood, item177=clay, item178=iron, item179=crop
-            var childSel = sel.itemChild || this._heroSelectors.v1.itemChild;
+            var childSel = sel.itemChild;
             var itemChild = qs(childSel, el);
             var itemChildCls = itemChild ? (itemChild.className || '') : '';
             var isResourceByItemId = resPattern.test(itemChildCls);
@@ -2100,7 +1952,7 @@
             var isConsumable = tier === 'consumable' || cls.indexOf('consumable') !== -1;
 
             // Read count from .count child element
-            var countSel = sel.countChild || this._heroSelectors.v1.countChild;
+            var countSel = sel.countChild;
             var countEl = qs(countSel, el);
             var count = countEl ? parseInt(countEl.textContent.trim(), 10) || 0 : 0;
 
@@ -2116,11 +1968,11 @@
           }
         }
 
-        Logger.log('scanHeroInventory: found', items.length, 'items, resources:', items.filter(function(x){return x.isResource;}).length, 'uiVersion:', uiVersion);
-        return { success: true, items: items, uiVersion: uiVersion };
+        Logger.log('scanHeroInventory: found', items.length, 'items, resources:', items.filter(function(x){return x.isResource;}).length);
+        return { success: true, items: items, uiVersion: 'v2' };
       } catch (e) {
         Logger.error('scanHeroInventory error:', e);
-        return { success: false, items: [], uiVersion: 'v1' };
+        return { success: false, items: [], uiVersion: 'v2' };
       }
     },
 
@@ -2597,10 +2449,6 @@
 
             case 'sendHeroAdventure':
               actionResult = await TravianExecutor.sendHeroAdventure();
-              break;
-
-            case 'useHeroItem':
-              actionResult = await TravianExecutor.useHeroItem(params.itemIndex, params.amount);
               break;
 
             case 'useHeroItemBulk':

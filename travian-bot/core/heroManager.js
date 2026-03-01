@@ -6,7 +6,7 @@
  *   - Proactive hero resource claiming (when resources are critically low)
  *   - Reactive hero resource claiming (when a task fails due to insufficient resources)
  *   - Resource deficit calculation for building/upgrade tasks
- *   - V1 (per-item dialog) and V2 (bulk transfer) claim paths
+ *   - V2 bulk transfer claim path (post-Changelog-367)
  *   - Claim cooldown management
  *
  * Runs in service worker context (no DOM, no window).
@@ -234,11 +234,8 @@
           return false;
         }
 
-        // Route: V2 bulk transfer (post-Changelog-367) vs V1 one-at-a-time
-        if (uiVersion === 'v2') {
-          return await this._claimResourcesV2(deficit, usableResources);
-        }
-        return await this._claimResourcesV1(deficit, usableResources);
+        // V2 bulk transfer (post-Changelog-367) — only path since V1 was removed
+        return await this._claimResourcesV2(deficit, usableResources);
 
       } catch (err) {
         _getLogger().log('WARN', '[HeroManager] Hero resource claim failed: ' + err.message);
@@ -386,70 +383,7 @@
     // -----------------------------------------------------------------------
 
     /**
-     * V1 hero resource claim: one resource at a time via per-item dialog.
-     * (Pre-Changelog-367 legacy path)
-     * @private
-     */
-    async _claimResourcesV1(deficit, usableResources) {
-      var itemClassToRes = {
-        item145: 'wood', item176: 'wood',
-        item146: 'clay', item177: 'clay',
-        item147: 'iron', item178: 'iron',
-        item148: 'crop', item179: 'crop'
-      };
-
-      var claimed = false;
-      for (var i = 0; i < usableResources.length; i++) {
-        var item = usableResources[i];
-        // Determine resource type from itemClass
-        var resType = null;
-        var cls = item.itemClass || '';
-        var entries = Object.entries(itemClassToRes);
-        for (var j = 0; j < entries.length; j++) {
-          if (cls.indexOf(entries[j][0]) !== -1) { resType = entries[j][1]; break; }
-        }
-        if (!resType) continue;
-
-        // Calculate exact amount needed for THIS resource type
-        var needed = deficit[resType] || 0;
-        if (needed <= 0) {
-          _getLogger().log('DEBUG', '[HeroManager] Skipping ' + resType + ' — not short');
-          continue;
-        }
-
-        // Cap at available amount (don't try to transfer more than hero has)
-        var available = parseInt(item.count) || 0;
-        var transferAmount = Math.min(Math.ceil(needed), available);
-        if (transferAmount <= 0) {
-          _getLogger().log('DEBUG', '[HeroManager] Skipping ' + resType + ' — hero has none available');
-          continue;
-        }
-
-        _getLogger().log('INFO', '[HeroManager] V1 claiming ' + transferAmount + ' ' + resType + ' from hero (deficit=' + Math.ceil(needed) + ', heroHas=' + available + ')');
-
-        var useResult = await this._bridge.send({
-          type: 'EXECUTE', action: 'useHeroItem',
-          params: { itemIndex: item.index, amount: transferAmount }
-        });
-
-        if (useResult && useResult.success) {
-          _getLogger().log('INFO', '[HeroManager] ' + resType + ' claimed (' + transferAmount + ' resources)');
-          claimed = true;
-        } else {
-          _getLogger().log('WARN', '[HeroManager] Failed to claim ' + resType + ' from hero');
-        }
-
-        await this._delayFn();
-      }
-
-      if (claimed) {
-        _getLogger().log('INFO', '[HeroManager] V1 hero resource(s) claimed successfully');
-      }
-      return claimed;
-    }
-
-    /**
-     * V2 hero resource claim: bulk transfer all resources in one action.
+     * Bulk transfer hero resources using the V2 unified dialog.
      * (Post-Changelog-367 — transfers all 4 resource types at once)
      * @private
      */
@@ -501,8 +435,7 @@
         _getLogger().log('INFO', '[HeroManager] V2 bulk hero resource claim successful');
         return true;
       } else {
-        // V2 detected but bulk transfer failed — V1 won't work on the new UI either
-        // (old .heroConsumablesPopup dialog no longer exists on V2 servers)
+        // Bulk transfer failed — no fallback available
         var reason = (bulkResult && bulkResult.reason) || 'unknown';
         _getLogger().log('WARN', '[HeroManager] V2 bulk transfer failed: ' + reason);
         return false;
