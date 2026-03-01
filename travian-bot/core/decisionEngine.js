@@ -329,7 +329,7 @@ class DecisionEngine {
     }
 
     // 7.5. Quest reward claiming — if quest data shows claimable quests
-    if (!this.isCoolingDown('claim_quest') && !taskQueue.hasAnyTaskOfType('claim_quest')) {
+    if (config.autoQuestClaim !== false && !this.isCoolingDown('claim_quest') && !taskQueue.hasAnyTaskOfType('claim_quest')) {
       const questTask = this._evaluateQuestClaiming(gameState);
       if (questTask) {
         newTasks.push(questTask);

@@ -45,6 +45,7 @@ const TAB_PANEL_MAP = {
   ai:     'panelAI',
   logs:   'panelLogs',
   farm:   'panelFarm',
+  diag:   'panelDiag',
 };
 
 // Building GIDs available for construction in empty slots

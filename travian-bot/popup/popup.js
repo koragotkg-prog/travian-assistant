@@ -37,6 +37,11 @@ const dom = {
   // Village selector
   villageSelect: document.getElementById('villageSelect'),
 
+  // Attack alert
+  attackAlert: document.getElementById('attackAlert'),
+  attackCount: document.getElementById('attackCount'),
+  attackEta: document.getElementById('attackEta'),
+
   // Feature toggles
   togResourceUpgrade: document.getElementById('togResourceUpgrade'),
   togBuildingUpgrade: document.getElementById('togBuildingUpgrade'),
@@ -45,12 +50,30 @@ const dom = {
   togHeroAdventure: document.getElementById('togHeroAdventure'),
   togAIScoring: document.getElementById('togAIScoring'),
   togTrapTraining: document.getElementById('togTrapTraining'),
+  togNpcTrade: document.getElementById('togNpcTrade'),
+  togDodge: document.getElementById('togDodge'),
+  togQuestClaim: document.getElementById('togQuestClaim'),
   heroMinHealth: document.getElementById('heroMinHealth'),
   heroClaimThreshold: document.getElementById('heroClaimThreshold'),
   heroClaimFillTarget: document.getElementById('heroClaimFillTarget'),
   heroClaimCdSuccess: document.getElementById('heroClaimCdSuccess'),
   heroClaimCdFail: document.getElementById('heroClaimCdFail'),
   trapBatchSize: document.getElementById('trapBatchSize'),
+
+  // NPC config
+  togNpcEnabled: document.getElementById('togNpcEnabled'),
+  npcTriggerPercent: document.getElementById('npcTriggerPercent'),
+  npcRatioWood: document.getElementById('npcRatioWood'),
+  npcRatioClay: document.getElementById('npcRatioClay'),
+  npcRatioIron: document.getElementById('npcRatioIron'),
+  npcRatioCrop: document.getElementById('npcRatioCrop'),
+  npcRatioSum: document.getElementById('npcRatioSum'),
+
+  // Dodge config
+  togDodgeEnabled: document.getElementById('togDodgeEnabled'),
+  dodgeDestX: document.getElementById('dodgeDestX'),
+  dodgeDestY: document.getElementById('dodgeDestY'),
+  dodgeMinReact: document.getElementById('dodgeMinReact'),
 
   // Upgrade targets
   btnScanBuildings: document.getElementById('btnScanBuildings'),
@@ -179,6 +202,23 @@ const dom = {
   lifetimeLosses: document.getElementById('lifetimeLosses'),
   farmIntelTargetList: document.getElementById('farmIntelTargetList'),
   farmTargetBadge: document.getElementById('farmTargetBadge'),
+
+  // Diagnostics tab
+  diagFailures: document.getElementById('diagFailures'),
+  diagFailBar: document.getElementById('diagFailBar'),
+  diagCBStatus: document.getElementById('diagCBStatus'),
+  diagActionsHr: document.getElementById('diagActionsHr'),
+  diagRateBar: document.getElementById('diagRateBar'),
+  diagRateStatus: document.getElementById('diagRateStatus'),
+  diagExecLock: document.getElementById('diagExecLock'),
+  diagCycleLock: document.getElementById('diagCycleLock'),
+  diagNotLoggedIn: document.getElementById('diagNotLoggedIn'),
+  diagScheduler: document.getElementById('diagScheduler'),
+  diagCooldowns: document.getElementById('diagCooldowns'),
+  diagPrereqs: document.getElementById('diagPrereqs'),
+  diagDebugJson: document.getElementById('diagDebugJson'),
+  debugToggle: document.getElementById('debugToggle'),
+  debugToggleIcon: document.getElementById('debugToggleIcon'),
 };
 
 // ============================================================
@@ -395,8 +435,9 @@ function updateStatus(status) {
     dom.statusText.textContent = 'Emergency: ' + status.emergencyReason;
     dom.statusText.title = status.emergencyReason; // full text on hover
   } else if (state === 'running' && status.botState && fsmLabels[status.botState]) {
-    dom.statusText.textContent = 'Running: ' + fsmLabels[status.botState];
-    dom.statusText.title = 'FSM state: ' + status.botState;
+    var lockSuffix = status.cycleLock ? ' [' + status.cycleLock + ']' : '';
+    dom.statusText.textContent = 'Running: ' + fsmLabels[status.botState] + lockSuffix;
+    dom.statusText.title = 'FSM: ' + status.botState + (status.cycleLock ? ' | Lock: ' + status.cycleLock : '');
   } else {
     dom.statusText.textContent = stateLabels[state] || state;
     dom.statusText.title = '';
@@ -581,20 +622,44 @@ function renderFilteredLogs() {
 function updateQueue(tasks) {
   if (!tasks || !Array.isArray(tasks)) return;
 
-  dom.queueCount.textContent = `(${tasks.length})`;
-  dom.taskQueueList.innerHTML = '';
+  dom.queueCount.textContent = '(' + tasks.length + ')';
+  // Clear children safely
+  while (dom.taskQueueList.firstChild) dom.taskQueueList.removeChild(dom.taskQueueList.firstChild);
 
   if (tasks.length === 0) {
     dom.taskQueueList.textContent = 'Queue is empty';
     return;
   }
 
-  tasks.forEach((task, index) => {
-    const entry = document.createElement('div');
-    entry.className = 'log-entry';
-    const name = task.name || task.type || 'Unknown';
-    const village = task.village ? ` @ ${task.village}` : '';
-    entry.textContent = `${index + 1}. ${name}${village}`;
+  tasks.forEach(function(task, index) {
+    var entry = document.createElement('div');
+    entry.className = 'queue-item';
+    var name = task.name || task.type || 'Unknown';
+    var village = task.village ? ' @ ' + task.village : '';
+    var retries = task.retries ? ' (retry ' + task.retries + ')' : '';
+    var status = task.status === 'running' ? ' ▶' : '';
+
+    var label = document.createElement('span');
+    label.className = 'queue-item-label';
+    label.textContent = (index + 1) + '. ' + name + village + retries + status;
+
+    entry.appendChild(label);
+
+    // Remove button (not for running tasks)
+    if (task.status !== 'running' && task.id) {
+      var removeBtn = document.createElement('button');
+      removeBtn.className = 'btn-icon btn-queue-remove';
+      removeBtn.title = 'Remove task';
+      removeBtn.textContent = '\u2715';
+      removeBtn.dataset.taskId = task.id;
+      removeBtn.addEventListener('click', function() {
+        sendMessage({ type: 'REMOVE_TASK', taskId: this.dataset.taskId })
+          .then(function() { refreshStatus(); })
+          .catch(console.warn);
+      });
+      entry.appendChild(removeBtn);
+    }
+
     dom.taskQueueList.appendChild(entry);
   });
 }
@@ -1672,6 +1737,7 @@ function collectConfig() {
     autoHeroAdventure: dom.togHeroAdventure.checked,
     useAIScoring: dom.togAIScoring ? dom.togAIScoring.checked : true,
     autoTrapTraining: dom.togTrapTraining ? dom.togTrapTraining.checked : false,
+    autoQuestClaim: dom.togQuestClaim ? dom.togQuestClaim.checked : true,
     activeVillage: dom.villageSelect.value,
     tribe: dom.cfgTribe ? dom.cfgTribe.value : 'gaul',
     serverSpeed: dom.cfgServerSpeed ? parseInt(dom.cfgServerSpeed.value, 10) || 1 : 1,
@@ -1732,6 +1798,21 @@ function collectConfig() {
     trapConfig: {
       batchSize: parseInt(dom.trapBatchSize ? dom.trapBatchSize.value : '10', 10) || 10,
     },
+    npcConfig: {
+      enabled: dom.togNpcEnabled ? dom.togNpcEnabled.checked : false,
+      ratioWood: parseInt(dom.npcRatioWood ? dom.npcRatioWood.value : '25', 10) || 25,
+      ratioClay: parseInt(dom.npcRatioClay ? dom.npcRatioClay.value : '25', 10) || 25,
+      ratioIron: parseInt(dom.npcRatioIron ? dom.npcRatioIron.value : '25', 10) || 25,
+      ratioCrop: parseInt(dom.npcRatioCrop ? dom.npcRatioCrop.value : '25', 10) || 25,
+      triggerPercent: parseInt(dom.npcTriggerPercent ? dom.npcTriggerPercent.value : '90', 10) || 90,
+    },
+    dodgeConfig: {
+      enabled: dom.togDodgeEnabled ? dom.togDodgeEnabled.checked : false,
+      dodgeDestination: (dom.dodgeDestX && dom.dodgeDestX.value !== '' && dom.dodgeDestY && dom.dodgeDestY.value !== '')
+        ? { x: parseInt(dom.dodgeDestX.value, 10), y: parseInt(dom.dodgeDestY.value, 10) }
+        : null,
+      minTimeToReact: parseInt(dom.dodgeMinReact ? dom.dodgeMinReact.value : '120', 10) || 120,
+    },
     delays: {
       minActionDelay: parseInt(dom.delayMin.value, 10) || 2000,
       maxActionDelay: parseInt(dom.delayMax.value, 10) || 8000,
@@ -1771,6 +1852,270 @@ function parseEnemiesList() {
 }
 
 /**
+ * Update the NPC ratio sum indicator (green if 100, red otherwise).
+ */
+/**
+ * Show/hide the incoming attack alert banner and update ETA countdown.
+ * @param {Array} incomingAttacks - Array of attack objects from gameState
+ */
+function updateAttackAlert(incomingAttacks) {
+  if (!dom.attackAlert) return;
+  if (!Array.isArray(incomingAttacks) || incomingAttacks.length === 0) {
+    dom.attackAlert.style.display = 'none';
+    return;
+  }
+  dom.attackAlert.style.display = 'flex';
+  dom.attackCount.textContent = incomingAttacks.length;
+
+  // Find nearest attack by arrival time
+  var nearest = null;
+  var now = Date.now();
+  for (var i = 0; i < incomingAttacks.length; i++) {
+    var atk = incomingAttacks[i];
+    if (atk.arrivalTime && (!nearest || atk.arrivalTime < nearest)) {
+      nearest = atk.arrivalTime;
+    }
+  }
+  if (nearest) {
+    var diff = Math.max(0, nearest - now);
+    var min = Math.floor(diff / 60000);
+    var sec = Math.floor((diff % 60000) / 1000);
+    dom.attackEta.textContent = min + ':' + (sec < 10 ? '0' : '') + sec;
+  } else {
+    dom.attackEta.textContent = '--';
+  }
+}
+
+function updateNpcRatioSum() {
+  if (!dom.npcRatioSum) return;
+  var sum = (parseInt(dom.npcRatioWood ? dom.npcRatioWood.value : '0', 10) || 0)
+          + (parseInt(dom.npcRatioClay ? dom.npcRatioClay.value : '0', 10) || 0)
+          + (parseInt(dom.npcRatioIron ? dom.npcRatioIron.value : '0', 10) || 0)
+          + (parseInt(dom.npcRatioCrop ? dom.npcRatioCrop.value : '0', 10) || 0);
+  dom.npcRatioSum.textContent = 'Sum: ' + sum;
+  dom.npcRatioSum.classList.toggle('npc-ratio-warn', sum !== 100);
+}
+
+// ============================================================
+// Diagnostics Tab Renderers
+// ============================================================
+
+/**
+ * Helper: format milliseconds as compact countdown string (e.g. "2m 15s").
+ */
+function formatCountdown(ms) {
+  if (ms <= 0) return 'NOW';
+  var sec = Math.floor(ms / 1000);
+  var min = Math.floor(sec / 60);
+  sec = sec % 60;
+  if (min > 0) return min + 'm ' + sec + 's';
+  return sec + 's';
+}
+
+/**
+ * Escape HTML entities to prevent XSS in dynamically built strings.
+ */
+function escapeHtmlDiag(str) {
+  if (!str) return '';
+  return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+/**
+ * Render circuit breaker, rate limiter, locks, scheduler from status data.
+ * Called from refreshStatus() only when the Diag tab is active.
+ */
+function renderDiagnostics(s) {
+  if (!s) return;
+
+  // --- Circuit Breaker ---
+  var failures = s.consecutiveFailures || 0;
+  var threshold = 5;
+  var failPct = Math.min(100, (failures / threshold) * 100);
+  if (dom.diagFailures) dom.diagFailures.textContent = failures;
+  if (dom.diagFailBar) dom.diagFailBar.style.width = failPct + '%';
+  if (dom.diagCBStatus) {
+    if (failures === 0) {
+      dom.diagCBStatus.textContent = 'OK — No failures';
+      dom.diagCBStatus.className = 'diag-status diag-status--ok';
+    } else if (failures < threshold) {
+      dom.diagCBStatus.textContent = failures + '/' + threshold + ' until trip';
+      dom.diagCBStatus.className = 'diag-status diag-status--warn';
+    } else {
+      dom.diagCBStatus.textContent = 'TRIPPED — Circuit breaker active';
+      dom.diagCBStatus.className = 'diag-status diag-status--danger';
+    }
+  }
+
+  // --- Rate Limiter ---
+  var actHr = s.actionsThisHour || 0;
+  var maxAct = (s.config && s.config.safetyConfig) ? (s.config.safetyConfig.maxActionsPerHour || 60) : 60;
+  if (dom.diagActionsHr) dom.diagActionsHr.textContent = actHr;
+  if (dom.diagRateBar) dom.diagRateBar.style.width = Math.min(100, (actHr / maxAct) * 100) + '%';
+  if (dom.diagRateStatus) dom.diagRateStatus.textContent = actHr + ' / ' + maxAct + ' max';
+
+  // --- Locks ---
+  if (dom.diagExecLock) {
+    dom.diagExecLock.textContent = s.executionLocked ? 'LOCKED' : 'FREE';
+    dom.diagExecLock.className = 'lock-badge ' + (s.executionLocked ? 'lock-warn' : 'lock-ok');
+  }
+  if (dom.diagCycleLock) {
+    dom.diagCycleLock.textContent = s.cycleLock ? 'LOCKED' : 'FREE';
+    dom.diagCycleLock.className = 'lock-badge ' + (s.cycleLock ? 'lock-warn' : 'lock-ok');
+  }
+  if (dom.diagNotLoggedIn) {
+    var nli = s._notLoggedInCount || 0;
+    dom.diagNotLoggedIn.textContent = nli + ' / 5';
+    dom.diagNotLoggedIn.className = 'lock-badge ' + (nli > 0 ? 'lock-warn' : 'lock-ok');
+  }
+
+  // --- Scheduler ---
+  if (dom.diagScheduler) {
+    var sched = s.scheduler;
+    if (sched && Array.isArray(sched) && sched.length > 0) {
+      dom.diagScheduler.textContent = ''; // clear
+      sched.forEach(function(item) {
+        var row = document.createElement('div');
+        row.className = 'diag-sched-item';
+        var nameSpan = document.createElement('span');
+        nameSpan.className = 'diag-sched-name';
+        nameSpan.textContent = item.name || item.id || 'Timer';
+        var timeSpan = document.createElement('span');
+        timeSpan.className = 'diag-sched-time';
+        timeSpan.textContent = item.remainingMs > 0 ? formatCountdown(item.remainingMs) : 'NOW';
+        row.appendChild(nameSpan);
+        row.appendChild(timeSpan);
+        dom.diagScheduler.appendChild(row);
+      });
+    } else {
+      dom.diagScheduler.textContent = '';
+      var empty = document.createElement('span');
+      empty.className = 'text-muted-italic';
+      empty.textContent = 'No scheduled items';
+      dom.diagScheduler.appendChild(empty);
+    }
+  }
+}
+
+/**
+ * Render active cooldowns (per-action-type expiry times).
+ */
+function renderCooldowns(cooldowns) {
+  if (!dom.diagCooldowns) return;
+  dom.diagCooldowns.textContent = ''; // clear
+
+  if (cooldowns && typeof cooldowns === 'object') {
+    var entries = Object.entries(cooldowns);
+    var now = Date.now();
+    var active = entries.filter(function(e) { return e[1] > now; });
+
+    if (active.length > 0) {
+      active.forEach(function(e) {
+        var row = document.createElement('div');
+        row.className = 'diag-cd-item';
+        var typeSpan = document.createElement('span');
+        typeSpan.className = 'diag-cd-type';
+        typeSpan.textContent = e[0];
+        var timeSpan = document.createElement('span');
+        timeSpan.className = 'diag-cd-time';
+        timeSpan.textContent = formatCountdown(e[1] - now);
+        row.appendChild(typeSpan);
+        row.appendChild(timeSpan);
+        dom.diagCooldowns.appendChild(row);
+      });
+      return;
+    }
+  }
+
+  var empty = document.createElement('span');
+  empty.className = 'text-muted-italic';
+  empty.textContent = 'No active cooldowns';
+  dom.diagCooldowns.appendChild(empty);
+}
+
+/**
+ * Render prerequisite resolution chains.
+ */
+function renderPrereqs(prereqResolutions) {
+  if (!dom.diagPrereqs) return;
+  dom.diagPrereqs.textContent = ''; // clear
+
+  var resolutions = prereqResolutions || [];
+  if (resolutions.length === 0) {
+    var empty = document.createElement('span');
+    empty.className = 'text-muted-italic';
+    empty.textContent = 'No active prerequisite chains';
+    dom.diagPrereqs.appendChild(empty);
+    return;
+  }
+
+  resolutions.forEach(function(r) {
+    var item = document.createElement('div');
+    item.className = 'prereq-item';
+
+    // Status badge
+    var statusLabel = r.status === 'resolving' ? 'RESOLVING' : (r.status === 'blocked' ? 'BLOCKED' : 'WAITING');
+    var badgeClass = r.status === 'resolving' ? 'lock-ok' : (r.status === 'blocked' ? 'lock-danger' : 'lock-warn');
+
+    // Target name
+    var header = document.createElement('div');
+    header.className = 'prereq-header';
+    var nameEl = document.createElement('span');
+    nameEl.className = 'prereq-name';
+    nameEl.textContent = (r.targetName || 'Unknown') + (r.slot ? ' (slot #' + r.slot + ')' : '');
+    var badge = document.createElement('span');
+    badge.className = 'lock-badge ' + badgeClass;
+    badge.textContent = statusLabel;
+    header.appendChild(nameEl);
+    header.appendChild(badge);
+    item.appendChild(header);
+
+    // Chain visualization
+    if (r.chain && r.chain.length > 0) {
+      var chainEl = document.createElement('div');
+      chainEl.className = 'prereq-chain';
+      chainEl.textContent = 'Chain: ' + r.chain.map(function(c) { return c.name; }).join(' → ');
+      item.appendChild(chainEl);
+    }
+
+    // Missing prereqs
+    if (r.missing && r.missing.length > 0) {
+      var missEl = document.createElement('div');
+      missEl.className = 'prereq-missing';
+      missEl.textContent = 'Need: ' + r.missing.map(function(m) {
+        return m.name + ' (L' + m.have + '→L' + m.need + ')';
+      }).join(', ');
+      item.appendChild(missEl);
+    }
+
+    // Current action
+    if (r.action) {
+      var actEl = document.createElement('div');
+      actEl.className = 'prereq-action';
+      var taskName = (typeof TASK_TYPE_NAMES !== 'undefined' && TASK_TYPE_NAMES[r.action.type])
+        ? TASK_TYPE_NAMES[r.action.type] : r.action.type;
+      actEl.textContent = '▸ ' + taskName + ': ' + (r.action.name || '') +
+        (r.action.slot ? ' slot #' + r.action.slot : '') +
+        (r.action.fieldId ? ' field #' + r.action.fieldId : '');
+      item.appendChild(actEl);
+    }
+
+    dom.diagPrereqs.appendChild(item);
+  });
+}
+
+/**
+ * Render full status as JSON into collapsible debug section.
+ */
+function renderDebugJson(status) {
+  if (!dom.diagDebugJson) return;
+  try {
+    dom.diagDebugJson.textContent = JSON.stringify(status, null, 2);
+  } catch (e) {
+    dom.diagDebugJson.textContent = '{ "error": "Could not serialize status" }';
+  }
+}
+
+/**
  * Populate all form fields from a config object loaded from storage.
  */
 function populateForm(config) {
@@ -1798,6 +2143,17 @@ function populateForm(config) {
     if (config.autoTrapTraining !== undefined && dom.togTrapTraining) {
       dom.togTrapTraining.checked = config.autoTrapTraining;
     }
+    if (config.autoQuestClaim !== undefined && dom.togQuestClaim) {
+      dom.togQuestClaim.checked = config.autoQuestClaim;
+    }
+
+  // Sync NPC/Dodge dashboard pills from config
+  if (config.npcConfig && config.npcConfig.enabled !== undefined && dom.togNpcTrade) {
+    dom.togNpcTrade.checked = config.npcConfig.enabled;
+  }
+  if (config.dodgeConfig && config.dodgeConfig.enabled !== undefined && dom.togDodge) {
+    dom.togDodge.checked = config.dodgeConfig.enabled;
+  }
 
   // Village
   if (config.activeVillage) {
@@ -1887,6 +2243,27 @@ function populateForm(config) {
     if (config.trapConfig && dom.trapBatchSize) {
       if (config.trapConfig.batchSize) dom.trapBatchSize.value = config.trapConfig.batchSize;
     }
+
+  // NPC config
+  if (config.npcConfig) {
+    if (config.npcConfig.enabled !== undefined && dom.togNpcEnabled) dom.togNpcEnabled.checked = config.npcConfig.enabled;
+    if (config.npcConfig.triggerPercent !== undefined && dom.npcTriggerPercent) dom.npcTriggerPercent.value = config.npcConfig.triggerPercent;
+    if (config.npcConfig.ratioWood !== undefined && dom.npcRatioWood) dom.npcRatioWood.value = config.npcConfig.ratioWood;
+    if (config.npcConfig.ratioClay !== undefined && dom.npcRatioClay) dom.npcRatioClay.value = config.npcConfig.ratioClay;
+    if (config.npcConfig.ratioIron !== undefined && dom.npcRatioIron) dom.npcRatioIron.value = config.npcConfig.ratioIron;
+    if (config.npcConfig.ratioCrop !== undefined && dom.npcRatioCrop) dom.npcRatioCrop.value = config.npcConfig.ratioCrop;
+    updateNpcRatioSum();
+  }
+
+  // Dodge config
+  if (config.dodgeConfig) {
+    if (config.dodgeConfig.enabled !== undefined && dom.togDodgeEnabled) dom.togDodgeEnabled.checked = config.dodgeConfig.enabled;
+    if (config.dodgeConfig.dodgeDestination && dom.dodgeDestX && dom.dodgeDestY) {
+      dom.dodgeDestX.value = config.dodgeConfig.dodgeDestination.x;
+      dom.dodgeDestY.value = config.dodgeConfig.dodgeDestination.y;
+    }
+    if (config.dodgeConfig.minTimeToReact !== undefined && dom.dodgeMinReact) dom.dodgeMinReact.value = config.dodgeConfig.minTimeToReact;
+  }
 
   // Farm config
   if (config.farmConfig) {
@@ -2095,6 +2472,7 @@ function refreshStatus() {
         updateStatus({
           state: state,
           botState: s.botState || null, // FSM granular state
+          cycleLock: s.cycleLock || null, // Lock phase detail
           emergencyReason: s.emergencyReason || null, // SAF-5 FIX
           stats: {
             completed: s.stats ? s.stats.tasksCompleted : 0,
@@ -2134,12 +2512,22 @@ function refreshStatus() {
           updateFarmStats(s.stats);
         }
 
-        // AI + Trapper + Quest status
+        // AI + Trapper + Quest + Attack status
         if (s.gameState) {
           updateTrapperStatus(s.gameState.trapperInfo || null);
           updateQuestDisplay(s.gameState.quests || null);
+          updateAttackAlert(s.gameState.incomingAttacks || []);
         }
         updateAIReason(s.lastAIAction || null);
+
+        // --- Diagnostics tab (lazy: only render when active) ---
+        var diagPanel = document.getElementById('panelDiag');
+        if (diagPanel && diagPanel.classList.contains('active')) {
+          renderDiagnostics(s);
+          renderCooldowns(s.cooldowns || null);
+          renderPrereqs(s.prereqResolutions || []);
+          renderDebugJson(s);
+        }
       }
     })
     .catch(() => {
@@ -2614,6 +3002,18 @@ function bindEvents() {
     btn.addEventListener('click', () => switchTab(btn.dataset.tab));
   });
 
+  // --- Debug JSON toggle (collapsible) ---
+  if (dom.debugToggle) {
+    dom.debugToggle.addEventListener('click', () => {
+      var pre = dom.diagDebugJson;
+      var icon = dom.debugToggleIcon;
+      if (!pre) return;
+      var isHidden = pre.style.display === 'none';
+      pre.style.display = isHidden ? 'block' : 'none';
+      if (icon) icon.textContent = isHidden ? '▾' : '▸';
+    });
+  }
+
   // --- Control buttons ---
 
   dom.btnStart.addEventListener('click', () => {
@@ -2739,6 +3139,35 @@ function bindEvents() {
   if (configPanel) {
     configPanel.addEventListener('input', function () { configTabDirty = true; });
     configPanel.addEventListener('change', function () { configTabDirty = true; });
+  }
+
+  // --- NPC ratio live validation ---
+  document.querySelectorAll('.npc-ratio-input').forEach(function(input) {
+    input.addEventListener('input', updateNpcRatioSum);
+  });
+
+  // --- Toggle pill ↔ config sync (NPC + Dodge) ---
+  if (dom.togNpcTrade) {
+    dom.togNpcTrade.addEventListener('change', function() {
+      if (dom.togNpcEnabled) dom.togNpcEnabled.checked = this.checked;
+      configTabDirty = true;
+    });
+  }
+  if (dom.togNpcEnabled) {
+    dom.togNpcEnabled.addEventListener('change', function() {
+      if (dom.togNpcTrade) dom.togNpcTrade.checked = this.checked;
+    });
+  }
+  if (dom.togDodge) {
+    dom.togDodge.addEventListener('change', function() {
+      if (dom.togDodgeEnabled) dom.togDodgeEnabled.checked = this.checked;
+      configTabDirty = true;
+    });
+  }
+  if (dom.togDodgeEnabled) {
+    dom.togDodgeEnabled.addEventListener('change', function() {
+      if (dom.togDodge) dom.togDodge.checked = this.checked;
+    });
   }
 
   // --- Queue ---

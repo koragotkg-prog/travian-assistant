@@ -48,6 +48,9 @@
     <button class="tab-btn" data-tab="farm" id="tabFarm">
       <span class="tab-icon">🌾</span><span class="tab-label">Farm</span>
     </button>
+    <button class="tab-btn" data-tab="diag" id="tabDiag">
+      <span class="tab-icon">🔧</span><span class="tab-label">Diag</span>
+    </button>
   </nav>
 
   <!-- ===== TAB CONTENT AREA (scrollable) ===== -->
@@ -85,6 +88,15 @@
         <span class="info-strip-item"><span class="info-strip-icon">⏳</span> Next: <span id="nextActionTimer">--</span></span>
         <span class="info-strip-item"><span class="info-strip-icon">⚔</span> Raids: <span id="farmRaidStats">0</span></span>
           <span class="info-strip-item"><span class="info-strip-icon">🪤</span> Traps: <span id="trapperStatus">--</span></span>
+      </div>
+
+      <!-- Incoming Attack Alert -->
+      <div id="attackAlert" class="attack-alert" style="display:none">
+        <span class="attack-alert-icon">⚠</span>
+        <span class="attack-alert-text">
+          <strong id="attackCount">0</strong> incoming attack(s)
+          <span class="attack-eta">ETA: <span id="attackEta">--</span></span>
+        </span>
       </div>
 
       <!-- Resource Overview -->
@@ -161,6 +173,9 @@
           <label class="toggle-pill"><input type="checkbox" id="togHeroAdventure" checked><span>Adventure</span></label>
           <label class="toggle-pill"><input type="checkbox" id="togAIScoring" checked><span>AI Scoring</span></label>
           <label class="toggle-pill"><input type="checkbox" id="togTrapTraining"><span>Traps</span></label>
+          <label class="toggle-pill"><input type="checkbox" id="togNpcTrade"><span>NPC Trade</span></label>
+          <label class="toggle-pill"><input type="checkbox" id="togDodge"><span>Dodge</span></label>
+          <label class="toggle-pill"><input type="checkbox" id="togQuestClaim" checked><span>Quests</span></label>
         </div>
       </section>
 
@@ -455,6 +470,71 @@
         </div>
       </section>
 
+      <!-- NPC Marketplace Trading -->
+      <section id="npcSection" class="card">
+        <h3 class="section-title">NPC Marketplace</h3>
+        <label class="toggle-pill toggle-pill--wide">
+          <input type="checkbox" id="togNpcEnabled">
+          <span>Enable NPC Resource Redistribution</span>
+        </label>
+        <div style="margin-top:6px">
+          <div class="form-row">
+            <div class="form-group form-group--half">
+              <label class="form-label">Trigger at % Full</label>
+              <input type="number" id="npcTriggerPercent" value="90" min="50" max="100">
+            </div>
+            <div class="form-group form-group--half" style="display:flex;align-items:flex-end">
+              <span id="npcRatioSum" class="npc-ratio-hint">Sum: 100</span>
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group form-group--quarter">
+              <label class="form-label">Wood %</label>
+              <input type="number" id="npcRatioWood" value="25" min="0" max="100" class="npc-ratio-input">
+            </div>
+            <div class="form-group form-group--quarter">
+              <label class="form-label">Clay %</label>
+              <input type="number" id="npcRatioClay" value="25" min="0" max="100" class="npc-ratio-input">
+            </div>
+            <div class="form-group form-group--quarter">
+              <label class="form-label">Iron %</label>
+              <input type="number" id="npcRatioIron" value="25" min="0" max="100" class="npc-ratio-input">
+            </div>
+            <div class="form-group form-group--quarter">
+              <label class="form-label">Crop %</label>
+              <input type="number" id="npcRatioCrop" value="25" min="0" max="100" class="npc-ratio-input">
+            </div>
+          </div>
+          <p class="section-hint">Ratios should sum to 100. Trades when any resource exceeds trigger %.</p>
+        </div>
+      </section>
+
+      <!-- Auto-Dodge Troops -->
+      <section id="dodgeSection" class="card">
+        <h3 class="section-title">Auto-Dodge</h3>
+        <label class="toggle-pill toggle-pill--wide">
+          <input type="checkbox" id="togDodgeEnabled">
+          <span>Dodge troops on incoming attack</span>
+        </label>
+        <div style="margin-top:6px">
+          <div class="form-row">
+            <div class="form-group form-group--third">
+              <label class="form-label">Dest X</label>
+              <input type="number" id="dodgeDestX" placeholder="X" min="-400" max="400">
+            </div>
+            <div class="form-group form-group--third">
+              <label class="form-label">Dest Y</label>
+              <input type="number" id="dodgeDestY" placeholder="Y" min="-400" max="400">
+            </div>
+            <div class="form-group form-group--third">
+              <label class="form-label">Min React (s)</label>
+              <input type="number" id="dodgeMinReact" value="120" min="30" max="3600">
+            </div>
+          </div>
+          <p class="section-hint">Sends troops as reinforcement when attack ETA exceeds min reaction time.</p>
+        </div>
+      </section>
+
       <!-- Save Button (sticky) -->
       <section id="saveSection" class="save-section save-section--sticky">
         <button id="btnSaveAll" class="btn-primary btn-glow-primary">💾 Save All Settings</button>
@@ -556,6 +636,87 @@
         <div class="farm-target-list" id="farmIntelTargetList">
           <span class="text-muted-italic">No farm data yet — run a farm cycle first.</span>
         </div>
+      </section>
+
+    </div>
+
+    <!-- ===== DIAGNOSTICS TAB ===== -->
+    <div class="tab-panel" id="panelDiag">
+
+      <!-- Circuit Breaker -->
+      <section class="card diag-card">
+        <h3 class="section-title">Circuit Breaker</h3>
+        <div class="diag-row">
+          <span class="diag-label">Consecutive failures</span>
+          <span class="diag-value" id="diagFailures">0</span>
+        </div>
+        <div class="diag-bar-track">
+          <div class="diag-bar-fill diag-bar-fill--danger" id="diagFailBar" style="width:0%"></div>
+        </div>
+        <div class="diag-status" id="diagCBStatus">OK — No failures</div>
+      </section>
+
+      <!-- Rate Limiter -->
+      <section class="card diag-card">
+        <h3 class="section-title">Rate Limiter</h3>
+        <div class="diag-row">
+          <span class="diag-label">Actions this hour</span>
+          <span class="diag-value" id="diagActionsHr">0</span>
+        </div>
+        <div class="diag-bar-track">
+          <div class="diag-bar-fill diag-bar-fill--primary" id="diagRateBar" style="width:0%"></div>
+        </div>
+        <div class="diag-status" id="diagRateStatus">0 / 60 max</div>
+      </section>
+
+      <!-- Locks -->
+      <section class="card diag-card">
+        <h3 class="section-title">Locks</h3>
+        <div class="diag-row">
+          <span class="diag-label">Execution lock</span>
+          <span class="lock-badge lock-ok" id="diagExecLock">FREE</span>
+        </div>
+        <div class="diag-row">
+          <span class="diag-label">Cycle lock</span>
+          <span class="lock-badge lock-ok" id="diagCycleLock">FREE</span>
+        </div>
+        <div class="diag-row">
+          <span class="diag-label">Not-logged-in counter</span>
+          <span class="lock-badge lock-ok" id="diagNotLoggedIn">0 / 5</span>
+        </div>
+      </section>
+
+      <!-- Scheduler -->
+      <section class="card diag-card">
+        <h3 class="section-title">Scheduler</h3>
+        <div id="diagScheduler" class="diag-list">
+          <span class="text-muted-italic">No scheduled items</span>
+        </div>
+      </section>
+
+      <!-- Cooldowns -->
+      <section class="card diag-card">
+        <h3 class="section-title">Cooldowns</h3>
+        <div id="diagCooldowns" class="diag-list">
+          <span class="text-muted-italic">No active cooldowns</span>
+        </div>
+      </section>
+
+      <!-- Prerequisite Chains -->
+      <section class="card diag-card">
+        <h3 class="section-title">Prerequisite Chains</h3>
+        <div id="diagPrereqs" class="diag-list">
+          <span class="text-muted-italic">No active prerequisite chains</span>
+        </div>
+      </section>
+
+      <!-- Debug JSON -->
+      <section class="card diag-card">
+        <div class="section-header" style="cursor:pointer" id="debugToggle">
+          <h3 class="section-title">Debug JSON</h3>
+          <span class="badge" id="debugToggleIcon">▸</span>
+        </div>
+        <pre class="debug-json" id="diagDebugJson" style="display:none">{ }</pre>
       </section>
 
     </div>

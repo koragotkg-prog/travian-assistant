@@ -508,6 +508,30 @@ header h1 {
   font-family: inherit;
 }
 
+.queue-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 2px 0;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.queue-item:last-child { border-bottom: none; }
+.queue-item-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.btn-queue-remove {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+.btn-queue-remove:hover {
+  color: var(--danger);
+  background: rgba(255, 51, 102, 0.15);
+}
+
 /* ============================================================
    BUTTONS
    ============================================================ */
@@ -677,6 +701,11 @@ header h1 {
 
 .form-group--third {
   flex: 1;
+}
+
+.form-group--quarter {
+  flex: 1;
+  min-width: 0;
 }
 
 .form-row {
@@ -984,6 +1013,55 @@ input[type="text"]:focus {
   font-style: italic;
   margin: 2px 0 4px;
   padding: 0 2px;
+}
+
+/* NPC ratio sum indicator */
+.npc-ratio-hint {
+  font-size: 11px;
+  color: var(--success);
+  font-weight: 600;
+  padding: 6px 0;
+}
+.npc-ratio-warn {
+  color: var(--danger) !important;
+}
+
+/* ============================================================
+   ATTACK ALERT BANNER
+   ============================================================ */
+.attack-alert {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  margin: 0 0 6px 0;
+  background: rgba(255, 51, 102, 0.1);
+  border: 1px solid var(--danger);
+  border-radius: var(--radius-sm);
+  color: var(--danger);
+  font-size: 12px;
+  font-weight: 600;
+  animation: attack-pulse 1.5s ease-in-out infinite;
+}
+.attack-alert-icon {
+  font-size: 16px;
+  flex-shrink: 0;
+}
+.attack-alert-text {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+}
+.attack-eta {
+  margin-left: auto;
+  color: var(--warning);
+  font-weight: 700;
+  font-size: 11px;
+}
+@keyframes attack-pulse {
+  0%, 100% { box-shadow: 0 0 4px rgba(255, 51, 102, 0.3); }
+  50% { box-shadow: 0 0 12px rgba(255, 51, 102, 0.5), 0 0 20px rgba(255, 51, 102, 0.1); }
 }
 
 .target-summary {
@@ -1921,4 +1999,146 @@ input[type="text"]:focus {
 @keyframes pulse-error {
   0%, 100% { transform: scale(1); }
   50% { transform: scale(1.02); }
+}
+
+/* ============================================================
+   Diagnostics Tab
+   ============================================================ */
+
+.diag-card {
+  padding: 10px 12px;
+  margin-bottom: 8px;
+}
+.diag-card .section-title {
+  margin-bottom: 6px;
+}
+
+/* Label / Value rows */
+.diag-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 3px 0;
+  font-size: 12px;
+}
+.diag-label { color: var(--text-secondary); }
+.diag-value { font-weight: 600; font-family: 'Consolas', 'Cascadia Code', monospace; }
+
+/* Progress bars */
+.diag-bar-track {
+  height: 6px;
+  background: var(--bg-input);
+  border-radius: 3px;
+  margin: 4px 0;
+  overflow: hidden;
+}
+.diag-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.4s ease;
+}
+.diag-bar-fill--danger { background: var(--danger); box-shadow: 0 0 6px var(--danger-glow); }
+.diag-bar-fill--primary { background: var(--primary); box-shadow: 0 0 6px var(--primary-glow); }
+
+/* Status text */
+.diag-status {
+  font-size: 11px;
+  font-weight: 500;
+  margin-top: 2px;
+}
+.diag-status--ok { color: var(--success); }
+.diag-status--warn { color: var(--warning); }
+.diag-status--danger { color: var(--danger); }
+
+/* Lock badges */
+.lock-badge {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+.lock-ok {
+  background: rgba(0, 255, 136, 0.12);
+  color: var(--success);
+  border: 1px solid rgba(0, 255, 136, 0.25);
+}
+.lock-warn {
+  background: rgba(255, 170, 0, 0.12);
+  color: var(--warning);
+  border: 1px solid rgba(255, 170, 0, 0.25);
+}
+.lock-danger {
+  background: rgba(255, 51, 102, 0.12);
+  color: var(--danger);
+  border: 1px solid rgba(255, 51, 102, 0.25);
+}
+
+/* Scheduler items */
+.diag-sched-item, .diag-cd-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 3px 0;
+  font-size: 11px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.diag-sched-item:last-child, .diag-cd-item:last-child { border-bottom: none; }
+.diag-sched-name, .diag-cd-type { color: var(--text); }
+.diag-sched-time, .diag-cd-time {
+  color: var(--primary);
+  font-family: 'Consolas', 'Cascadia Code', monospace;
+  font-weight: 600;
+}
+
+/* Diag list container (scheduler, cooldowns, prereqs) */
+.diag-list {
+  min-height: 20px;
+}
+
+/* Prerequisite chains */
+.prereq-item {
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.prereq-item:last-child { border-bottom: none; }
+.prereq-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.prereq-name { font-weight: 600; font-size: 12px; }
+.prereq-chain {
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+.prereq-missing {
+  font-size: 10px;
+  color: var(--warning);
+  margin-top: 2px;
+}
+.prereq-action {
+  font-size: 10px;
+  color: var(--success);
+  margin-top: 2px;
+}
+
+/* Debug JSON */
+.debug-json {
+  background: var(--bg-input);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 8px;
+  font-size: 10px;
+  font-family: 'Consolas', 'Cascadia Code', monospace;
+  color: var(--text-secondary);
+  max-height: 300px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  margin-top: 6px;
+  line-height: 1.3;
 }
