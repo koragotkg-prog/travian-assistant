@@ -3214,6 +3214,9 @@ function bindEvents() {
     dom.togSmartFarming,
     dom.togSkipLosses,
     dom.togReRaid,
+    dom.togQuestClaim,
+    dom.togNpcTrade,
+    dom.togDodge,
   ].filter(Boolean);
 
   toggles.forEach((toggle) => {

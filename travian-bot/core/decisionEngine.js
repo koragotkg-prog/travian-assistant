@@ -875,7 +875,7 @@ class DecisionEngine {
     const now = Date.now();
     let soonest = null;
     for (const atk of attacks) {
-      const arrivalTs = atk.arrivalTimestamp || atk.arrival;
+      const arrivalTs = atk.arrivalTime;
       if (!arrivalTs) continue;
       const timeLeft = arrivalTs - now;
       if (timeLeft > minReactMs && (!soonest || timeLeft < soonest.timeLeft)) {

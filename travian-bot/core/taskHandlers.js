@@ -296,9 +296,9 @@
     // send_attack — Navigate to rally point, send attack
     // -----------------------------------------------------------------------
     send_attack: async function(engine, task) {
-      // Navigate to rally point and send attack to coordinates
+      // Navigate to rally point SEND tab (tt=2) — overview page has no troop inputs
       await engine.sendToContentScript({
-        type: 'EXECUTE', action: 'navigateTo', params: { page: 'rallyPoint' }
+        type: 'EXECUTE', action: 'navigateTo', params: { page: 'rallyPointSend' }
       });
       await engine._randomDelay();
       await engine._waitForContentScript(15000);
@@ -308,9 +308,17 @@
           troops: task.params.troops || {}
         }
       });
-      // FIX: Only update farm time on success — failed attacks should retry sooner
+      // Step 2: Confirm the attack (Travian has a 2-step send form)
+      // sendAttack clicks Send → page reloads to confirmation → must click Confirm
       if (response && response.success) {
-        engine._lastFarmTime = Date.now();
+        await engine._randomDelay();
+        await engine._waitForContentScript(15000);
+        response = await engine.sendToContentScript({
+          type: 'EXECUTE', action: 'confirmAttack', params: {}
+        });
+        if (response && response.success) {
+          engine._lastFarmTime = Date.now();
+        }
       }
       return response;
     },
@@ -360,7 +368,21 @@
       await engine._randomDelay();
       await engine._waitForContentScript(15000);
 
-      // Step 3: Execute NPC trade with calculated resource distribution
+      // Step 3: Click NPC merchant tab/button — form is not on default marketplace tab
+      // Travian Legends uses #npc_market_button or a .tabItem link for NPC access
+      var npcTabClick = await engine.sendToContentScript({
+        type: 'EXECUTE', action: 'clickElement', params: {
+          selector: '#npc_market_button, .npcMerchant, a.tabItem[href*="t=5"], .distribution_button'
+        }
+      });
+      // NPC button click may trigger AJAX dialog or page reload
+      if (npcTabClick && npcTabClick.success) {
+        await engine._randomDelay();
+        // Brief wait for AJAX/dialog (not a full page reload in most cases)
+        await new Promise(function(r) { setTimeout(r, 1500); });
+      }
+
+      // Step 4: Execute NPC trade with calculated resource distribution
       return await engine.sendToContentScript({
         type: 'EXECUTE', action: 'npcTrade', params: {
           wood: task.params.wood || 0,
@@ -422,9 +444,9 @@
     // dodge_troops — Send troops to safe destination when attack incoming
     // -----------------------------------------------------------------------
     dodge_troops: async function(engine, task) {
-      // Navigate to rally point and send troops to dodge destination
+      // Navigate to rally point SEND tab (tt=2) — overview page has no troop inputs
       await engine.sendToContentScript({
-        type: 'EXECUTE', action: 'navigateTo', params: { page: 'rallyPoint' }
+        type: 'EXECUTE', action: 'navigateTo', params: { page: 'rallyPointSend' }
       });
       await engine._randomDelay();
       await engine._waitForContentScript(15000);
@@ -433,13 +455,22 @@
       var target = task.params.destination || { x: 0, y: 0 };
       var troops = task.params.troops || {};
 
-      return await engine.sendToContentScript({
+      var response = await engine.sendToContentScript({
         type: 'EXECUTE', action: 'sendAttack', params: {
           target: target,
           troops: troops,
           opts: { eventType: 2 } // reinforcement, not attack
         }
       });
+      // Confirm the reinforcement (2-step form)
+      if (response && response.success) {
+        await engine._randomDelay();
+        await engine._waitForContentScript(15000);
+        response = await engine.sendToContentScript({
+          type: 'EXECUTE', action: 'confirmAttack', params: {}
+        });
+      }
+      return response;
     }
   };
 

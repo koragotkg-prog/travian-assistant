@@ -879,8 +879,11 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
                     else resolve(r);
                   });
                 });
-                if (slotResp && slotResp.slots) {
-                  existingSlots = slotResp.slots;
+                // Unwrap bridge response: slots may be in .data.slots or .slots
+                var slotData = (slotResp && slotResp.data && typeof slotResp.data === 'object')
+                  ? slotResp.data : slotResp;
+                if (slotData && slotData.slots) {
+                  existingSlots = slotData.slots;
                   break;
                 }
               } catch (slotErr) {

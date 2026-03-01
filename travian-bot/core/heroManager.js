@@ -152,12 +152,9 @@
           return false;
         }
 
-        // Route to V1 or V2 claim path
-        _getLogger().log('INFO', '[HeroManager] Proactive claim using ' + uiVersion + ' path');
-        if (uiVersion === 'v2') {
-          return await this._claimResourcesV2(deficit, usableResources);
-        }
-        return await this._claimResourcesV1(deficit, usableResources);
+        // V1 path was removed — all claims now use V2 bulk transfer
+        _getLogger().log('INFO', '[HeroManager] Proactive claim via V2 path');
+        return await this._claimResourcesV2(deficit, usableResources);
       } catch (err) {
         _getLogger().log('WARN', '[HeroManager] Proactive hero claim error: ' + err.message);
         return false;
