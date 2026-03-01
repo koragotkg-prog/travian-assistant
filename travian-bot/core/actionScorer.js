@@ -183,7 +183,8 @@
       const buildingType = firstSlot ? (firstSlot.building || 'barracks') : (tc.trainingBuilding || 'barracks');
 
       // Crop awareness: don't train if free crop is very low (skip penalty if data unavailable)
-      const freeCrop = state.freeCrop;
+      // state.freeCrop may not exist; fall back to net crop production rate as proxy
+      const freeCrop = state.freeCrop ?? (state.resourceProduction ? state.resourceProduction.crop : null);
       const cropPenalty = (freeCrop == null) ? 1.0 : freeCrop < 10 ? 0.3 : freeCrop < 50 ? 0.7 : 1.0;
 
       const score = 8 * cropPenalty;

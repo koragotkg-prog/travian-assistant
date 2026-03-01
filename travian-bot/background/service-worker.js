@@ -284,7 +284,13 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
 
           startInst.tabId = startTab.id;
           startInst.engine.activeTabId = startTab.id;
-          await startInst.engine.start(startTab.id);
+
+          // Resume if paused, start fresh otherwise
+          if (startInst.engine.running && startInst.engine.paused) {
+            startInst.engine.resume();
+          } else {
+            await startInst.engine.start(startTab.id);
+          }
 
           notify('Started', 'Bot running on ' + serverKey);
           sendResponse({ success: true, data: startInst.engine.getStatus() });
@@ -295,12 +301,13 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
         case 'STOP_BOT': {
           var stopInst = resolveInstance(message, sender);
           if (stopInst && stopInst.engine.running) {
-            stopInst.engine.stop().then(function() {
+            try {
+              await stopInst.engine.stop();
               notify('Stopped', 'Bot stopped on ' + stopInst.serverKey);
-            }).catch(function(err) {
+            } catch (err) {
               console.error('[SW] Error during STOP_BOT:', err);
               notify('Stopped', 'Bot stopped on ' + stopInst.serverKey + ' (with errors)');
-            });
+            }
           }
           sendResponse({ success: true, data: stopInst ? stopInst.engine.getStatus() : null });
           break;
@@ -516,6 +523,8 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
                 await new Promise(function (r) { setTimeout(r, 800); });
               }
             }
+            // All retries returned falsy — return null so callers can detect failure
+            return null;
           }
 
           // Helper: navigate tab and wait for page load
@@ -541,7 +550,8 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
           try {
             var scanTabInfo = await chrome.tabs.get(scanTabId);
             var tabUrl = scanTabInfo.url || '';
-            var baseUrl = tabUrl.replace(/\/[^\/]*$/, '');
+            var baseUrl;
+            try { baseUrl = new URL(tabUrl).origin; } catch(_) { baseUrl = tabUrl.replace(/\/[^\/]*$/, ''); }
             var merged = {
               resourceFields: [],
               buildings: [],

@@ -2183,8 +2183,13 @@ function refreshQueue() {
 
 /**
  * Fetch strategy analysis from background and render the dashboard.
+ * Throttled to run at most every 30s (expensive computation).
  */
-function refreshStrategy() {
+var _lastStrategyRefreshTs = 0;
+function refreshStrategy(force) {
+  var now = Date.now();
+  if (!force && now - _lastStrategyRefreshTs < 30000) return; // throttle: 30s
+  _lastStrategyRefreshTs = now;
   sendMessage({ type: 'GET_STRATEGY' })
     .then(function (response) {
       if (response && response.success && response.data) {
@@ -2761,7 +2766,7 @@ function bindEvents() {
   if (dom.btnRefreshStrategy) {
     dom.btnRefreshStrategy.addEventListener('click', function () {
       dom.btnRefreshStrategy.textContent = '...';
-      refreshStrategy();
+      refreshStrategy(true); // force bypass throttle
       setTimeout(function () { dom.btnRefreshStrategy.textContent = 'Refresh'; }, 1000);
     });
   }
@@ -2895,6 +2900,7 @@ function switchServer(newServerKey) {
   console.log('[Popup] Switched to server: ' + currentServerKey);
 
   // Reset UI state
+  configTabDirty = false;  // Allow auto-refresh for new server
   scannedResources = [];
   scannedBuildings = [];
   upgradeTargets = {};

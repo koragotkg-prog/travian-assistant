@@ -41,7 +41,8 @@
    */
   function parseNum(text) {
     if (text == null) return 0;
-    var cleaned = String(text).replace(/[^\d\-]/g, '');
+    // Replace Unicode minus sign (U+2212) with ASCII hyphen before stripping
+    var cleaned = String(text).replace(/\u2212/g, '-').replace(/[^\d\-]/g, '');
     var n = parseInt(cleaned, 10);
     return isNaN(n) ? 0 : n;
   }
@@ -363,6 +364,31 @@
     getResourceFields: function () {
       try {
         var fields = [];
+
+        // Method 0: Verified selector with data attributes (most reliable, Travian Legends)
+        var verifiedFields = qsa('.resourceField[data-aid][data-gid]');
+        if (verifiedFields.length > 0) {
+          verifiedFields.forEach(function (el) {
+            var gid = parseInt(el.getAttribute('data-gid'), 10) || 0;
+            var aid = parseInt(el.getAttribute('data-aid'), 10) || 0;
+            var className = el.getAttribute('class') || '';
+            var levelMatch = className.match(/level(\d+)/);
+            var level = levelMatch ? parseInt(levelMatch[1], 10) : 0;
+            var upgrading = className.indexOf('underConstruction') !== -1 ||
+                            className.indexOf('upgrading') !== -1 ||
+                            className.indexOf('good') !== -1;
+            if (aid > 0) {
+              fields.push({
+                id: aid,
+                type: GID_TO_RESOURCE[gid] || 'unknown',
+                level: level,
+                upgrading: upgrading,
+                position: aid
+              });
+            }
+          });
+          return fields;
+        }
 
         // Method 1: Map area elements with class patterns like gid1, gid2, etc.
         var mapAreas = trySelectorAll([

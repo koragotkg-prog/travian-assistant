@@ -675,6 +675,11 @@
     var cy = rect.top + randomInt(2, Math.max(3, Math.floor(rect.height * 0.8)));
     var props = { bubbles: true, cancelable: true, view: window,
                   clientX: cx, clientY: cy, screenX: cx, screenY: cy, button: 0 };
+    // Prefix with mouseover/mousemove for more human-like event sequence
+    element.dispatchEvent(new MouseEvent('mouseover', props));
+    await _delay(randomInt(15, 50));
+    element.dispatchEvent(new MouseEvent('mousemove', props));
+    await _delay(randomInt(20, 60));
     element.dispatchEvent(new MouseEvent('mousedown', props));
     await _delay(randomInt(30, 90));
     element.dispatchEvent(new MouseEvent('mouseup', props));

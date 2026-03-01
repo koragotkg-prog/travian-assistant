@@ -271,8 +271,7 @@
    * Step 1: Navigate to rally point
    */
   FarmManager.prototype._stepNavRally = async function(sendFn) {
-    this._transition(STATES.NAV_RALLY);
-    await this._persistCycle();
+    if (this._state !== STATES.NAV_RALLY) { this._transition(STATES.NAV_RALLY); await this._persistCycle(); }
 
     await sendFn({ type: 'EXECUTE', action: 'navigateTo', params: { page: 'rallyPoint' } });
     await this._humanDelay(2000, 4000);
@@ -290,8 +289,7 @@
    * Step 2: Click farm list tab (tt=99) — causes page reload
    */
   FarmManager.prototype._stepClickTab = async function(sendFn) {
-    this._transition(STATES.CLICK_TAB);
-    await this._persistCycle();
+    if (this._state !== STATES.CLICK_TAB) { this._transition(STATES.CLICK_TAB); await this._persistCycle(); }
 
     await sendFn({ type: 'EXECUTE', action: 'clickFarmListTab', params: {} });
     await this._humanDelay(2000, 3500);
@@ -303,8 +301,7 @@
    * Step 3: Wait for content script re-injection after farm tab page reload
    */
   FarmManager.prototype._stepWaitTab = async function(sendFn) {
-    this._transition(STATES.WAIT_TAB);
-    await this._persistCycle();
+    if (this._state !== STATES.WAIT_TAB) { this._transition(STATES.WAIT_TAB); await this._persistCycle(); }
 
     var ready = await this._waitForCSWrapped(sendFn, 15000);
     if (!ready) {
@@ -319,8 +316,7 @@
    * Step 4: Send farm lists (smart selective / single / sendAll)
    */
   FarmManager.prototype._stepSendLists = async function(sendFn) {
-    this._transition(STATES.SEND_LISTS);
-    await this._persistCycle();
+    if (this._state !== STATES.SEND_LISTS) { this._transition(STATES.SEND_LISTS); await this._persistCycle(); }
 
     var cfg = this._cycle.config;
     var response = null;
@@ -378,8 +374,7 @@
    * Step 5: Scan for re-raid targets (bounty-full after farm send)
    */
   FarmManager.prototype._stepScanReRaid = async function(sendFn) {
-    this._transition(STATES.SCAN_RERAID);
-    await this._persistCycle();
+    if (this._state !== STATES.SCAN_RERAID) { this._transition(STATES.SCAN_RERAID); await this._persistCycle(); }
 
     // Wait for UI to update after farm send (AJAX-based, needs time for icons to refresh)
     await this._humanDelay(2000, 3500);
@@ -524,8 +519,7 @@
    * Step 7: Navigate back to dorf1
    */
   FarmManager.prototype._stepNavHome = async function(sendFn) {
-    this._transition(STATES.NAV_HOME);
-    await this._persistCycle();
+    if (this._state !== STATES.NAV_HOME) { this._transition(STATES.NAV_HOME); await this._persistCycle(); }
 
     try {
       await sendFn({ type: 'EXECUTE', action: 'navigateTo', params: { page: 'dorf1' } });
