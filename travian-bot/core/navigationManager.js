@@ -157,20 +157,25 @@
      * @returns {Promise<void>}
      */
     async refreshBuildingsDetour(cycleCounter, delayFn) {
-      if (delayFn) await delayFn();
-      await this._bridge.send({
-        type: 'EXECUTE', action: 'navigateTo', params: { page: 'dorf2' }
-      });
-      await this._bridge.waitForReady(10000);
-      var dorf2Resp = await this._bridge.send({ type: 'SCAN' });
-      if (dorf2Resp && dorf2Resp.success && dorf2Resp.data &&
-          dorf2Resp.data.buildings && dorf2Resp.data.buildings.length > 0) {
-        this._cachedBuildings = dorf2Resp.data.buildings;
-        this._buildingsScanCycle = cycleCounter;
-        // Update earliest finish time for event-driven scan trigger
-        if (dorf2Resp.data.constructionQueue) {
-          this._buildQueueEarliestFinish = dorf2Resp.data.constructionQueue.earliestFinishTime || 0;
+      try {
+        if (delayFn) await delayFn();
+        await this._bridge.send({
+          type: 'EXECUTE', action: 'navigateTo', params: { page: 'dorf2' }
+        });
+        await this._bridge.waitForReady(10000);
+        var dorf2Resp = await this._bridge.send({ type: 'SCAN' });
+        if (dorf2Resp && dorf2Resp.success && dorf2Resp.data &&
+            dorf2Resp.data.buildings && dorf2Resp.data.buildings.length > 0) {
+          this._cachedBuildings = dorf2Resp.data.buildings;
+          this._buildingsScanCycle = cycleCounter;
+          if (dorf2Resp.data.constructionQueue) {
+            this._buildQueueEarliestFinish = dorf2Resp.data.constructionQueue.earliestFinishTime || 0;
+          }
         }
+      } catch (e) {
+        this._log('WARN', 'Dorf2 buildings detour scan failed: ' + (e.message || e));
+        this._buildQueueEarliestFinish = 0;
+        this._buildingsScanCycle = cycleCounter;
       }
     }
 

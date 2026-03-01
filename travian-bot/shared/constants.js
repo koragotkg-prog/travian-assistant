@@ -38,12 +38,13 @@ const FSM_LABELS = {
   IDLE:      'Idle',
 };
 
-// Tab → Panel ID mapping for the new 4-tab layout
+// Tab → Panel ID mapping for the popup tab layout
 const TAB_PANEL_MAP = {
-  overview:  'panelOverview',
-  activity:  'panelActivity',
-  config:    'panelConfig',
-  more:      'panelMore',
+  dash:   'panelDash',
+  config: 'panelConfig',
+  ai:     'panelAI',
+  logs:   'panelLogs',
+  farm:   'panelFarm',
 };
 
 // Building GIDs available for construction in empty slots

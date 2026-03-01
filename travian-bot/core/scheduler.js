@@ -150,14 +150,16 @@ class Scheduler {
         }
       }, actualInterval);
 
-      // Store or update cycle entry
+      // Store or update cycle entry (preserve _lastCbDuration for drift compensation)
+      var prevEntry = this.cycles.get(name);
       this.cycles.set(name, {
         timerId: timerId,
         callback: callback,
         intervalMs: intervalMs,
         jitterMs: jitterMs,
         nextRun: nextRun,
-        type: 'cycle'
+        type: 'cycle',
+        _lastCbDuration: (prevEntry && prevEntry._lastCbDuration) || 0
       });
     };
 

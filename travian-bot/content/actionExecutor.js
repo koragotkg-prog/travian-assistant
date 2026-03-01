@@ -1020,7 +1020,7 @@
 
         var input = await awaitSelector('input[name="t1"]', 3000);
         if (!input) {
-          return { success: false, reason: 'button_not_found', message: 'Trap training input not found' };
+          return { success: false, reason: 'input_not_found', message: 'Trap training input not found' };
         }
 
         if (input.disabled || input.max === '0') {
@@ -1029,7 +1029,7 @@
 
         var filled = await fillInput('input[name="t1"]', String(count));
         if (!filled) {
-          return { success: false, reason: 'button_not_found', message: 'Failed to fill trap training input' };
+          return { success: false, reason: 'input_not_found', message: 'Failed to fill trap training input' };
         }
 
         await humanDelay(300, 600);
@@ -2039,11 +2039,6 @@
         if (cancelBtnSafe) cancelBtnSafe.click();
         return { success: false, reason: 'input_disabled', message: 'Move button disabled — input values not recognized by React' };
 
-        Logger.warn('useHeroItemBulk: no usable confirm button found');
-        var cancelBtn2 = qs(sel.cancelButton);
-        if (cancelBtn2) cancelBtn2.click();
-        return { success: false, reason: 'button_not_found', message: 'Confirm button not found or disabled' };
-
       } catch (e) {
         Logger.error('useHeroItemBulk error:', e);
         // Try to close dialog if still open
@@ -2255,7 +2250,7 @@
           case 'build':
             await simulateHumanClick(result.btn);
             Logger.log('buildNewByGid: clicked build button for GID', gid);
-            return true;
+            return { success: true, message: 'Build button clicked for GID ' + gid };
 
           case 'queue_full':
             Logger.warn('buildNewByGid: queue full (only gold builder available)');

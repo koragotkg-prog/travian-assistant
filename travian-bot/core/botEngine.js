@@ -511,8 +511,9 @@ class BotEngine {
 
     // Attempt to notify the user via the content script
     this.sendToContentScript({
+      type: 'EXECUTE',
       action: 'NOTIFY',
-      data: {
+      params: {
         type: 'emergency',
         message: `Bot emergency stop: ${reason}`
       }

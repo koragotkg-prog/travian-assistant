@@ -843,10 +843,10 @@
             var isActive = entry.classList.contains('active');
             var name = nameEl ? nameEl.textContent.trim() : '';
 
-            // Extract coordinates — strip Unicode bidi markers before parsing
+            // Extract coordinates — normalize Unicode minus and strip bidi markers
             var x = 0, y = 0;
             if (coordEl) {
-              var coordText = coordEl.textContent.replace(/[^\d|\-]/g, '');
+              var coordText = coordEl.textContent.replace(/\u2212/g, '-').replace(/[^\d|\-]/g, '');
               var coordMatch = coordText.match(/(-?\d+)\|(-?\d+)/);
               if (coordMatch) {
                 x = parseInt(coordMatch[1], 10);
@@ -1240,14 +1240,14 @@
           var progressText = progressEl ? progressEl.textContent.trim() : '';
           var progressMatch = progressText.match(/(\d+)\s*\/\s*(\d+)/);
           var progress = progressMatch ? parseInt(progressMatch[1], 10) : 0;
-          var total = progressMatch ? parseInt(progressMatch[2], 10) : 1;
+          var total = (progressMatch ? parseInt(progressMatch[2], 10) : 0) || 1;
 
           return {
             title: title,
             silver: silver,
             progress: progress,
             total: total,
-            progressPct: progress / total
+            progressPct: total > 0 ? progress / total : 0
           };
         });
       } catch (e) {
