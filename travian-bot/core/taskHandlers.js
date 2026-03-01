@@ -79,11 +79,17 @@
     // -----------------------------------------------------------------------
     train_troops: async function(engine, task) {
       // Navigate to the barracks/stable page and train
+      var buildingPage = task.params.buildingType || 'barracks';
       await engine.sendToContentScript({
-        type: 'EXECUTE', action: 'navigateTo', params: { page: task.params.buildingType || 'barracks' }
+        type: 'EXECUTE', action: 'navigateTo', params: { page: buildingPage }
       });
       await engine._randomDelay();
       await engine._waitForContentScript(15000);
+      // FIX: Verify navigation landed on a building page before training.
+      // Without this, a failed nav wastes a retry sending trainTroops to the wrong page.
+      if (!await engine._verifyNavigation('building')) {
+        return { success: false, reason: 'page_mismatch', message: 'Not on building page after navigating to ' + buildingPage };
+      }
       return await engine.sendToContentScript({
         type: 'EXECUTE', action: 'trainTroops', params: {
           troopType: task.params.troopType,
@@ -239,7 +245,9 @@
       // Tab switching must happen at botEngine level because page reloads kill content script
       if (response && response.reason === 'building_not_in_tab') {
         console.log('[BotEngine] build_new: GID ' + task.params.gid + ' not in default tab, trying other tabs');
-        for (var tabIdx = 0; tabIdx < 3; tabIdx++) {
+        // FIX: Start at 1 — tab 0 (default) was already tried above. Starting at 0
+        // wastes a full page-reload cycle (~5-10s) re-scanning the same tab.
+        for (var tabIdx = 1; tabIdx < 3; tabIdx++) {
           var tabClick = await engine.sendToContentScript({
             type: 'EXECUTE', action: 'clickBuildTab', params: { tabIndex: tabIdx }
           });

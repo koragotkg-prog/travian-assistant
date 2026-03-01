@@ -1451,8 +1451,11 @@ class BotEngine {
    * @param {string} taskType - The task type that just finished
    */
   async _returnHome(taskType) {
-    // Tasks that already end on or near dorf1 — no need to navigate
-    const skipTypes = ['upgrade_resource', 'navigate', 'switch_village'];
+    // Tasks that already end on or near dorf1 — no need to navigate.
+    // FIX: Removed 'upgrade_resource' — after clicking upgrade on a resource field,
+    // the browser stays on build.php?id=XX. Without navigating home, the next scan
+    // reads that build page instead of dorf1, missing all resourceFields data.
+    const skipTypes = ['navigate', 'switch_village'];
     if (skipTypes.indexOf(taskType) !== -1) {
       await this._randomDelay();
       return;
@@ -1491,11 +1494,14 @@ class BotEngine {
       'queue_full',         // Build queue full — must wait for current build
       'building_not_available', // Building doesn't exist for this tribe/level
       'no_items',           // No hero items to use
+      'no_amount',          // No amount to transfer (hero dialog)
       'page_mismatch',      // FIX 9: page assertion failed — navigation problem
+      'wrong_page',         // On wrong page for this action
       'slot_occupied',      // Slot already has building — can't build new
       'prerequisites_not_met', // Building prereqs unmet — DFS resolver should handle
       'input_not_found',    // Troop input missing — wrong building or troop unavailable
-      'input_disabled'      // Troop input disabled — building level too low
+      'input_disabled',     // Troop input disabled — building level too low
+      'duplicate'           // Duplicate action — retrying same action is pointless
     ];
     if (hopeless.indexOf(reason) !== -1) return true;
 

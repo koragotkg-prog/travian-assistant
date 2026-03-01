@@ -9,6 +9,11 @@
  * Exported via self.TravianDecisionEngine
  */
 
+// Safe logger reference — resolves TravianLogger from global scope or provides a no-op fallback
+var _DELogger = (typeof self !== 'undefined' && self.TravianLogger) ||
+  (typeof window !== 'undefined' && window.TravianLogger) ||
+  { log: function() {} };
+
 class DecisionEngine {
   constructor() {
     /** @type {Array<Function>} Custom rule functions */
@@ -124,7 +129,7 @@ class DecisionEngine {
         this.lastPlannerContext = metaContext;
         // Derive currentPhase from GlobalPlanner (single authority)
         this.currentPhase = this._mapPlannerPhaseToLegacy(metaContext.phase);
-        TravianLogger.log('DEBUG', `[Planner] ${metaContext.advice}`);
+        _DELogger.log('DEBUG', `[Planner] ${metaContext.advice}`);
       } catch (err) {
         console.warn('[DecisionEngine] GlobalPlanner.advise() failed:', err.message);
       }
@@ -171,7 +176,7 @@ class DecisionEngine {
         // FIX: Try runner-up actions if top-scored is already queued
         for (const action of available) {
           if (!taskQueue.hasAnyTaskOfType(action.type)) {
-            TravianLogger.log('INFO', `[AI] Best action: ${action.type} (score: ${action.score.toFixed(1)}) — ${action.reason}`);
+            _DELogger.log('INFO', `[AI] Best action: ${action.type} (score: ${action.score.toFixed(1)}) — ${action.reason}`);
             this.lastAIAction = { type: action.type, score: action.score, reason: action.reason };
             newTasks.push({
               type: action.type,
@@ -589,7 +594,7 @@ class DecisionEngine {
     if (this._farmIntelligence) {
       var activeTargets = this._farmIntelligence.getActiveTargets();
       if (activeTargets.length === 0 && Object.keys(this._farmIntelligence._targets || {}).length > 0) {
-        TravianLogger.log('DEBUG', '[DecisionEngine] Skipping farm — all targets blacklisted/paused');
+        _DELogger.log('DEBUG', '[DecisionEngine] Skipping farm — all targets blacklisted/paused');
         return null;
       }
     }
@@ -601,7 +606,7 @@ class DecisionEngine {
     // Skip if raids are already out
     const outgoing = state.troopMovements?.outgoing || 0;
     if (outgoing > 0) {
-      TravianLogger.log('DEBUG', `[DecisionEngine] Skipping farm — ${outgoing} raids still out`);
+      _DELogger.log('DEBUG', `[DecisionEngine] Skipping farm — ${outgoing} raids still out`);
       return null;
     }
 

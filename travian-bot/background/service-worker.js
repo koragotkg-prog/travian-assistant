@@ -349,7 +349,11 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
           if (serverKey) {
             await self.TravianStorage.saveServerConfig(serverKey, configData);
             var cfgInst = manager.get(serverKey);
-            if (cfgInst) cfgInst.engine.config = configData;
+            if (cfgInst) {
+              // Reload merged config from storage to preserve defaults
+              var mergedCfg = await self.TravianStorage.getServerConfig(serverKey);
+              cfgInst.engine.config = mergedCfg;
+            }
           } else {
             // Legacy fallback
             await self.TravianStorage.set('bot_config', configData);

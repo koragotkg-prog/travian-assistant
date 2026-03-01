@@ -329,7 +329,7 @@ const App = {
     }
 
     var res = gs.resources;
-    var cap = gs.capacity || {};
+    var cap = gs.resourceCapacity || {};
     var prod = gs.production || {};
     var wh = cap.warehouse || 1;
     var gr = cap.granary || 1;

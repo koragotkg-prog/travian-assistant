@@ -764,7 +764,7 @@
           }
           await simulateHumanClick(greenBtn);
           Logger.log('clickUpgradeButton: clicked upgrade');
-          return true;
+          return { success: true, message: 'Upgrade button clicked' };
         }
 
         // Also try link-based green buttons (scoped to upgrade container first)
@@ -796,7 +796,7 @@
           }
           await simulateHumanClick(greenLink);
           Logger.log('clickUpgradeButton: clicked upgrade link');
-          return true;
+          return { success: true, message: 'Upgrade link clicked' };
         }
 
         // Step 2: No green button — distinguish insufficient resources vs queue full.
@@ -1732,10 +1732,10 @@
           Logger.log('sendHeroAdventure: confirmed adventure');
         }
 
-        return true;
+        return { success: true, message: 'Hero adventure sent' };
       } catch (e) {
         Logger.error('sendHeroAdventure error:', e);
-        return false;
+        return { success: false, reason: 'button_not_found', message: e.message || 'sendHeroAdventure exception' };
       }
     },
 

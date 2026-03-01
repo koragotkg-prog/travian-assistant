@@ -1903,3 +1903,22 @@ input[type="text"]:focus {
   border-radius: var(--radius-sm);
   border-left: 2px solid var(--primary-dim);
 }
+
+/* --- Save Button Feedback States --- */
+.btn-saved {
+  background: var(--success) !important;
+  color: #000 !important;
+  border-color: var(--success) !important;
+  box-shadow: 0 0 12px var(--success-glow);
+}
+.btn-save-error {
+  background: var(--danger) !important;
+  color: #fff !important;
+  border-color: var(--danger) !important;
+  box-shadow: 0 0 12px var(--danger-glow);
+  animation: pulse-error 0.5s ease;
+}
+@keyframes pulse-error {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.02); }
+}

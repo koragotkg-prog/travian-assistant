@@ -132,6 +132,11 @@
         }
       } catch (e) {
         this._log('WARN', 'Dorf2 buildings scan failed: ' + e.message);
+        // FIX: Reset stale finish time on failure to prevent infinite rescan loop.
+        // Without this, a past _buildQueueEarliestFinish causes shouldRefreshBuildings()
+        // to return true every cycle, navigating to dorf2 and back endlessly.
+        this._buildQueueEarliestFinish = 0;
+        this._buildingsScanCycle = cycleCounter; // Prevent staleness fallback too
       } finally {
         // Always navigate back to dorf1, even if scan failed
         try {

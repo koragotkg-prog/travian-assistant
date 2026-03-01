@@ -223,6 +223,7 @@ let farmTargets = [];
 let refreshInterval = null;
 let currentServerKey = null; // Set on popup open from active tab URL
 let lastTargetRefreshTs = 0; // Throttle upgrade targets refresh (ms)
+let configTabDirty = false;   // Dirty-state flag: suppress auto-refresh while user edits config
 
 // GID_NAMES is provided by shared/constants.js (loaded before popup.js)
 
@@ -1471,7 +1472,10 @@ function selectAllTargets(enable) {
   checkboxes.forEach(function (cb) {
     cb.checked = enable;
     var key = cb.dataset.slot;
-    if (key && upgradeTargets[key]) {
+    if (key) {
+      // FIX: Create entry if missing — without this, "Select All" visually checks
+      // checkboxes but the backing data isn't created for new/uninitialized slots.
+      if (!upgradeTargets[key]) upgradeTargets[key] = {};
       upgradeTargets[key].enabled = enable;
     }
   });
@@ -2031,14 +2035,22 @@ function saveAllConfig() {
   // the service worker's atomicMerge on the same key.
   sendMessage({ type: 'SAVE_CONFIG', config })
     .then(() => {
-      dom.btnSaveAll.textContent = 'Saved!';
+      configTabDirty = false;
+      dom.btnSaveAll.textContent = '✓ Saved!';
+      dom.btnSaveAll.classList.add('btn-saved');
       setTimeout(() => {
-        dom.btnSaveAll.textContent = 'Save All Settings';
-      }, 1500);
+        dom.btnSaveAll.textContent = '💾 Save All Settings';
+        dom.btnSaveAll.classList.remove('btn-saved');
+      }, 2000);
     })
     .catch((err) => {
       console.warn('[Popup] Failed to save config:', err);
-      dom.btnSaveAll.textContent = 'Save All Settings';
+      dom.btnSaveAll.textContent = '✕ Save Failed!';
+      dom.btnSaveAll.classList.add('btn-save-error');
+      setTimeout(() => {
+        dom.btnSaveAll.textContent = '💾 Save All Settings';
+        dom.btnSaveAll.classList.remove('btn-save-error');
+      }, 3000);
     });
 }
 
@@ -2102,7 +2114,8 @@ function refreshStatus() {
         }
 
         // Auto-populate/refresh upgrade list from gameState (throttled to 10s)
-        if (s.gameState && s.gameState.resourceFields && s.gameState.resourceFields.length > 0) {
+        // Skip when user is actively editing config to prevent wiping their edits
+        if (!configTabDirty && s.gameState && s.gameState.resourceFields && s.gameState.resourceFields.length > 0) {
           var now = Date.now();
           if (now - lastTargetRefreshTs > 10000) {
             lastTargetRefreshTs = now;
@@ -2601,7 +2614,8 @@ function bindEvents() {
   dom.btnStart.addEventListener('click', () => {
     sendMessage({ type: 'START_BOT' })
       .then((response) => {
-        if (response) updateStatus(response);
+        if (response && response.data) updateStatus(response.data);
+        else if (response) updateStatus(response);
         // SAF-5 FIX: Clear emergency reason on fresh start
         chrome.storage.local.remove('bot_emergency_stop');
       })
@@ -2611,7 +2625,8 @@ function bindEvents() {
   dom.btnStop.addEventListener('click', () => {
     sendMessage({ type: 'STOP_BOT' })
       .then((response) => {
-        if (response) updateStatus(response);
+        if (response && response.data) updateStatus(response.data);
+        else if (response) updateStatus(response);
       })
       .catch(console.warn);
   });
@@ -2619,7 +2634,8 @@ function bindEvents() {
   dom.btnPause.addEventListener('click', () => {
     sendMessage({ type: 'PAUSE_BOT' })
       .then((response) => {
-        if (response) updateStatus(response);
+        if (response && response.data) updateStatus(response.data);
+        else if (response) updateStatus(response);
       })
       .catch(console.warn);
   });
@@ -2632,7 +2648,8 @@ function bindEvents() {
 
     sendMessage({ type: 'EMERGENCY_STOP' })
       .then((response) => {
-        if (response) updateStatus(response);
+        if (response && response.data) updateStatus(response.data);
+        else if (response) updateStatus(response);
       })
       .catch(console.warn);
   });
@@ -2710,6 +2727,13 @@ function bindEvents() {
     dom.cfgTribe.addEventListener('change', function () {
       rebuildTroopDropdownsForTribe();
     });
+  }
+
+  // --- Dirty-state tracking: mark config as dirty when user edits any input ---
+  var configPanel = document.getElementById('panelConfig');
+  if (configPanel) {
+    configPanel.addEventListener('input', function () { configTabDirty = true; });
+    configPanel.addEventListener('change', function () { configTabDirty = true; });
   }
 
   // --- Queue ---

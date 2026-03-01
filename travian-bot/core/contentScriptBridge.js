@@ -73,8 +73,11 @@
 
       // TQ-6 FIX: Stamp EXECUTE messages with a unique requestId for dedup.
       // Content script tracks last seen requestId and ignores duplicates.
+      // FIX: Shallow-clone to avoid mutating caller's object — prevents subtle
+      // bugs if callers ever reuse message objects or inspect them after send().
       if (message && message.type === 'EXECUTE') {
         this._requestIdCounter++;
+        message = Object.assign({}, message);
         message._requestId = this._requestIdCounter;
       }
 

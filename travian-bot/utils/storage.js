@@ -47,9 +47,17 @@
     });
     // FIX: Chain must always resolve so subsequent writes can proceed.
     // But return the raw promise to callers so they can detect failures.
-    _writeChains.set(key, callerPromise.catch(err => {
+    // FIX: Chain resolves to undefined to free memory. Without cleanup,
+    // each key stays in the Map forever — benign for frequently-used keys
+    // but accumulates for one-off keys over long sessions.
+    // Safe identity check: only delete if no newer chain was started for this key.
+    const chainPromise = callerPromise.then(() => {
+      if (_writeChains.get(key) === chainPromise) _writeChains.delete(key);
+    }).catch(err => {
       console.warn('[TravianStorage] atomicMerge failed for ' + key + ':', err);
-    }));
+      if (_writeChains.get(key) === chainPromise) _writeChains.delete(key);
+    });
+    _writeChains.set(key, chainPromise);
     return callerPromise;
   }
 

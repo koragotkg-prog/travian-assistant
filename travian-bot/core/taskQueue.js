@@ -62,7 +62,7 @@ class TaskQueue {
           t.type === type &&
           t.villageId === villageId &&
           t.status !== 'completed' && t.status !== 'failed' &&
-          (t.params.fieldId === targetKey || t.params.slot === targetKey)
+          (t.params.fieldId === targetKey || t.params.slot === targetKey || t.params.gid === targetKey)
         );
         if (isDuplicate) {
           TravianLogger.log('DEBUG', `[TaskQueue] Skipped duplicate ${type} for target ${targetKey}`);
@@ -300,6 +300,7 @@ class TaskQueue {
 
     const removed = before - this.queue.length;
     if (removed > 0) {
+      this._dirtyAt = Date.now(); // Ensure cleaned queue is persisted
       TravianLogger.log('DEBUG', `[TaskQueue] Cleanup: removed ${removed} stale tasks (${this.queue.length} remain)`);
     }
     return removed;
