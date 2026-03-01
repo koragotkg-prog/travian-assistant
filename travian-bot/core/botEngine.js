@@ -821,7 +821,7 @@ class BotEngine {
       // 7. Execute tasks from queue
       // Phase 2: Batch execution groups tasks by required page for 3-5x throughput.
       // Falls back to single-task execution when registry is unavailable.
-      if (this._handlerRegistry && this.taskQueue.getPendingCount() > 1) {
+      if (this._handlerRegistry && this.taskQueue.size() > 1) {
         var batchCount = await this._executeBatch();
         if (batchCount === 0) {
           this._adjustLoopInterval('idle');
