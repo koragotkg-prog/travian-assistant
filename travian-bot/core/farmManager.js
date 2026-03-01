@@ -326,36 +326,48 @@
     var cfg = this._cycle.config;
     var response = null;
 
+    var rawResponse = null;
+
     if (cfg.smartFarming) {
       // Smart farming: selective checkbox toggle per farm list slot
       Logger.log('INFO', LOG_TAG + ' Sending smart farm (minLoot=' + cfg.minLoot + ' skipLosses=' + cfg.skipLosses + ')');
-      response = await sendFn({
+      rawResponse = await sendFn({
         type: 'EXECUTE', action: 'selectiveFarmSend', params: {
           minLoot: cfg.minLoot,
           skipLosses: cfg.skipLosses
         }
       });
-      if (response && response.sent != null) {
-        Logger.log('INFO', LOG_TAG + ' Smart farm result: sent=' + response.sent + ' skipped=' + response.skipped + ' total=' + response.total);
-      }
     } else if (cfg.farmListId != null) {
       // Send a specific farm list
       Logger.log('INFO', LOG_TAG + ' Sending farm list: ' + cfg.farmListId);
-      response = await sendFn({
+      rawResponse = await sendFn({
         type: 'EXECUTE', action: 'sendFarmList', params: { farmListId: cfg.farmListId }
       });
     } else {
       // Legacy: send all farm lists
       Logger.log('INFO', LOG_TAG + ' Sending all farm lists');
-      response = await sendFn({
+      rawResponse = await sendFn({
         type: 'EXECUTE', action: 'sendAllFarmLists', params: {}
       });
     }
 
-    // Store result
+    // FIX: Unwrap bridge response — ContentScriptBridge wraps all results in
+    // { success: !!actionResult, data: actualResult }. The wrapper's .success
+    // is always true for object results (even { success: false }), and domain
+    // fields (sent, skipped, total) live inside .data, not at the top level.
+    response = (rawResponse && rawResponse.data && typeof rawResponse.data === 'object')
+      ? rawResponse.data : rawResponse;
+
+    if (response && response.sent != null) {
+      Logger.log('INFO', LOG_TAG + ' Smart farm result: sent=' + response.sent + ' skipped=' + response.skipped + ' total=' + response.total);
+    } else if (response && response.started != null) {
+      Logger.log('INFO', LOG_TAG + ' Farm send result: started=' + response.started + ' total=' + response.total);
+    }
+
+    // Store result (now using unwrapped response with correct .success and counts)
     this._cycle.listSendResult = response && response.success ? {
       success: true,
-      sent: response.sent || 1,
+      sent: response.sent || response.started || 1,
       skipped: response.skipped || 0,
       total: response.total || 1
     } : { success: false, sent: 0, skipped: 0, total: 0 };
@@ -393,9 +405,12 @@
     // raids so intelligence can auto-blacklist lossy targets and compute scores.
     if (this._intelligence) {
       try {
-        var slotScan = await sendFn({
+        var slotScanRaw = await sendFn({
           type: 'EXECUTE', action: 'scanFarmListSlots', params: {}
         });
+        // FIX: Unwrap bridge response — .slots lives in .data
+        var slotScan = (slotScanRaw && slotScanRaw.data && typeof slotScanRaw.data === 'object')
+          ? slotScanRaw.data : slotScanRaw;
         var allSlots = (slotScan && slotScan.success && slotScan.slots) || [];
         var recorded = 0;
         for (var si = 0; si < allSlots.length; si++) {
@@ -445,9 +460,12 @@
 
     Logger.log('INFO', LOG_TAG + ' Scanning for re-raid targets (minLoot=' + cfg.reRaidMinLoot + ')');
 
-    var scanResult = await sendFn({
+    var scanResultRaw = await sendFn({
       type: 'EXECUTE', action: 'scanReRaidTargets', params: { minLoot: cfg.reRaidMinLoot }
     });
+    // FIX: Unwrap bridge response — .targets lives in .data
+    var scanResult = (scanResultRaw && scanResultRaw.data && typeof scanResultRaw.data === 'object')
+      ? scanResultRaw.data : scanResultRaw;
 
     if (!scanResult || !scanResult.success || !scanResult.targets || scanResult.targets.length === 0) {
       Logger.log('DEBUG', LOG_TAG + ' No re-raid targets found');
@@ -615,13 +633,16 @@
     }
 
     // Cycle complete — build result
+    var listResult = this._cycle.listSendResult;
     var result = {
-      success: !!(this._cycle.listSendResult && this._cycle.listSendResult.success),
-      sent: (this._cycle.listSendResult && this._cycle.listSendResult.sent) || 0,
-      skipped: (this._cycle.listSendResult && this._cycle.listSendResult.skipped) || 0,
+      success: !!(listResult && listResult.success),
+      sent: (listResult && listResult.sent) || 0,
+      skipped: (listResult && listResult.skipped) || 0,
       reRaidSent: this._cycle.reRaidSent || 0,
       reRaidFailed: this._cycle.reRaidFailed || 0,
-      durationMs: Date.now() - this._cycle.startedAt
+      durationMs: Date.now() - this._cycle.startedAt,
+      // Include message for BotEngine error reporting when send failed
+      message: (listResult && !listResult.success) ? 'Farm list send failed (sent=0)' : undefined
     };
 
     Logger.log('INFO', LOG_TAG + ' Cycle complete: sent=' + result.sent + ' reRaid=' + result.reRaidSent +
