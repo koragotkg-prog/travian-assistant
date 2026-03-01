@@ -427,17 +427,19 @@
     input.dispatchEvent(new Event('focus', { bubbles: true }));
     await delay(randomInt(50, 150));
 
-    // Select all existing text and delete it
-    input.select();
-    input.dispatchEvent(new Event('select', { bubbles: true }));
-    await delay(randomInt(30, 80));
+    // Use nativeInputValueSetter to bypass React's controlled component state.
+    // Plain `input.value = x` sets the DOM property but React's internal state
+    // stays stale, leaving submit/send buttons disabled.
+    var nativeSetter = Object.getOwnPropertyDescriptor(
+      window.HTMLInputElement.prototype, 'value'
+    ).set;
 
-    // Clear via setting value and dispatching input event
-    input.value = '';
+    // Clear existing value
+    nativeSetter.call(input, '');
     input.dispatchEvent(new Event('input', { bubbles: true }));
     await delay(randomInt(30, 100));
 
-    // Type value character by character
+    // Type value character by character for human-like behavior
     var valueStr = String(value);
     for (var i = 0; i < valueStr.length; i++) {
       var char = valueStr[i];
@@ -450,10 +452,10 @@
         cancelable: true
       }));
 
-      // Update value
-      input.value += char;
+      // Update value via native setter so React picks up the change
+      nativeSetter.call(input, valueStr.substring(0, i + 1));
 
-      // input event
+      // input event — triggers React's synthetic event handler
       input.dispatchEvent(new Event('input', { bubbles: true }));
 
       // keyup
@@ -1036,11 +1038,13 @@
 
         await humanDelay(300, 600);
 
+        // Scope selectors AWAY from .upgradeButtonsContainer to avoid clicking
+        // the building upgrade button (same .green class) instead of train button
         var trainSelectors = [
-          '.textButtonV1.green',
-          'button[type="submit"].green',
-          '.section1 button.green',
-          'form button.green'
+          '.build_details .textButtonV1.green',
+          '.troop_details .textButtonV1.green',
+          '#build .textButtonV1.green:not(.upgradeButtonsContainer .textButtonV1)',
+          'button[type="submit"].green'
         ];
 
         var clicked = await clickElement(trainSelectors);
@@ -1476,7 +1480,8 @@
 
           Logger.log('claimQuestReward: claiming "' + questTitle + '"');
           await humanDelay(300, 700);
-          await safeClick(btn);
+          // Use simulateHumanClick (accepts DOM element) — NOT safeClick (expects selector string)
+          await simulateHumanClick(btn);
           await humanDelay(500, 1000);
 
           return { success: true, claimed: questTitle };
@@ -1682,17 +1687,17 @@
      */
     confirmAttack: async function () {
       try {
-        Logger.log('confirmAttack: looking for confirm button');
+        Logger.log('confirmAttack: waiting for confirm button');
         await humanDelay(300, 600);
 
-        var confirmBtn = trySelectors([
-          'button#s1',
-          'button#btn_ok',
-          'button.green[type="submit"]',
-          '#s1',
-          '#btn_ok',
-          'input[type="submit"][name="s1"]'
-        ]);
+        // Use awaitSelector to wait for the confirm page to load after
+        // the sendAttack page reload. trySelectors would fail if DOM
+        // isn't ready yet.
+        var confirmBtn = await awaitSelector(
+          ['button#s1', 'button#btn_ok', 'button.green[type="submit"]',
+           '#s1', '#btn_ok', 'input[type="submit"][name="s1"]'],
+          5000
+        );
 
         if (!confirmBtn) {
           Logger.warn('confirmAttack: confirm button not found');

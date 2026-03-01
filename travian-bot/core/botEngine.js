@@ -844,7 +844,8 @@ class BotEngine {
     } finally {
       // Return to IDLE if still in an active processing state
       const s = this._botState;
-      if (s === BOT_STATES.SCANNING || s === BOT_STATES.DECIDING || s === BOT_STATES.COOLDOWN) {
+      if (s === BOT_STATES.SCANNING || s === BOT_STATES.DECIDING ||
+          s === BOT_STATES.EXECUTING || s === BOT_STATES.COOLDOWN) {
         this._transition(BOT_STATES.IDLE, 'cycle end');
       }
       this._cycleLock = null; // FIX-P3: Release unified cycle lock
@@ -1179,8 +1180,15 @@ class BotEngine {
   _requeue(tasks) {
     for (var i = 0; i < tasks.length; i++) {
       var t = tasks[i];
-      // markFailed with a soft reason so retry budget isn't consumed
-      this.taskQueue.markFailed(t.id, 'batch_interrupted');
+      // Reset to pending WITHOUT consuming retry budget — these tasks were
+      // never attempted, they were just waiting in the batch when an earlier
+      // task failed. markFailed() would increment retries and eventually
+      // permanently kill innocent tasks.
+      var queued = this.taskQueue.queue.find(function(q) { return q.id === t.id; });
+      if (queued) {
+        queued.status = 'pending';
+        queued.error = 'batch_interrupted';
+      }
     }
   }
 

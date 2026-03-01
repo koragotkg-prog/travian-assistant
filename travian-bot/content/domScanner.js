@@ -374,9 +374,9 @@
             var className = el.getAttribute('class') || '';
             var levelMatch = className.match(/level(\d+)/);
             var level = levelMatch ? parseInt(levelMatch[1], 10) : 0;
+            // 'good' class = production color indicator, NOT upgrade status
             var upgrading = className.indexOf('underConstruction') !== -1 ||
-                            className.indexOf('upgrading') !== -1 ||
-                            className.indexOf('good') !== -1;
+                            className.indexOf('upgrading') !== -1;
             if (aid > 0) {
               fields.push({
                 id: aid,
@@ -418,10 +418,10 @@
             var levelMatch = className.match(/level(\d+)/) || title.match(/level\s*(\d+)/i) || title.match(/(\d+)$/);
             var level = levelMatch ? parseInt(levelMatch[1], 10) : 0;
 
-            // Check if upgrading (usually indicated by a specific class)
+            // Check if upgrading (indicated by construction-specific classes)
+            // Note: 'good' class = production color indicator, NOT upgrade status
             var upgrading = className.indexOf('underConstruction') !== -1 ||
-                            className.indexOf('upgrading') !== -1 ||
-                            className.indexOf('good') !== -1; // sometimes 'good' class for active upgrade
+                            className.indexOf('upgrading') !== -1;
 
             if (fieldId > 0) {
               fields.push({
@@ -1279,10 +1279,13 @@
         if (window.location.href.indexOf('gid=36') === -1) return null;
 
         // Read trap counts from the description area
+        // Language-agnostic: look for "N / M" or "N/M" pattern for current/max traps
         var descEl = trySelectors(['#build .description', '#build .buildingDetails']);
         var descText = descEl ? descEl.textContent : '';
-        var currentMatch = descText.match(/(\d+)\s*อัน.*?ขณะนี้/);
-        var maxMatch = descText.match(/สูงสุด.*?(\d+)\s*อัน/);
+        // Try universal "N / M" pattern first (e.g., "120 / 200")
+        var slashMatch = descText.match(/(\d+)\s*\/\s*(\d+)/);
+        var currentMatch = slashMatch ? [null, slashMatch[1]] : descText.match(/(\d+)\s*(?:อัน|traps?|Fallen|pièges)/i);
+        var maxMatch = slashMatch ? [null, slashMatch[2]] : descText.match(/(?:สูงสุด|max|maximum|Maximum).*?(\d+)/i);
 
         // Check training form
         var trainInput = qs('input[name="t1"]');
@@ -1581,8 +1584,9 @@
           var villageItems = qsa('#sidebarBoxVillageList .villageList .listEntry');
           for (var j = 0; j < villageItems.length; j++) {
             var v = villageItems[j];
-            // Active village attack indicator: class `.attack` on the icon or row
-            var hasAttack = qs('.attack, .under_attack, [class*="attack"]', v);
+            // Active village attack indicator: specific classes only
+            // Avoid [class*="attack"] which false-positives on "attackSlot" etc.
+            var hasAttack = qs('.attack, .under_attack, .incomingAttack', v);
             if (hasAttack) {
               var villageName = qs('.name', v);
               attacks.push({
@@ -1611,8 +1615,9 @@
       if (!text) return null;
       var parts = text.split(':').map(function(p) { return parseInt(p, 10); });
       var seconds = 0;
-      if (parts.length === 3) seconds = parts[0] * 3600 + parts[1] * 60 + parts[2];
-      else if (parts.length === 2) seconds = parts[0] * 60 + parts[1];
+      if (parts.length === 4) seconds = parts[0] * 86400 + parts[1] * 3600 + parts[2] * 60 + parts[3]; // D:H:M:S
+      else if (parts.length === 3) seconds = parts[0] * 3600 + parts[1] * 60 + parts[2]; // H:M:S
+      else if (parts.length === 2) seconds = parts[0] * 60 + parts[1]; // M:S
       else return null;
       if (isNaN(seconds) || seconds <= 0) return null;
       return Date.now() + (seconds * 1000);
@@ -1861,11 +1866,8 @@
   // Expose on the window object
   window.TravianScanner = TravianScanner;
 
-  // Inject a DOM marker so page-context scripts can detect the bot is loaded
-  try {
-    document.documentElement.setAttribute('data-travian-bot', 'loaded');
-    document.documentElement.setAttribute('data-travian-bot-page', TravianScanner.detectPage());
-  } catch (_) {}
+  // DOM marker removed — it was detectable by Travian's page-context scripts
+  // and constituted a bot fingerprint. Nothing in the codebase reads these attributes.
 
   // ---------------------------------------------------------------------------
   // DOM Bridge: allows page-context scripts (e.g. MCP testing) to trigger scans
