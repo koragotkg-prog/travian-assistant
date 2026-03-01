@@ -714,6 +714,27 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
             break;
           }
 
+          // Ensure config is loaded from storage (instance may have been
+          // freshly created by getOrCreate after service worker restart)
+          if (!scanFarmInst.engine.config || !scanFarmInst.engine.config.farmConfig) {
+            try {
+              var storedCfg = await self.TravianStorage.getServerConfig(serverKey);
+              if (storedCfg) scanFarmInst.engine.config = storedCfg;
+            } catch (_) {}
+          }
+
+          // Discover Travian tab if not set (same pattern as START_BOT)
+          if (!scanFarmInst.tabId) {
+            var scanTabs = await findAllTravianTabs();
+            for (var st = 0; st < scanTabs.length; st++) {
+              if (self.TravianStorage.extractServerKey(scanTabs[st].url) === serverKey) {
+                scanFarmInst.tabId = scanTabs[st].id;
+                scanFarmInst.engine.activeTabId = scanTabs[st].id;
+                break;
+              }
+            }
+          }
+
           var gs = scanFarmInst.engine.gameState;
           var cfg = scanFarmInst.engine.config;
           var farmScanCfg = (cfg && cfg.farmConfig) || {};
@@ -747,7 +768,7 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
             farmScanTab = await chrome.tabs.get(scanFarmInst.tabId).catch(function() { return null; });
           }
           if (!farmScanTab || !farmScanTab.url) {
-            sendResponse({ success: false, error: 'No active Travian tab found' });
+            sendResponse({ success: false, error: 'No active Travian tab found. Open a Travian tab for this server first.' });
             break;
           }
 
