@@ -372,7 +372,9 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
 
         // ---- Logs ----
         case 'GET_LOGS': {
-          var logs = self.TravianLogger.getLogs ? self.TravianLogger.getLogs() : [];
+          // Pass serverKey to filter logs for the requesting server (backward compat: null = all)
+          var logServerKey = message.serverKey || null;
+          var logs = self.TravianLogger.getLogs ? self.TravianLogger.getLogs(null, null, logServerKey) : [];
           sendResponse({ success: true, data: logs });
           break;
         }
@@ -1136,17 +1138,27 @@ chrome.runtime.onInstalled.addListener(async function (details) {
   }
 
   if (details.reason === 'install') {
+    // Match BotEngine._getDefaultConfig() schema so _validateConfig() can use these values
     var defaultConfig = {
-      delayMin: 2000, delayMax: 8000,
-      idleMin: 30000, idleMax: 120000,
-      maxActionsPerHour: 60, captchaAutoStop: true,
-      errorAutoStop: true, maxRetries: 3,
-      autoBuild: true, autoAdventure: true,
-      autoFarm: false, autoTrade: false,
-      notificationsEnabled: true, darkMode: true,
+      autoUpgradeResources: true,
+      autoUpgradeBuildings: false,
+      autoTrainTroops: false,
+      autoFarm: false,
+      autoHeroAdventure: false,
+      useAIScoring: true,
+      delays: {
+        minActionDelay: 2000,
+        maxActionDelay: 8000,
+        loopActiveMs: 45000,
+        loopIdleMs: 180000
+      },
+      safetyConfig: {
+        maxActionsPerHour: 60
+      },
+      resourceConfig: { maxLevel: 10 },
       firstRun: true
     };
-    // Write to correct key
+    // Write to legacy key (backward compat) — per-server configs are created on first START_BOT
     await self.TravianStorage.set('bot_config', defaultConfig);
     logger.info('Default config written to storage');
   }

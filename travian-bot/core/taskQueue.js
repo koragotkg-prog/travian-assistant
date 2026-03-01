@@ -71,6 +71,22 @@ class TaskQueue {
       }
     }
 
+    // TROOP GUARD: prevent duplicate train_troops for the same buildingType
+    // (allows barracks + stable tasks simultaneously, blocks barracks + barracks)
+    if (type === 'train_troops') {
+      const bldType = params.buildingType || 'barracks';
+      const hasPendingTroop = this.queue.some(t =>
+        t.type === 'train_troops' &&
+        t.villageId === villageId &&
+        (t.params.buildingType || 'barracks') === bldType &&
+        t.status !== 'completed' && t.status !== 'failed'
+      );
+      if (hasPendingTroop) {
+        TravianLogger.log('DEBUG', `[TaskQueue] Skipped duplicate train_troops for ${bldType}`);
+        return null;
+      }
+    }
+
     // FARM GUARD: prevent duplicate farm tasks
     if (type === 'send_farm') {
       const hasPendingFarm = this.queue.some(t =>

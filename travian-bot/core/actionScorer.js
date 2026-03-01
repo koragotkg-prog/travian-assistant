@@ -174,27 +174,38 @@
       const minTroops = config.minTroops || 50;
       if (totalTroops >= minTroops && !config.alwaysTrain) return actions;
 
-      // Support new slots format + backward compat
+      // Build effective slot list from v2 slots or v1 legacy fields
       var tc = config.troopConfig || config;
-      var firstSlot = (tc.slots && tc.slots.length > 0) ? tc.slots[0] : null;
-      const troopType = firstSlot ? firstSlot.troopType : (tc.defaultTroopType || config.troopType || 't1');
-      const trainCount = firstSlot ? (firstSlot.batchSize || 5) : (tc.trainCount || config.trainCount || 5);
-      // FIX: Include buildingType so execution navigates to the correct building
-      const buildingType = firstSlot ? (firstSlot.building || 'barracks') : (tc.trainingBuilding || 'barracks');
+      var effectiveSlots;
+      if (tc.slots && tc.slots.length > 0) {
+        effectiveSlots = tc.slots.filter(s => s && s.troopType);
+      } else {
+        var legacyType = tc.defaultTroopType || config.troopType || 't1';
+        effectiveSlots = [{
+          troopType: legacyType,
+          batchSize: tc.trainCount || config.trainCount || 5,
+          building:  tc.trainingBuilding || 'barracks'
+        }];
+      }
 
-      // Crop awareness: don't train if free crop is very low (skip penalty if data unavailable)
-      // state.freeCrop may not exist; fall back to net crop production rate as proxy
+      // Crop awareness: don't train if free crop is very low
       const freeCrop = state.freeCrop ?? (state.resourceProduction ? state.resourceProduction.crop : null);
       const cropPenalty = (freeCrop == null) ? 1.0 : freeCrop < 10 ? 0.3 : freeCrop < 50 ? 0.7 : 1.0;
 
       const score = 8 * cropPenalty;
 
-      actions.push({
-        type: 'train_troops',
-        params: { troopType, count: trainCount, buildingType },
-        score,
-        reason: `Train ${trainCount}x ${troopType} @ ${buildingType} (troops: ${totalTroops})`
-      });
+      // Score one action per slot (e.g. barracks + stable simultaneously)
+      for (const slot of effectiveSlots) {
+        const troopType = slot.troopType;
+        const trainCount = slot.batchSize || 5;
+        const buildingType = slot.building || 'barracks';
+        actions.push({
+          type: 'train_troops',
+          params: { troopType, count: trainCount, buildingType },
+          score,
+          reason: `Train ${trainCount}x ${troopType} @ ${buildingType} (troops: ${totalTroops})`
+        });
+      }
 
       return actions;
     }

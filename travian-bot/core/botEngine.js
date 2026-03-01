@@ -565,6 +565,9 @@ class BotEngine {
 
     this._cycleLock = 'scanning';
 
+    // Tag logger with this engine's server key so logs are namespaced
+    if (TravianLogger.setServerKey) TravianLogger.setServerKey(this.serverKey);
+
     // FIX 8: Cycle tracking for structured logging
     this._cycleCounter++;
     this._currentCycleId = 'c' + this._cycleCounter;

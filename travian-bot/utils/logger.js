@@ -4,6 +4,11 @@
  * Provides leveled logging with in-memory storage, console output,
  * and periodic persistence to chrome.storage.local.
  * Exposed globally as window.TravianLogger for content script usage.
+ *
+ * Supports per-server namespacing: call setServerKey(key) before logging
+ * to tag entries.  getLogs() accepts an optional serverKey filter.
+ * Flush writes both the legacy 'bot_logs' key (for backward compat)
+ * and a per-server key 'bot_logs__<serverKey>' when a key is set.
  */
 
 (function () {
@@ -25,16 +30,19 @@
   /** Interval (ms) between automatic flushes to chrome.storage.local. */
   const AUTO_FLUSH_INTERVAL = 30000; // 30 seconds
 
-  /** Key used in chrome.storage.local to persist logs. */
+  /** Base key used in chrome.storage.local to persist logs. */
   const STORAGE_KEY = 'bot_logs';
 
   // ── Internal state ───────────────────────────────────────────────────
 
-  /** @type {Array<{timestamp: string, level: string, message: string, data: *}>} */
+  /** @type {Array<{timestamp: string, level: string, message: string, data: *, serverKey?: string}>} */
   let logs = [];
 
   /** Handle for the auto-flush interval so it can be cleared if needed. */
   let flushIntervalId = null;
+
+  /** Current server key for tagging log entries (null = untagged / content script). */
+  let activeServerKey = null;
 
   // ── Helpers ──────────────────────────────────────────────────────────
 
@@ -61,6 +69,27 @@
     }
   }
 
+  // ── Server key management ──────────────────────────────────────────
+
+  /**
+   * Set the active server key.  All subsequent log() calls will be tagged
+   * with this key until changed.  Pass null to clear.
+   * Called by BotEngine at cycle start so logs are associated with the
+   * correct server.
+   * @param {string|null} key
+   */
+  function setServerKey(key) {
+    activeServerKey = key || null;
+  }
+
+  /**
+   * Get the current active server key.
+   * @returns {string|null}
+   */
+  function getServerKey() {
+    return activeServerKey;
+  }
+
   // ── Core logging ─────────────────────────────────────────────────────
 
   /**
@@ -84,6 +113,10 @@
       message: message,
       data: data,
     };
+    // Tag with server key if one is active
+    if (activeServerKey) {
+      entry.serverKey = activeServerKey;
+    }
 
     // Push to in-memory store, evicting oldest if necessary
     logs.push(entry);
@@ -92,7 +125,8 @@
     }
 
     // Mirror to the browser console with a prefix
-    const prefix = `[TravianBot][${validLevel}]`;
+    const serverTag = activeServerKey ? `[${activeServerKey}]` : '';
+    const prefix = `[TravianBot]${serverTag}[${validLevel}]`;
     const fn = consoleMethod(validLevel);
     if (data !== null && data !== undefined) {
       fn(`${prefix} ${message}`, data);
@@ -118,14 +152,20 @@
   // ── Retrieval & management ───────────────────────────────────────────
 
   /**
-   * Retrieve stored log entries, optionally filtered by minimum level
-   * and limited to the most recent N entries.
+   * Retrieve stored log entries, optionally filtered by minimum level,
+   * server key, and limited to the most recent N entries.
    * @param {string|null} [level=null] - Minimum severity to include (null = all)
    * @param {number|null} [count=null] - Max entries to return (null = all matching)
+   * @param {string|null} [serverKey=null] - Filter by server key (null = all servers)
    * @returns {Array}
    */
-  function getLogs(level = null, count = null) {
+  function getLogs(level = null, count = null, serverKey = null) {
     let filtered = logs;
+
+    // Filter by server key if provided
+    if (serverKey) {
+      filtered = filtered.filter((entry) => entry.serverKey === serverKey);
+    }
 
     // Filter by minimum level if provided
     if (level) {
@@ -153,6 +193,8 @@
 
   /**
    * Persist the current in-memory logs to chrome.storage.local.
+   * Writes the legacy 'bot_logs' key (all logs) for backward compat,
+   * plus per-server keys 'bot_logs__<serverKey>' for namespaced retrieval.
    * Safe to call even if chrome.storage is unavailable (e.g. in tests).
    * @returns {Promise<void>}
    */
@@ -160,7 +202,22 @@
     return new Promise((resolve) => {
       try {
         if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
-          chrome.storage.local.set({ [STORAGE_KEY]: logs }, () => {
+          // Build the write payload: always write legacy key
+          const payload = { [STORAGE_KEY]: logs };
+
+          // Also write per-server slices for any server keys present
+          const byServer = {};
+          for (const entry of logs) {
+            if (entry.serverKey) {
+              if (!byServer[entry.serverKey]) byServer[entry.serverKey] = [];
+              byServer[entry.serverKey].push(entry);
+            }
+          }
+          for (const sk in byServer) {
+            payload[STORAGE_KEY + '__' + sk] = byServer[sk];
+          }
+
+          chrome.storage.local.set(payload, () => {
             if (chrome.runtime.lastError) {
               console.warn('[TravianLogger] Flush failed:', chrome.runtime.lastError.message);
             }
@@ -236,6 +293,9 @@
     getLogs,
     clear,
     flush,
+    // Server key management
+    setServerKey,
+    getServerKey,
     // Constants (read-only copies for external use)
     LOG_LEVELS: Object.freeze({ ...LOG_LEVELS }),
   };

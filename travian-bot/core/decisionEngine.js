@@ -259,11 +259,21 @@ class DecisionEngine {
     }
 
     // 6. Troop training — skip if AI already queued one
+    //    Multi-slot: evaluateTroopTraining returns an array (one task per slot).
+    //    Dedup by buildingType to allow barracks + stable tasks simultaneously.
     if (!aiHandledUpgradeOrTrain) {
       if ((config.autoTrainTroops || config.autoTroopTraining) && !this.isCoolingDown('train_troops')) {
-        const troopTask = this.evaluateTroopTraining(gameState, config);
-        if (troopTask && !taskQueue.hasTaskOfType('train_troops', troopTask.villageId)) {
-          newTasks.push(troopTask);
+        const troopTasks = this.evaluateTroopTraining(gameState, config);
+        if (troopTasks) {
+          for (const tt of troopTasks) {
+            const hasDup = taskQueue.queue.some(t =>
+              t.type === 'train_troops' &&
+              t.villageId === tt.villageId &&
+              t.params.buildingType === tt.params.buildingType &&
+              t.status !== 'completed' && t.status !== 'failed'
+            );
+            if (!hasDup) newTasks.push(tt);
+          }
         }
       }
     }
@@ -334,16 +344,22 @@ class DecisionEngine {
    * user config (upgradeTargets) and pick the best affordable one.
    */
   _strategyUpgrade(state, config, autoRes, autoBld, targets, hasTargets) {
-    const villageState = {
-      resourceFields: state.resourceFields || [],
-      buildings: state.buildings || [],
-      resources: state.resources || {},
-      production: state.resourceProduction || state.production || {},
-      storage: this._extractStorage(state),
-    };
-
-    // Get ROI-ranked candidates from build optimizer
-    const ranked = this.buildOptimizer.rankUpgrades(villageState, this.currentPhase, 20);
+    // Reuse buildRanking from lastAnalysis (already computed in strategyEngine.analyze())
+    // to avoid a redundant O(n²) rankUpgrades() call on the same data.
+    // Falls back to a direct call if lastAnalysis is unavailable.
+    let ranked;
+    if (this.lastAnalysis && Array.isArray(this.lastAnalysis.buildRanking) && this.lastAnalysis.buildRanking.length > 0) {
+      ranked = this.lastAnalysis.buildRanking;
+    } else {
+      const villageState = {
+        resourceFields: state.resourceFields || [],
+        buildings: state.buildings || [],
+        resources: state.resources || {},
+        production: state.resourceProduction || state.production || {},
+        storage: this._extractStorage(state),
+      };
+      ranked = this.buildOptimizer.rankUpgrades(villageState, this.currentPhase, 20);
+    }
 
     for (const candidate of ranked) {
       // Filter by feature toggles
@@ -487,7 +503,10 @@ class DecisionEngine {
 
   /**
    * Evaluate whether troops should be trained.
+   * Processes ALL troopConfig.slots (v2) to support multi-building training
+   * (e.g. barracks + stable simultaneously).  Returns an array of tasks.
    * Uses military planner for phase-aware recommendations when available.
+   * @returns {Array|null} Array of train_troops tasks, or null if none.
    */
   evaluateTroopTraining(state, config) {
     if (!config.troopConfig) return null;
@@ -507,16 +526,29 @@ class DecisionEngine {
       return null;
     }
 
-    // Read from v2 slots config (popup saves slots array, not flat fields)
-    const slots = config.troopConfig.slots;
-    const firstSlot = (Array.isArray(slots) && slots.length > 0) ? slots[0] : null;
-    // v2 slot fields: troopType ('t4'), building ('stable'), batchSize (3)
-    // v1 legacy fields: defaultTroopType, trainCount, trainingBuilding
-    const userTroopType = (firstSlot && firstSlot.troopType) || config.troopConfig.defaultTroopType || null;
-    const userBatchSize = (firstSlot && firstSlot.batchSize) || config.troopConfig.trainCount || 5;
-    const userBuilding = (firstSlot && firstSlot.building) || config.troopConfig.trainingBuilding || 'barracks';
+    const villageId = state.currentVillageId || null;
+    const priority = this.currentPhase === 'late' ? 4 : 6;
 
-    // Strategy-powered: use military planner for troop type recommendation
+    // Build the effective slot list from v2 slots or v1 legacy fields
+    const rawSlots = config.troopConfig.slots;
+    let effectiveSlots;
+    if (Array.isArray(rawSlots) && rawSlots.length > 0) {
+      effectiveSlots = rawSlots.filter(s => s && s.troopType); // skip empty slots
+    } else {
+      // v1 legacy: synthesize a single slot
+      const legacyType = config.troopConfig.defaultTroopType || null;
+      if (!legacyType) return null;
+      effectiveSlots = [{
+        troopType: legacyType,
+        batchSize: config.troopConfig.trainCount || 5,
+        building:  config.troopConfig.trainingBuilding || 'barracks'
+      }];
+    }
+
+    if (effectiveSlots.length === 0) return null;
+
+    // Strategy-powered path: military planner overrides the FIRST slot's type
+    // but preserves all other user slots (they train what the user configured).
     if (this.militaryPlanner && config.tribe) {
       try {
         const plan = this.militaryPlanner.troopProductionPlan(
@@ -527,60 +559,43 @@ class DecisionEngine {
         );
 
         if (plan && plan.primaryUnit && plan.affordableCount > 0) {
-          const trainCount = Math.min(userBatchSize, plan.affordableCount);
-
-          console.log('[DecisionEngine] Troop plan: ' + plan.primaryUnit +
-            ' x' + trainCount + ' (' + plan.reasoning.join('; ') + ')');
-
-          // If user has a specific troop type configured, use theirs; otherwise use strategy
-          const useStrategyUnit = !userTroopType;
-          let finalTroopType = useStrategyUnit ? plan.primaryUnit : userTroopType;
-          const finalBuilding = useStrategyUnit
-            ? this._getTroopBuilding(plan.primaryUnit, config.tribe)
-            : userBuilding;
-
-          // Convert strategy unit name (e.g. 'theutatesThunder') to DOM input name ('t4')
+          // For the first slot, let strategy override unit type if user hasn't configured one
+          const firstSlot = effectiveSlots[0];
+          const useStrategyUnit = !firstSlot.troopType;
           if (useStrategyUnit) {
             var GD = (typeof self !== 'undefined' && self.TravianGameData) ? self.TravianGameData : null;
-            if (GD && GD.getInputName) {
-              var inputName = GD.getInputName(config.tribe, finalTroopType);
-              if (inputName) {
-                finalTroopType = inputName;
-              } else {
-                console.warn('[DecisionEngine] Cannot map unit ' + finalTroopType + ' to input name for tribe ' + config.tribe);
-                return null;
-              }
+            var inputName = (GD && GD.getInputName) ? GD.getInputName(config.tribe, plan.primaryUnit) : null;
+            if (inputName) {
+              firstSlot.troopType = inputName;
+              firstSlot.building = this._getTroopBuilding(plan.primaryUnit, config.tribe);
             }
+            console.log('[DecisionEngine] Troop plan: ' + plan.primaryUnit +
+              ' x' + Math.min(firstSlot.batchSize || 5, plan.affordableCount) +
+              ' (' + plan.reasoning.join('; ') + ')');
           }
-
-          return {
-            type: 'train_troops',
-            params: {
-              troopType: finalTroopType,
-              count: trainCount,
-              buildingType: finalBuilding
-            },
-            priority: this.currentPhase === 'late' ? 4 : 6,
-            villageId: state.currentVillageId || null
-          };
         }
       } catch (err) {
         console.warn('[DecisionEngine] Military planner error:', err.message);
       }
     }
 
-    // Fallback: use config values directly
-    if (!userTroopType) return null; // no troop type configured at all
-    return {
-      type: 'train_troops',
-      params: {
-        troopType: userTroopType,
-        count: userBatchSize,
-        buildingType: userBuilding
-      },
-      priority: 6,
-      villageId: state.currentVillageId || null
-    };
+    // Produce one task per slot
+    const tasks = [];
+    for (const slot of effectiveSlots) {
+      if (!slot.troopType) continue;
+      tasks.push({
+        type: 'train_troops',
+        params: {
+          troopType: slot.troopType,
+          count: slot.batchSize || 5,
+          buildingType: slot.building || 'barracks'
+        },
+        priority,
+        villageId
+      });
+    }
+
+    return tasks.length > 0 ? tasks : null;
   }
 
   // ---------------------------------------------------------------------------
