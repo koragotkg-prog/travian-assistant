@@ -188,7 +188,7 @@ const dom = {
 /**
  * Switch to a tab by name (dash, config, ai, logs).
  */
-const TAB_PANEL_MAP = { dash: 'panelDash', config: 'panelConfig', ai: 'panelAI', logs: 'panelLogs', farm: 'panelFarm' };
+// TAB_PANEL_MAP is defined in shared/constants.js (loaded via <script> before popup.js)
 
 var _farmIntelInterval = null;
 
