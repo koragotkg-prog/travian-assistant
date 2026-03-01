@@ -43,6 +43,9 @@ class DecisionEngine {
     this.militaryPlanner = null;
     this.actionScorer = null;
 
+    /** @type {TravianStrategyAdapter|null} Translates analysis → ActionCandidate[] */
+    this.strategyAdapter = null;
+
     /** @type {TravianGlobalPlanner|null} Strategic meta-planner */
     this.globalPlanner = null;
 
@@ -55,6 +58,7 @@ class DecisionEngine {
         if (self.TravianBuildOptimizer) this.buildOptimizer = new self.TravianBuildOptimizer();
         if (self.TravianMilitaryPlanner) this.militaryPlanner = new self.TravianMilitaryPlanner();
         if (self.TravianActionScorer) this.actionScorer = new self.TravianActionScorer();
+        if (self.TravianStrategyAdapter) this.strategyAdapter = new self.TravianStrategyAdapter();
         if (self.TravianGlobalPlanner) this.globalPlanner = new self.TravianGlobalPlanner();
       }
       if (this.actionScorer) {
@@ -228,6 +232,44 @@ class DecisionEngine {
       }
     }
 
+    // 4.2. StrategyAdapter: translate strategy analysis into additional candidates
+    //       Merged with AI-scored candidates if both are available.
+    //       Runs after analysis so lastAnalysis is populated.
+    if (!aiHandledUpgradeOrTrain && this.strategyAdapter && this.lastAnalysis && !buildQueueFull) {
+      try {
+        const strategyCandidates = this.strategyAdapter.translateRecommendations(
+          this.lastAnalysis, gameState, config, taskQueue
+        );
+        if (strategyCandidates.length > 0) {
+          // Pick the top strategy candidate not already in queue
+          for (const sc of strategyCandidates) {
+            if (this.isCoolingDown(sc.type)) continue;
+            if (taskQueue.hasAnyTaskOfType(sc.type)) continue;
+
+            _DELogger.log('INFO', `[Strategy] Adapter: ${sc.type} (score: ${sc.score.toFixed(1)}) — ${sc.reason}`);
+            newTasks.push({
+              type: sc.type,
+              params: sc.params,
+              priority: Math.max(1, 10 - Math.floor(sc.score / 5)),
+              villageId: gameState.currentVillageId || null
+            });
+            break; // Only inject ONE strategy-derived task per cycle
+          }
+        }
+      } catch (adapterErr) {
+        console.warn('[DecisionEngine] StrategyAdapter failed:', adapterErr.message);
+      }
+    }
+
+    // 4.3. Storage overflow emergency: if any resource < 2h to full, upgrade storage
+    //       High-priority (P2) so it jumps ahead of normal ROI-based upgrades.
+    if (!buildQueueFull && this.buildOptimizer && !this.isCoolingDown('upgrade_building')) {
+      const overflowTask = this._evaluateStorageOverflow(gameState, taskQueue);
+      if (overflowTask) {
+        newTasks.push(overflowTask);
+      }
+    }
+
     // 4.5. Cranny protection rule: cranny must be >= warehouse level
     //       This runs BEFORE normal upgrades so it takes priority
     if (!buildQueueFull && !this.isCoolingDown('upgrade_building') && !this.isCoolingDown('build_new')) {
@@ -283,6 +325,14 @@ class DecisionEngine {
       const heroTask = this.evaluateHeroAdventure(gameState, config);
       if (heroTask && !taskQueue.hasTaskOfType('send_hero_adventure', heroTask.villageId)) {
         newTasks.push(heroTask);
+      }
+    }
+
+    // 7.5. Quest reward claiming — if quest data shows claimable quests
+    if (!this.isCoolingDown('claim_quest') && !taskQueue.hasAnyTaskOfType('claim_quest')) {
+      const questTask = this._evaluateQuestClaiming(gameState);
+      if (questTask) {
+        newTasks.push(questTask);
       }
     }
 
@@ -692,6 +742,35 @@ class DecisionEngine {
   }
 
   // ---------------------------------------------------------------------------
+  // Quest reward claiming
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Check if any quest rewards are available to claim.
+   * Quest data may come from a previous scan when user was on /tasks page,
+   * cached in gameState.quests by gameStateCollector.
+   *
+   * @returns {object|null} claim_quest task or null
+   */
+  _evaluateQuestClaiming(gameState) {
+    const quests = gameState.quests;
+    if (!Array.isArray(quests) || quests.length === 0) return null;
+
+    // Check for any claimable quests
+    const claimable = quests.filter(q => q.claimable === true);
+    if (claimable.length === 0) return null;
+
+    _DELogger.log('INFO', `[DecisionEngine] Found ${claimable.length} claimable quest(s), queueing claim_quest`);
+
+    return {
+      type: 'claim_quest',
+      params: { count: claimable.length },
+      priority: 4, // Medium priority — free rewards but don't interrupt urgent builds
+      villageId: gameState.currentVillageId || null
+    };
+  }
+
+  // ---------------------------------------------------------------------------
   // Public API: get strategy analysis for popup display
   // ---------------------------------------------------------------------------
 
@@ -793,6 +872,89 @@ class DecisionEngine {
   // ---------------------------------------------------------------------------
   // Cranny Protection Rule
   // ---------------------------------------------------------------------------
+
+  /**
+   * Evaluate storage overflow risk.  Uses BuildOptimizer.detectOverflow() to
+   * check each resource's hours-until-full, then returns an upgrade task for
+   * the most urgent storage building (warehouse GID=10 or granary GID=11).
+   *
+   * Only fires when at least one resource is "critical" (< 2 h to full).
+   * Skips if a pending upgrade_building task already targets that slot.
+   *
+   * @param {object} gameState - Current game state from scan
+   * @param {object} taskQueue - Task queue for dedup checks
+   * @returns {object|null} upgrade_building task or null
+   */
+  _evaluateStorageOverflow(gameState, taskQueue) {
+    const villageState = {
+      resources: gameState.resources || {},
+      production: gameState.resourceProduction || gameState.production || {},
+      storage: this._extractStorage(gameState),
+    };
+
+    const overflow = this.buildOptimizer.detectOverflow(villageState);
+    if (!overflow) return null;
+
+    // Determine which storage type is most urgent:
+    //   crop → granary (GID 11),  wood/clay/iron → warehouse (GID 10)
+    let needWarehouse = false;
+    let needGranary = false;
+    let whMinHours = Infinity;
+    let grMinHours = Infinity;
+
+    for (const type of ['wood', 'clay', 'iron']) {
+      if (overflow[type] && overflow[type].critical) {
+        needWarehouse = true;
+        if (overflow[type].hoursUntilFull < whMinHours) {
+          whMinHours = overflow[type].hoursUntilFull;
+        }
+      }
+    }
+    if (overflow.crop && overflow.crop.critical) {
+      needGranary = true;
+      grMinHours = overflow.crop.hoursUntilFull;
+    }
+
+    if (!needWarehouse && !needGranary) return null;
+
+    // Pick the more urgent one (lower hours wins; on tie prefer warehouse)
+    const targetGid = (needGranary && grMinHours < whMinHours) ? 11 : needWarehouse ? 10 : 11;
+
+    // Find the building slot for the target storage type
+    const buildings = gameState.buildings || [];
+    let bestSlot = null;
+    let bestLevel = -1;
+    for (const b of buildings) {
+      const gid = b.gid || b.id;
+      if (gid === targetGid && (b.level || 0) > bestLevel) {
+        bestSlot = b.slot;
+        bestLevel = b.level || 0;
+      }
+    }
+
+    if (bestSlot === null) return null; // No storage building found
+
+    // Dedup: skip if we already have a pending upgrade for this slot
+    const hasPending = taskQueue.queue.some(t =>
+      t.type === 'upgrade_building' &&
+      t.params && t.params.slot === bestSlot &&
+      t.status !== 'completed' && t.status !== 'failed'
+    );
+    if (hasPending) return null;
+
+    const storageName = targetGid === 10 ? 'Warehouse' : 'Granary';
+    const urgentHours = targetGid === 10 ? whMinHours : grMinHours;
+    _DELogger.log('WARN',
+      `[DecisionEngine] Storage overflow: ${storageName} Lv.${bestLevel} ` +
+      `(${urgentHours}h to full), queueing upgrade`);
+
+    return {
+      type: 'upgrade_building',
+      params: { slot: bestSlot },
+      priority: 2, // High priority — prevent resource waste
+      villageId: gameState.currentVillageId || null
+    };
+  }
 
   /**
    * Evaluate cranny vs warehouse: cranny capacity must be >= warehouse capacity.

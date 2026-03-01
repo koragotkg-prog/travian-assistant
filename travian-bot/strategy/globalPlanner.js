@@ -154,7 +154,93 @@ PLAN_TEMPLATES['gaul_x1_capital'] = {
   ]
 };
 
-// TODO: Add teuton_x1_capital, roman_x1_capital templates later
+PLAN_TEMPLATES['roman_x1_capital'] = {
+  name: 'roman_x1_capital',
+  tribe: 'roman',
+  steps: [
+    // ── Day 1-2: Bootstrap — Romans benefit from early MB (double build queue) ──
+    { type: 'upgrade_resource', gid: 4, targetLevel: 2, desc: 'Crop to 2' },
+    { type: 'upgrade_resource', gid: 1, targetLevel: 2, desc: 'Wood to 2' },
+    { type: 'upgrade_resource', gid: 2, targetLevel: 2, desc: 'Clay to 2' },
+    { type: 'upgrade_resource', gid: 3, targetLevel: 2, desc: 'Iron to 2' },
+    { type: 'upgrade_building', gid: 15, targetLevel: 3, desc: 'Main Building 3 (unlocks double queue)' },
+    { type: 'upgrade_building', gid: 23, targetLevel: 1, desc: 'Cranny 1' },
+
+    // ── Day 2-4: Early Econ — leverage double queue to push resources + MB together ──
+    { type: 'upgrade_resource', gid: 1, targetLevel: 4, desc: 'Wood to 4' },
+    { type: 'upgrade_resource', gid: 2, targetLevel: 4, desc: 'Clay to 4' },
+    { type: 'upgrade_resource', gid: 3, targetLevel: 4, desc: 'Iron to 4' },
+    { type: 'upgrade_resource', gid: 4, targetLevel: 4, desc: 'Crop to 4' },
+    { type: 'upgrade_building', gid: 10, targetLevel: 3, desc: 'Warehouse 3' },
+    { type: 'upgrade_building', gid: 11, targetLevel: 3, desc: 'Granary 3' },
+    { type: 'upgrade_building', gid: 15, targetLevel: 5, desc: 'Main Building 5 (faster builds)' },
+
+    // ── Day 4-6: Military Foundation — Romans use Legionnaire (infantry) for defense ──
+    { type: 'upgrade_building', gid: 16, targetLevel: 1, desc: 'Rally Point 1' },
+    { type: 'upgrade_building', gid: 19, targetLevel: 3, desc: 'Barracks 3' },
+    { type: 'upgrade_building', gid: 22, targetLevel: 5, desc: 'Academy 5' },
+    { type: 'upgrade_resource', gid: 1, targetLevel: 6, desc: 'Wood to 6' },
+    { type: 'upgrade_resource', gid: 2, targetLevel: 6, desc: 'Clay to 6' },
+    { type: 'upgrade_resource', gid: 3, targetLevel: 6, desc: 'Iron to 6' },
+    { type: 'upgrade_resource', gid: 4, targetLevel: 6, desc: 'Crop to 6' },
+
+    // ── Day 6-8: Expansion Prep — Roman villages grow fast with double queue ──
+    { type: 'upgrade_building', gid: 23, targetLevel: 5, desc: 'Cranny 5' },
+    { type: 'upgrade_building', gid: 25, targetLevel: 1, desc: 'Residence 1' },
+    { type: 'upgrade_building', gid: 25, targetLevel: 10, desc: 'Residence 10' },
+    { type: 'upgrade_building', gid: 10, targetLevel: 5, desc: 'Warehouse 5' },
+    { type: 'upgrade_building', gid: 11, targetLevel: 5, desc: 'Granary 5' },
+
+    // ── Day 8-10: Cavalry — Equites Imperatoris for farming ──
+    { type: 'upgrade_building', gid: 20, targetLevel: 1, desc: 'Stable 1' },
+    { type: 'upgrade_building', gid: 20, targetLevel: 5, desc: 'Stable 5' },
+  ]
+};
+
+PLAN_TEMPLATES['teuton_x1_capital'] = {
+  name: 'teuton_x1_capital',
+  tribe: 'teuton',
+  steps: [
+    // ── Day 1-2: Aggressive Bootstrap — rush Barracks for Clubswinger farming ──
+    { type: 'upgrade_resource', gid: 4, targetLevel: 2, desc: 'Crop to 2' },
+    { type: 'upgrade_resource', gid: 1, targetLevel: 2, desc: 'Wood to 2' },
+    { type: 'upgrade_resource', gid: 2, targetLevel: 2, desc: 'Clay to 2' },
+    { type: 'upgrade_resource', gid: 3, targetLevel: 2, desc: 'Iron to 2' },
+    { type: 'upgrade_building', gid: 15, targetLevel: 1, desc: 'Main Building 1' },
+    { type: 'upgrade_building', gid: 16, targetLevel: 1, desc: 'Rally Point 1' },
+    { type: 'upgrade_building', gid: 19, targetLevel: 1, desc: 'Barracks 1 (Clubswinger ASAP)' },
+
+    // ── Day 2-3: Economy + Cranny (Teutons are targets too) ──
+    { type: 'upgrade_resource', gid: 1, targetLevel: 4, desc: 'Wood to 4' },
+    { type: 'upgrade_resource', gid: 2, targetLevel: 4, desc: 'Clay to 4' },
+    { type: 'upgrade_resource', gid: 3, targetLevel: 4, desc: 'Iron to 4' },
+    { type: 'upgrade_resource', gid: 4, targetLevel: 4, desc: 'Crop to 4' },
+    { type: 'upgrade_building', gid: 23, targetLevel: 1, desc: 'Cranny 1' },
+    { type: 'upgrade_building', gid: 10, targetLevel: 3, desc: 'Warehouse 3' },
+    { type: 'upgrade_building', gid: 11, targetLevel: 3, desc: 'Granary 3' },
+
+    // ── Day 3-5: Military Push — Barracks 3 for better troops, Academy for research ──
+    { type: 'upgrade_building', gid: 15, targetLevel: 3, desc: 'Main Building 3' },
+    { type: 'upgrade_building', gid: 19, targetLevel: 3, desc: 'Barracks 3' },
+    { type: 'upgrade_building', gid: 22, targetLevel: 5, desc: 'Academy 5' },
+    { type: 'upgrade_resource', gid: 1, targetLevel: 6, desc: 'Wood to 6' },
+    { type: 'upgrade_resource', gid: 2, targetLevel: 6, desc: 'Clay to 6' },
+    { type: 'upgrade_resource', gid: 3, targetLevel: 6, desc: 'Iron to 6' },
+    { type: 'upgrade_resource', gid: 4, targetLevel: 6, desc: 'Crop to 6' },
+
+    // ── Day 5-7: Expansion Prep — Teutons settle early to expand raiding reach ──
+    { type: 'upgrade_building', gid: 15, targetLevel: 5, desc: 'Main Building 5' },
+    { type: 'upgrade_building', gid: 23, targetLevel: 5, desc: 'Cranny 5' },
+    { type: 'upgrade_building', gid: 25, targetLevel: 1, desc: 'Residence 1' },
+    { type: 'upgrade_building', gid: 25, targetLevel: 10, desc: 'Residence 10' },
+    { type: 'upgrade_building', gid: 10, targetLevel: 5, desc: 'Warehouse 5' },
+    { type: 'upgrade_building', gid: 11, targetLevel: 5, desc: 'Granary 5' },
+
+    // ── Day 7-9: Cavalry — Paladin for tanking, TK for raiding ──
+    { type: 'upgrade_building', gid: 20, targetLevel: 1, desc: 'Stable 1' },
+    { type: 'upgrade_building', gid: 20, targetLevel: 5, desc: 'Stable 5' },
+  ]
+};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Resource field type → GID mapping

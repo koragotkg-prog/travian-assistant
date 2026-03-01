@@ -195,6 +195,11 @@
         reRaidMinLoot: (farmCfg.reRaidMinLoot != null) ? farmCfg.reRaidMinLoot : 100,
         reRaidTroopType: farmCfg.reRaidTroopType || 't4',
         reRaidTroopCount: (farmCfg.reRaidTroopCount != null) ? farmCfg.reRaidTroopCount : 5,
+        reRaidTroopSpeed: farmCfg.reRaidTroopSpeed || 19, // tiles/hour (TT default)
+        reRaidCarryPerUnit: farmCfg.reRaidCarryPerUnit || 150, // carry capacity per unit
+        villageX: (config && config.villageX != null) ? config.villageX : null,
+        villageY: (config && config.villageY != null) ? config.villageY : null,
+        serverSpeed: (config && config.serverSpeed) || 1,
         farmListId: null  // Set from task params if specific list
       },
       listSendResult: null,
@@ -381,6 +386,63 @@
     await this._waitForCSWrapped(sendFn, 10000);
 
     var cfg = this._cycle.config;
+
+    // ── Feed FarmIntelligence with results from ALL farm list slots ────────
+    // scanFarmListSlots returns every slot with raidStatus, bountyLevel, lastLoot
+    // and (now) coordinates.  We record observed results for any previously-sent
+    // raids so intelligence can auto-blacklist lossy targets and compute scores.
+    if (this._intelligence) {
+      try {
+        var slotScan = await sendFn({
+          type: 'EXECUTE', action: 'scanFarmListSlots', params: {}
+        });
+        var allSlots = (slotScan && slotScan.success && slotScan.slots) || [];
+        var recorded = 0;
+        for (var si = 0; si < allSlots.length; si++) {
+          var s = allSlots[si];
+          if (s.x == null || s.y == null) continue;
+          if (s.raidStatus === 'unknown') continue; // No prior raid data
+
+          // Ensure target exists in intelligence (may have been sent via farm list, not tracked)
+          if (!this._intelligence.getTarget(s.x, s.y)) {
+            this._intelligence.recordRaidSent(s.x, s.y, {}, Date.now() - 60000, 'farmList');
+          }
+
+          // Map farm list status to recordRaidResult format
+          var troopsLost = {};
+          if (s.raidStatus === 'lost') {
+            troopsLost = { _total: 1 }; // Signal losses occurred (exact count unknown)
+          } else if (s.raidStatus === 'won_with_losses') {
+            troopsLost = { _partial: 1 }; // Partial losses
+          }
+
+          this._intelligence.recordRaidResult(s.x, s.y, {
+            loot: {
+              wood: Math.round(s.lastLoot / 4),
+              clay: Math.round(s.lastLoot / 4),
+              iron: Math.round(s.lastLoot / 4),
+              crop: Math.round(s.lastLoot / 4)
+            },
+            troopsLost: troopsLost,
+            bountyFull: s.bountyLevel === 'full'
+          });
+
+          // Also update target metadata (name, population, distance)
+          this._intelligence.updateTargetInfo(s.x, s.y, {
+            name: s.name || undefined,
+            population: s.population || undefined,
+            distance: s.distance || undefined
+          });
+          recorded++;
+        }
+        if (recorded > 0) {
+          Logger.log('DEBUG', LOG_TAG + ' Intelligence: recorded results for ' + recorded + '/' + allSlots.length + ' farm slots');
+        }
+      } catch (intErr) {
+        Logger.log('WARN', LOG_TAG + ' Intelligence feed error: ' + intErr.message);
+      }
+    }
+
     Logger.log('INFO', LOG_TAG + ' Scanning for re-raid targets (minLoot=' + cfg.reRaidMinLoot + ')');
 
     var scanResult = await sendFn({
@@ -404,8 +466,31 @@
       return await this._stepNavHome(sendFn);
     }
 
-    // Prioritize using scheduler
-    if (this._scheduler) {
+    // Prioritize using MilitaryPlanner (strategic scoring) or fall back to scheduler
+    var MilPlanner = (typeof self !== 'undefined' && self.TravianMilitaryPlanner) ? self.TravianMilitaryPlanner : null;
+    if (MilPlanner && cfg.villageX != null && cfg.villageY != null) {
+      try {
+        var planner = new MilPlanner();
+        var origin = { x: cfg.villageX, y: cfg.villageY };
+        var troops = {
+          speed: cfg.reRaidTroopSpeed || 19, // Default TT speed
+          count: cfg.reRaidTroopCount || 5,
+          carryPerUnit: cfg.reRaidCarryPerUnit || 150
+        };
+        var scored = planner.planRaids(targets, origin, troops, targets.length, cfg.serverSpeed || 1);
+        if (scored.length > 0) {
+          targets = scored.map(function(s) { return s.target; });
+          Logger.log('DEBUG', LOG_TAG + ' MilitaryPlanner ranked ' + targets.length +
+            ' targets (top: ' + (targets[0] ? targets[0].name : 'none') +
+            ' score=' + (scored[0] ? scored[0].score : 0) + ')');
+        }
+      } catch (mpErr) {
+        Logger.log('WARN', LOG_TAG + ' MilitaryPlanner scoring failed, using scheduler: ' + mpErr.message);
+        if (this._scheduler) {
+          targets = this._scheduler.prioritizeTargets(targets);
+        }
+      }
+    } else if (this._scheduler) {
       targets = this._scheduler.prioritizeTargets(targets);
     }
 

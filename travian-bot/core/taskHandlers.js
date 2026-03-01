@@ -193,6 +193,23 @@
     },
 
     // -----------------------------------------------------------------------
+    // claim_quest — Navigate to /tasks, claim first available reward
+    // -----------------------------------------------------------------------
+    claim_quest: async function(engine, task) {
+      // Step 1: Navigate to /tasks page
+      await engine.sendToContentScript({
+        type: 'EXECUTE', action: 'navigateTo', params: { page: 'tasks' }
+      });
+      await engine._randomDelay();
+      // Wait for page reload and content script re-injection
+      await engine._waitForContentScript(15000);
+      // Step 2: Claim the first available quest reward
+      return await engine.sendToContentScript({
+        type: 'EXECUTE', action: 'claimQuestReward', params: {}
+      });
+    },
+
+    // -----------------------------------------------------------------------
     // build_new — Navigate to empty slot in dorf2, build new building
     // -----------------------------------------------------------------------
     build_new: async function(engine, task) {

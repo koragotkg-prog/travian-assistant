@@ -518,7 +518,8 @@
           marketplace: ['a[href*="build.php?gid=17"]'],
           heroAdventures: ['a[href*="/hero/adventures"]', 'a[href*="hero_adventure"]', '.adventure.attention'],
           hero:        ['#heroImageButton', '.heroImageButton', 'a[href="/hero"]', 'a[href="/hero/"]'],
-          heroInventory: ['a[href="/hero/inventory"]', 'a[href*="hero/inventory"]']
+          heroInventory: ['a[href="/hero/inventory"]', 'a[href*="hero/inventory"]'],
+          tasks:         ['a[href="/tasks"]', 'a[href*="/tasks"]', '.questMaster a']
         };
 
         var targetSelectors = selectors[page];
@@ -538,6 +539,7 @@
             heroAdventures: '/hero/adventures',
             rallyPointSend: '/build.php?id=39&tt=2',
             hero: '/hero',
+            tasks: '/tasks',
             dorf1: '/dorf1.php',
             resources: '/dorf1.php',
             dorf2: '/dorf2.php',
@@ -1433,6 +1435,57 @@
       } catch (e) {
         Logger.error('scanReRaidTargets error:', e);
         return { success: false, targets: [], scanned: 0, skipped: 0 };
+      }
+    },
+
+    /**
+     * Claim the first available quest reward on the /tasks page.
+     * Finds the first completed quest with a collect button and clicks it.
+     * Must be called while on the /tasks page.
+     *
+     * @returns {{ success: boolean, claimed?: string, reason?: string, message?: string }}
+     */
+    claimQuestReward: async function () {
+      try {
+        if (window.location.pathname.indexOf('/tasks') === -1) {
+          return { success: false, reason: 'wrong_page', message: 'Not on /tasks page' };
+        }
+
+        var tasks = qsa('.task');
+        if (!tasks.length) {
+          return { success: false, reason: 'no_quests', message: 'No quest elements found' };
+        }
+
+        for (var i = 0; i < tasks.length; i++) {
+          var t = tasks[i];
+          // Check if quest is complete and has collect button
+          var progressEl = qs('.progress', t);
+          var progressText = progressEl ? progressEl.textContent.trim() : '';
+          var match = progressText.match(/(\d+)\s*\/\s*(\d+)/);
+          if (!match) continue;
+          var progress = parseInt(match[1], 10);
+          var total = parseInt(match[2], 10) || 1;
+          if (progress < total) continue;
+
+          // Find collect/reward button
+          var btn = qs('button.collect, button.green, .collectReward button', t);
+          if (!btn) continue;
+
+          var titleEl = qs('.title', t);
+          var questTitle = titleEl ? titleEl.textContent.trim() : 'Unknown quest';
+
+          Logger.log('claimQuestReward: claiming "' + questTitle + '"');
+          await humanDelay(300, 700);
+          await safeClick(btn);
+          await humanDelay(500, 1000);
+
+          return { success: true, claimed: questTitle };
+        }
+
+        return { success: false, reason: 'no_claimable', message: 'No claimable quests found' };
+      } catch (e) {
+        Logger.error('claimQuestReward error:', e);
+        return { success: false, reason: 'error', message: e.message };
       }
     },
 
@@ -2445,6 +2498,10 @@
 
             case 'confirmAttack':
               actionResult = await TravianExecutor.confirmAttack();
+              break;
+
+            case 'claimQuestReward':
+              actionResult = await TravianExecutor.claimQuestReward();
               break;
 
             case 'sendHeroAdventure':

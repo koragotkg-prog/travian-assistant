@@ -23,6 +23,7 @@ importScripts(
   '../strategy/strategyEngine.js',
   '../strategy/globalPlanner.js',   // TravianGlobalPlanner — strategic phase/mode/plan layer
   '../core/actionScorer.js',     // TravianActionScorer
+  '../core/strategyAdapter.js',  // TravianStrategyAdapter — recommendations → candidates
   '../core/decisionEngine.js',
   '../core/gameStateCollector.js', // TravianGameStateCollector
   '../core/mapScanner.js',
