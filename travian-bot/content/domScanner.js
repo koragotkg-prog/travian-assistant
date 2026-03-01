@@ -1242,12 +1242,18 @@
           var progress = progressMatch ? parseInt(progressMatch[1], 10) : 0;
           var total = (progressMatch ? parseInt(progressMatch[2], 10) : 0) || 1;
 
+          // Detect claimable state: quest completed (progress >= total) with a collect button
+          var collectBtn = qs('button.collect, button.green, .collectReward button', t);
+          var isComplete = progress >= total && total > 0;
+          var claimable = isComplete && !!collectBtn;
+
           return {
             title: title,
             silver: silver,
             progress: progress,
             total: total,
-            progressPct: total > 0 ? progress / total : 0
+            progressPct: total > 0 ? progress / total : 0,
+            claimable: claimable
           };
         });
       } catch (e) {
@@ -1424,10 +1430,23 @@
           else if (bountyClass.indexOf('bounty_half') !== -1) bountyLevel = 'half';
           else if (bountyClass.indexOf('bounty_empty') !== -1) bountyLevel = 'empty';
 
+          // Extract coordinates from target link href (?x=N&y=N)
+          var coordX = null, coordY = null;
+          if (nameEl && nameEl.href) {
+            try {
+              var linkUrl = new URL(nameEl.href);
+              var px = parseInt(linkUrl.searchParams.get('x'), 10);
+              var py = parseInt(linkUrl.searchParams.get('y'), 10);
+              if (!isNaN(px) && !isNaN(py)) { coordX = px; coordY = py; }
+            } catch (_) { /* ignore malformed URLs */ }
+          }
+
           result.push({
             index: i,
             slotId: slotId,
             name: nameEl ? nameEl.textContent.trim() : '',
+            x: coordX,
+            y: coordY,
             raidStatus: raidStatus,
             bountyLevel: bountyLevel,
             lastLoot: bountyVal ? (parseInt(bountyVal.textContent.replace(/[^\d]/g, ''), 10) || 0) : 0,
