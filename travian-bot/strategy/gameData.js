@@ -27,9 +27,117 @@
       5960, 6620, 7300, 8020, 8780, 9580, 10420, 11300, 12240, 13220, 14240
     ],
 
-    // Cost/time multiplier per level (each level costs ~1.28x previous)
+    // Cost/time multiplier per level for INFRASTRUCTURE buildings (gid >= 5).
+    // Resource fields (gid 1-4) use the per-level RESOURCE_FIELD_COSTS table below
+    // because they scale steeper (~1.67x) than infrastructure (~1.28x).
     COST_MULT: 1.28,
     TIME_MULT: 1.28,
+
+    // =========================================================================
+    // Resource Field Costs — verified per-level data (Travian Legends)
+    // Each entry is the cost to upgrade TO that level.
+    // Indexed by target level (1-20).  Format: [wood, clay, iron, crop].
+    // The four field types share the same total cost curve but with different
+    // resource distributions.  We store per-gid tables for accuracy.
+    // =========================================================================
+    RESOURCE_FIELD_COSTS: {
+      // gid 1: Woodcutter
+      1: [
+        null, // level 0 (not upgradable)
+        [40,  100,  50,   60],   // lv 1
+        [55,  135,  70,   80],   // lv 2
+        [75,  185,  95,  110],   // lv 3
+        [105, 250, 130,  150],   // lv 4
+        [145, 340, 175,  205],   // lv 5
+        [200, 465, 240,  280],   // lv 6
+        [275, 635, 330,  385],   // lv 7
+        [375, 870, 450,  525],   // lv 8
+        [515,1190, 615,  720],   // lv 9
+        [705,1625, 840,  985],   // lv 10
+        [965,2225,1150, 1345],   // lv 11
+        [1320,3040,1575,1845],   // lv 12
+        [1805,4160,2155,2520],   // lv 13
+        [2470,5690,2945,3450],   // lv 14
+        [3375,7775,4030,4715],   // lv 15
+        [4615,10630,5505,6445],  // lv 16
+        [6310,14535,7530,8815],  // lv 17
+        [8625,19875,10295,12055],// lv 18
+        [11795,27170,14080,16490],// lv 19
+        [16125,37140,19240,22530] // lv 20
+      ],
+      // gid 2: Clay Pit
+      2: [
+        null,
+        [80,   40,  80,   50],
+        [110,  55, 110,   70],
+        [150,  75, 150,   95],
+        [205, 105, 205,  130],
+        [280, 145, 280,  175],
+        [385, 200, 385,  240],
+        [525, 275, 525,  330],
+        [720, 375, 720,  450],
+        [985, 515, 985,  615],
+        [1345, 705,1345,  840],
+        [1840, 965,1840, 1150],
+        [2515,1320,2515, 1575],
+        [3440,1805,3440, 2155],
+        [4705,2470,4705, 2945],
+        [6430,3375,6430, 4030],
+        [8790,4615,8790, 5505],
+        [12020,6310,12020,7530],
+        [16430,8625,16430,10295],
+        [22465,11795,22465,14080],
+        [30715,16125,30715,19240]
+      ],
+      // gid 3: Iron Mine
+      3: [
+        null,
+        [100,  80,  30,  60],
+        [135, 110,  40,  80],
+        [185, 150,  55, 110],
+        [250, 205,  75, 150],
+        [340, 280, 105, 205],
+        [465, 385, 145, 280],
+        [635, 525, 200, 385],
+        [870, 720, 275, 525],
+        [1190, 985, 375, 720],
+        [1625,1345, 515, 985],
+        [2225,1840, 705,1345],
+        [3040,2515, 965,1840],
+        [4160,3440,1320,2515],
+        [5690,4705,1805,3440],
+        [7775,6430,2470,4705],
+        [10630,8790,3375,6430],
+        [14535,12020,4615,8790],
+        [19875,16430,6310,12020],
+        [27170,22465,8625,16430],
+        [37140,30715,11795,22465]
+      ],
+      // gid 4: Crop Field
+      4: [
+        null,
+        [70,   90,  70,   20],
+        [95,  125,  95,   25],
+        [130, 170, 130,   35],
+        [180, 230, 180,   50],
+        [245, 315, 245,   70],
+        [335, 430, 335,   95],
+        [460, 590, 460,  130],
+        [630, 810, 630,  175],
+        [860,1105, 860,  240],
+        [1175,1510,1175,  330],
+        [1610,2065,1610,  450],
+        [2200,2825,2200,  615],
+        [3010,3860,3010,  840],
+        [4110,5280,4110, 1150],
+        [5620,7215,5620, 1575],
+        [7685,9870,7685, 2150],
+        [10510,13500,10510,2940],
+        [14370,18450,14370,4020],
+        [19645,25230,19645,5500],
+        [26860,34500,26860,7515]
+      ]
+    },
 
     // =========================================================================
     // Building Base Data (level 1 costs + base construction time in seconds)
@@ -160,13 +268,37 @@
     getUpgradeCost: function (buildingKey, fromLevel) {
       var base = this.BUILDINGS[buildingKey];
       if (!base) return null;
-      var mult = Math.pow(this.COST_MULT, fromLevel); // from level 0→1: mult=1, 1→2: 1.28, etc
+
+      // Resource fields (gid 1-4) use verified per-level lookup table
+      // because they scale ~1.67x/level, not 1.28x like infrastructure.
+      var gid = base.gid;
+      if (gid >= 1 && gid <= 4) {
+        return this._getResourceFieldCost(gid, fromLevel);
+      }
+
+      // Infrastructure (gid >= 5): original exponential formula
+      var mult = Math.pow(this.COST_MULT, fromLevel);
       return {
         wood: Math.round(base.wood * mult),
         clay: Math.round(base.clay * mult),
         iron: Math.round(base.iron * mult),
         crop: Math.round(base.crop * mult),
       };
+    },
+
+    /**
+     * Look up exact resource field cost from the per-level table.
+     * @param {number} gid - Resource field GID (1-4)
+     * @param {number} fromLevel - Current level (upgrading FROM this level)
+     * @returns {{wood,clay,iron,crop}|null}
+     */
+    _getResourceFieldCost: function (gid, fromLevel) {
+      var table = this.RESOURCE_FIELD_COSTS[gid];
+      if (!table) return null;
+      var targetLevel = fromLevel + 1; // fromLevel=0 means upgrading TO level 1
+      if (targetLevel < 1 || targetLevel > 20 || !table[targetLevel]) return null;
+      var c = table[targetLevel]; // [wood, clay, iron, crop]
+      return { wood: c[0], clay: c[1], iron: c[2], crop: c[3] };
     },
 
     /** Cost to upgrade a building by GID from (level-1) to (level).

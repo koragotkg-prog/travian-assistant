@@ -455,7 +455,7 @@
 
     // 3. Build Optimization
     var buildRanking = this.buildOptimizer
-      ? this.buildOptimizer.rankUpgrades(villageState, phase, 10)
+      ? this.buildOptimizer.rankUpgrades(villageState, phase, 20)
       : [];
 
     var buildOrder = this.buildOptimizer
@@ -519,8 +519,9 @@
       // 1. Ranked Recommendations (top 10)
       recommendations: recommendations,
 
-      // 2. Build Order
+      // 2. Build Order & Ranking
       buildOrder: buildOrder,
+      buildRanking: buildRanking,  // ROI-ranked upgrade candidates (used by DecisionEngine)
 
       // 3. Troop Strategy
       troopStrategy: troopPlan,
