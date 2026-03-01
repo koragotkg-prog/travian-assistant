@@ -1522,6 +1522,102 @@
       return null;
     },
 
+    /**
+     * Detect incoming attacks / raids from the troop movement indicators.
+     *
+     * Travian Legends shows incoming movements in multiple places:
+     * 1. Troop movement table rows with class `.inAttack` or `.attack` inside `.movements`
+     * 2. Village icon indicators (#sidebarBoxVillageList) — `.attack` class on village row
+     * 3. Direct movement rows with `.in` class on dorf1/dorf2 pages
+     *
+     * Returns an array of attack objects. Empty array if no attacks or on error.
+     *
+     * @returns {Array<{arrivalTime: number|null, attackerName: string, isRaid: boolean, timer: string|null}>}
+     */
+    getIncomingAttacks: function () {
+      try {
+        var attacks = [];
+
+        // Strategy 1: Troop movement rows (shown on dorf1/dorf2 overview)
+        // Movements have class `.troop_details` or rows inside `#movements`
+        var movementRows = qsa(
+          '.troop_details.in, ' +           // incoming movement detail
+          '#movements .in, ' +               // movement table incoming rows
+          '.troopMovement.attack, ' +        // compact attack movement indicator
+          '.movements .movement.attack, ' +  // village overview movement list
+          'table.troop_details tr.inAttack'  // alternate table layout
+        );
+
+        for (var i = 0; i < movementRows.length; i++) {
+          var row = movementRows[i];
+
+          // Extract arrival timer
+          var timerEl = qs('.timer', row) || qs('.countdown', row);
+          var timerText = timerEl ? timerEl.textContent.trim() : null;
+          var arrivalTime = null;
+          if (timerText) {
+            arrivalTime = this._parseTimerToTimestamp(timerText);
+          }
+
+          // Extract attacker name
+          var attackerEl = qs('.attacker .player a, .playerName a, .attack_name, .from a', row);
+          var attackerName = attackerEl ? attackerEl.textContent.trim() : 'Unknown';
+
+          // Detect raid vs normal attack
+          var isRaid = row.classList.contains('raid') ||
+                       (row.innerHTML && row.innerHTML.indexOf('raid') !== -1);
+
+          attacks.push({
+            arrivalTime: arrivalTime,
+            attackerName: attackerName,
+            isRaid: isRaid,
+            timer: timerText
+          });
+        }
+
+        // Strategy 2: Village list sidebar attack indicator
+        // If no movement rows found, check if village icons show attack state
+        if (attacks.length === 0) {
+          var villageItems = qsa('#sidebarBoxVillageList .villageList .listEntry');
+          for (var j = 0; j < villageItems.length; j++) {
+            var v = villageItems[j];
+            // Active village attack indicator: class `.attack` on the icon or row
+            var hasAttack = qs('.attack, .under_attack, [class*="attack"]', v);
+            if (hasAttack) {
+              var villageName = qs('.name', v);
+              attacks.push({
+                arrivalTime: null,  // no timer in sidebar view
+                attackerName: 'Unknown',
+                isRaid: false,
+                timer: null,
+                targetVillage: villageName ? villageName.textContent.trim() : null
+              });
+            }
+          }
+        }
+
+        return attacks;
+      } catch (e) {
+        return [];
+      }
+    },
+
+    /**
+     * Parse a timer string like "0:15:32" or "1:02:45" to an absolute timestamp.
+     * @param {string} text - Timer text from DOM
+     * @returns {number|null} Absolute timestamp (Date.now() + remaining ms)
+     */
+    _parseTimerToTimestamp: function (text) {
+      if (!text) return null;
+      var parts = text.split(':').map(function(p) { return parseInt(p, 10); });
+      var seconds = 0;
+      if (parts.length === 3) seconds = parts[0] * 3600 + parts[1] * 60 + parts[2];
+      else if (parts.length === 2) seconds = parts[0] * 60 + parts[1];
+      else return null;
+      if (isNaN(seconds) || seconds <= 0) return null;
+      return Date.now() + (seconds * 1000);
+    },
+
     getFullState: function () {
       var state = {
         timestamp: Date.now(),
@@ -1558,6 +1654,9 @@
       try { state.villages = this.getVillageList(); } catch (e) { console.warn('[TravianScanner] getFullState - getVillageList error:', e); }
       try { state.hero = this.getHeroStatus(); } catch (e) { console.warn('[TravianScanner] getFullState - getHeroStatus error:', e); }
       try { state.farmLists = this.getFarmLists(); } catch (e) { console.warn('[TravianScanner] getFullState - getFarmLists error:', e); }
+
+      // Incoming attack detection (always scan — attacks are time-critical)
+      try { state.incomingAttacks = this.getIncomingAttacks(); } catch (e) { console.warn('[TravianScanner] getFullState - getIncomingAttacks error:', e); }
 
       // FIX-P4: Detect Travian game version from CDN URLs for selector breakage warning
       try { state.gameVersion = this.getGameVersion(); } catch (e) { /* non-critical */ }

@@ -56,6 +56,18 @@ class BotEngine {
     this.decisionEngine = new self.TravianDecisionEngine();
     this.stateCollector = new self.TravianGameStateCollector();
 
+    // Event-driven architecture (Phase 2)
+    this.eventBus = self.TravianEventBus ? new self.TravianEventBus() : null;
+    this.stateAnalyzer = (self.TravianStateAnalyzer && this.eventBus)
+      ? new self.TravianStateAnalyzer(this.eventBus, this.decisionEngine.buildOptimizer || null)
+      : null;
+
+    // Task handler registry with page metadata (Phase 2 — enables batching)
+    this._handlerRegistry = (self.TravianTaskHandlerRegistry && self.TravianTaskHandlers)
+      ? self.TravianTaskHandlerRegistry.fromHandlers(self.TravianTaskHandlers)
+      : null;
+    this._batchMode = false; // True during _executeBatch to suppress per-task _returnHome
+
     // Current state
     this.gameState = null;
     this.config = null;
@@ -673,6 +685,16 @@ class BotEngine {
         }
       }
 
+      // 3b. Post-scan state analysis → emit events for urgent conditions
+      //     Runs before DecisionEngine so subscribers (e.g., notifications) react early.
+      if (this.stateAnalyzer) {
+        try {
+          this.stateAnalyzer.analyze(this.gameState, this.config);
+        } catch (saErr) {
+          console.warn('[BotEngine] StateAnalyzer error:', saErr.message);
+        }
+      }
+
       // 4. Safety checks - captcha / errors
       if (this.gameState.captcha) {
         await this.emergencyStop('Captcha detected on page');
@@ -792,16 +814,23 @@ class BotEngine {
         return;
       }
 
-      // 7. Get next task from queue
-      const nextTask = this.taskQueue.getNext();
-      if (!nextTask) {
-        // No tasks ready - adjust to idle interval
-        this._adjustLoopInterval('idle');
-        return;
+      // 7. Execute tasks from queue
+      // Phase 2: Batch execution groups tasks by required page for 3-5x throughput.
+      // Falls back to single-task execution when registry is unavailable.
+      if (this._handlerRegistry && this.taskQueue.getPendingCount() > 1) {
+        var batchCount = await this._executeBatch();
+        if (batchCount === 0) {
+          this._adjustLoopInterval('idle');
+          return;
+        }
+      } else {
+        const nextTask = this.taskQueue.getNext();
+        if (!nextTask) {
+          this._adjustLoopInterval('idle');
+          return;
+        }
+        await this.executeTask(nextTask);
       }
-
-      // 8. Execute the task
-      await this.executeTask(nextTask);
 
       // Adjust loop interval back to active pace
       this._adjustLoopInterval('active');
@@ -1013,12 +1042,141 @@ class BotEngine {
     // Navigate back to dorf1 (resource overview) after every task
     // so the next scan gets fresh data and the page looks natural.
     // FIX-P3: _cycleLock='returning' keeps tab locked during navigation.
-    try {
-      this._cycleLock = 'returning';
-      await this._returnHome(task.type);
-    } finally {
-      // _cycleLock is cleared in mainLoop's finally — NOT here.
-      // This ensures the entire cycle (scan→decide→execute→return) is atomic.
+    // Phase 2: Skip return-home in batch mode — _executeBatch handles it once after all tasks.
+    if (!this._batchMode) {
+      try {
+        this._cycleLock = 'returning';
+        await this._returnHome(task.type);
+      } finally {
+        // _cycleLock is cleared in mainLoop's finally — NOT here.
+        // This ensures the entire cycle (scan→decide→execute→return) is atomic.
+      }
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Batch Execution (Phase 2 — Throughput Optimization)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Execute multiple tasks grouped by required page context.
+   *
+   * Instead of: execute-one → return-home → next-cycle (60s gap)
+   * We do:      group-by-page → navigate-once → execute-all → return-home
+   *
+   * Safety rules:
+   * 1. Max 5 tasks per batch (prevents suspiciously fast execution)
+   * 2. Human-like delay (1-3s) between batched tasks
+   * 3. Quick liveness check between tasks
+   * 4. Hopeless failures skip but don't abort the batch
+   * 5. Any navigation or content script failure aborts remaining batch
+   *
+   * @returns {number} Number of tasks executed
+   */
+  async _executeBatch() {
+    if (!this._handlerRegistry) return 0;
+
+    // Pull up to 5 tasks from the queue
+    var batch = [];
+    var MAX_BATCH = 5;
+    while (batch.length < MAX_BATCH) {
+      var next = this.taskQueue.getNext();
+      if (!next) break;
+      batch.push(next);
+    }
+
+    if (batch.length === 0) return 0;
+
+    // If only 1 task, use the proven single-task path (no regression risk)
+    if (batch.length === 1) {
+      await this.executeTask(batch[0]);
+      return 1;
+    }
+
+    // Group tasks by required page
+    var groups = this._handlerRegistry.groupByPage(batch);
+    var executed = 0;
+    var lastTaskType = null;
+
+    this._slog('INFO', 'Batch execution: ' + batch.length + ' tasks in ' +
+      Object.keys(groups).length + ' page groups');
+
+    for (var page in groups) {
+      var pageTasks = groups[page];
+
+      for (var i = 0; i < pageTasks.length; i++) {
+        var task = pageTasks[i];
+        lastTaskType = task.type;
+
+        // Quick liveness check between batched tasks (skip for first task)
+        if (executed > 0) {
+          try {
+            var alive = await this.sendToContentScript({
+              type: 'GET_STATE', params: { property: 'page' }
+            });
+            if (!alive || !alive.success) {
+              this._slog('WARN', 'Batch interrupted — content script unresponsive after task ' + executed);
+              // Put remaining tasks back as pending
+              this._requeue(pageTasks.slice(i));
+              break;
+            }
+          } catch (_) {
+            this._slog('WARN', 'Batch interrupted — content script unreachable');
+            this._requeue(pageTasks.slice(i));
+            break;
+          }
+
+          // Human-like delay between batched tasks (1-3s)
+          await this._randomDelay(1000, 3000);
+        }
+
+        // Execute the task via the full executeTask path (handles village checks, retries, etc.)
+        // But suppress _returnHome — we handle that once after the batch.
+        this._batchMode = true;
+        try {
+          await this.executeTask(task);
+          executed++;
+        } catch (execErr) {
+          this._slog('WARN', 'Batch task failed: ' + task.type + ' — ' + execErr.message);
+          executed++;
+          // Continue batch — hopeless failures are handled inside executeTask
+        } finally {
+          this._batchMode = false;
+        }
+      }
+    }
+
+    // Return home once after entire batch (using last task type for nav hints)
+    if (executed > 0 && lastTaskType) {
+      try {
+        this._cycleLock = 'returning';
+        // Check if any building task in batch warrants a dorf2 detour
+        var hadBuildingTask = batch.some(function(t) {
+          return t.type === 'upgrade_building' || t.type === 'build_new';
+        });
+        if (hadBuildingTask) {
+          await this._returnHome('upgrade_building');
+        } else {
+          await this._returnHome(lastTaskType);
+        }
+      } catch (_) {
+        // Non-critical
+      }
+    }
+
+    this._slog('INFO', 'Batch complete: ' + executed + '/' + batch.length + ' tasks executed');
+    return executed;
+  }
+
+  /**
+   * Put tasks back into the queue (when batch is interrupted mid-execution).
+   * @param {Array} tasks - Remaining tasks to re-queue
+   */
+  _requeue(tasks) {
+    for (var i = 0; i < tasks.length; i++) {
+      var t = tasks[i];
+      // markFailed with a soft reason so retry budget isn't consumed
+      this.taskQueue.markFailed(t.id, 'batch_interrupted');
     }
   }
 

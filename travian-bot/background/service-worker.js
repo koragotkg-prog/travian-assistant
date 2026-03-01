@@ -22,9 +22,11 @@ importScripts(
   '../strategy/militaryPlanner.js',
   '../strategy/strategyEngine.js',
   '../strategy/globalPlanner.js',   // TravianGlobalPlanner — strategic phase/mode/plan layer
+  '../core/eventBus.js',         // TravianEventBus — pub/sub for decoupled communication
   '../core/actionScorer.js',     // TravianActionScorer
   '../core/strategyAdapter.js',  // TravianStrategyAdapter — recommendations → candidates
   '../core/decisionEngine.js',
+  '../core/stateAnalyzer.js',    // TravianStateAnalyzer — post-scan event emission
   '../core/gameStateCollector.js', // TravianGameStateCollector
   '../core/mapScanner.js',
   '../core/farmIntelligence.js',  // Farm stack: intelligence layer
@@ -33,7 +35,8 @@ importScripts(
   '../core/contentScriptBridge.js', // ContentScriptBridge — messaging, retry, adaptive timeout
   '../core/navigationManager.js',  // NavigationManager — dorf2 scan/cache, navigateAndWait
   '../core/heroManager.js',        // HeroManager — hero resource claiming, deficit calculation
-  '../core/taskHandlers.js',      // Task handler registry (extracted from BotEngine.executeTask)
+  '../core/taskHandlers.js',      // Task handler dispatch table
+  '../core/taskHandlerRegistry.js', // TaskHandlerRegistry — declarative metadata + groupByPage
   '../core/botEngine.js',
   '../core/instanceManager.js'
 );

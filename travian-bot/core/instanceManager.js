@@ -34,6 +34,9 @@
         serverKey: serverKey
       };
 
+      // Wire EventBus → Chrome notifications for critical events
+      this._wireNotifications(engine, serverKey);
+
       this.instances.set(serverKey, instance);
       console.log('[InstanceManager] Created instance for ' + serverKey);
       return instance;
@@ -125,6 +128,68 @@
         if (inst.engine.running) count++;
       }
       return count;
+    }
+
+    /**
+     * Wire Chrome notifications to EventBus events.
+     * Shows desktop alerts for time-critical events (attacks, crop crisis).
+     *
+     * @param {TravianBotEngine} engine
+     * @param {string} serverKey
+     */
+    _wireNotifications(engine, serverKey) {
+      if (!engine.eventBus) return;
+      if (typeof chrome === 'undefined' || !chrome.notifications) return;
+
+      var Events = self.TravianEventBus ? self.TravianEventBus.Events : {};
+      var shortKey = serverKey.split('.')[0] || serverKey; // e.g., 'ts5' from 'ts5.x1.asia.travian.com'
+
+      // ── Incoming attack notification ──────────────────────
+      if (Events.ATTACK_INCOMING) {
+        engine.eventBus.on(Events.ATTACK_INCOMING, function(data) {
+          var count = data.count || 1;
+          var soonest = data.soonest;
+          var timeStr = soonest && soonest.timer ? soonest.timer : 'unknown';
+          var attacker = soonest && soonest.attackerName ? soonest.attackerName : 'Unknown';
+
+          var title = '⚔️ INCOMING ATTACK! [' + shortKey + ']';
+          var message = count + (count === 1 ? ' attack' : ' attacks') + ' incoming!\n' +
+            'Attacker: ' + attacker + '\n' +
+            'Arrives in: ' + timeStr;
+
+          try {
+            chrome.notifications.create('attack_' + serverKey + '_' + Date.now(), {
+              type: 'basic',
+              iconUrl: '../icons/icon48.png',
+              title: title,
+              message: message,
+              priority: 2, // max urgency
+              requireInteraction: true // don't auto-dismiss
+            });
+          } catch (e) {
+            console.warn('[InstanceManager] Notification failed:', e.message);
+          }
+        }, { priority: 1 }); // highest priority
+      }
+
+      // ── Crop crisis notification ──────────────────────────
+      if (Events.CROP_CRISIS) {
+        engine.eventBus.on(Events.CROP_CRISIS, function(data) {
+          try {
+            chrome.notifications.create('crop_' + serverKey + '_' + Date.now(), {
+              type: 'basic',
+              iconUrl: '../icons/icon48.png',
+              title: '🌾 CROP CRISIS! [' + shortKey + ']',
+              message: 'Free crop: ' + (data.freeCrop || 0) +
+                '\nTroops may start dying. Upgrade croplands or sell troops!',
+              priority: 2,
+              requireInteraction: true
+            });
+          } catch (e) {
+            console.warn('[InstanceManager] Notification failed:', e.message);
+          }
+        }, { priority: 1 });
+      }
     }
   }
 
