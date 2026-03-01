@@ -53,13 +53,14 @@
 
     /**
      * Check if hero resources should be proactively claimed.
-     * Triggers when any resource is below 20% of warehouse capacity,
+     * Triggers when any resource is below threshold % of warehouse capacity,
      * hero is at home, and cooldown has elapsed.
      *
      * @param {object} gameState - Current game state (hero, resources, resourceCapacity)
+     * @param {object} [heroConfig] - Optional hero config from popup (claimThreshold, claimFillTarget, etc.)
      * @returns {boolean} true if proactive claim should be attempted
      */
-    shouldProactivelyClaim(gameState) {
+    shouldProactivelyClaim(gameState, heroConfig) {
       // Cooldown check
       if (this._claimCooldown && Date.now() < this._claimCooldown) return false;
 
@@ -75,8 +76,9 @@
       var gCap = cap.granary || wCap;
       if (wCap === 0) return false;
 
-      // Check if any resource is below 20% of capacity
-      var threshold = 0.20;
+      // Read threshold from config (default 20%)
+      var thresholdPct = (heroConfig && heroConfig.claimThreshold != null) ? heroConfig.claimThreshold : 20;
+      var threshold = thresholdPct / 100;
       return (res.wood || 0) < wCap * threshold ||
              (res.clay || 0) < wCap * threshold ||
              (res.iron || 0) < wCap * threshold ||
@@ -86,18 +88,21 @@
     /**
      * Proactively claim hero resources to fill low resource types.
      * Navigates to hero inventory, scans items, and transfers resources
-     * for any type below 50% of warehouse capacity.
+     * for any type below fillTarget % of warehouse capacity.
      *
      * @param {object} gameState - Current game state
+     * @param {object} [heroConfig] - Optional hero config from popup (claimFillTarget, etc.)
      * @returns {Promise<boolean>} true if any resources were claimed
      */
-    async proactiveClaim(gameState) {
+    async proactiveClaim(gameState, heroConfig) {
       try {
         var res = gameState.resources;
         var cap = gameState.resourceCapacity;
         var wCap = cap.warehouse || 800;
         var gCap = cap.granary || wCap;
-        var targetFill = 0.50;
+        // Read fill target from config (default 50%)
+        var fillPct = (heroConfig && heroConfig.claimFillTarget != null) ? heroConfig.claimFillTarget : 50;
+        var targetFill = fillPct / 100;
 
         // Calculate how much of each resource we need to reach targetFill
         var deficit = {

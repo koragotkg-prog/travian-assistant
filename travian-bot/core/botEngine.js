@@ -767,22 +767,26 @@ class BotEngine {
 
       // 5b. Proactive hero resource claim: if resources are critically low
       //     and hero is home with resource items, claim before executing upgrades
+      var heroConfig = (this.config && this.config.heroConfig) || {};
       if (this._heroManager && this._heroManager.shouldProactivelyClaim &&
-          this._heroManager.shouldProactivelyClaim(this.gameState)) {
+          this._heroManager.shouldProactivelyClaim(this.gameState, heroConfig)) {
         TravianLogger.log('INFO', '[BotEngine] Resources critically low — attempting proactive hero claim');
-        const claimed = await this._heroManager.proactiveClaim(this.gameState);
+        const claimed = await this._heroManager.proactiveClaim(this.gameState, heroConfig);
         // FIX: Navigate back home after hero claim — otherwise next SCAN reads hero inventory page
         try {
           await this.sendToContentScript({ type: 'EXECUTE', action: 'navigateTo', params: { page: 'dorf1' } });
           await this._bridge.waitForReady(10000);
           await this._randomDelay();
         } catch (_navErr) { /* best effort */ }
+        // Read cooldown values from config (minutes → ms), fallback to defaults
+        var cdSuccessMin = (heroConfig.claimCooldownSuccess != null) ? heroConfig.claimCooldownSuccess : 5;
+        var cdFailMin = (heroConfig.claimCooldownFail != null) ? heroConfig.claimCooldownFail : 2;
         if (claimed) {
-          this._heroManager.setCooldown(300000); // 5 min cooldown
+          this._heroManager.setCooldown(cdSuccessMin * 60000);
           return; // skip this cycle, let resources update
         }
         // Even if failed, set cooldown so we don't spam attempts
-        this._heroManager.setCooldown(120000); // 2 min cooldown on failure
+        this._heroManager.setCooldown(cdFailMin * 60000);
       }
 
       // 6. Circuit breaker check — pause if too many consecutive failures
