@@ -140,6 +140,24 @@
       if (engine._farmIntelligence) {
         try { await engine._farmIntelligence.persist(); } catch (_) {}
       }
+
+      // Adaptive farm list management: prune dead targets every 10 cycles
+      if (engine._farmIntelligence && engine._farmIntelligence.adaptFarmList) {
+        engine._farmAdaptCounter = (engine._farmAdaptCounter || 0) + 1;
+        if (engine._farmAdaptCounter >= 10) {
+          engine._farmAdaptCounter = 0;
+          try {
+            // Pass null for newTargets (MapScanner integration is done separately)
+            var adaptResult = engine._farmIntelligence.adaptFarmList(null, { pruneAfterHours: 48 });
+            if (adaptResult.pruned > 0) {
+              engine._slog('INFO', 'Farm list adapted: pruned ' + adaptResult.pruned + ' dead targets');
+            }
+          } catch (e) {
+            console.warn('[TaskHandlers] adaptFarmList error:', e.message);
+          }
+        }
+      }
+
       return farmResult;
     },
 
@@ -315,6 +333,111 @@
       return await engine.sendToContentScript({
         type: 'EXECUTE', action: 'navigateTo', params: {
           page: task.params.page
+        }
+      });
+    },
+
+    // -----------------------------------------------------------------------
+    // npc_trade — Navigate to marketplace, redistribute resources via NPC
+    // -----------------------------------------------------------------------
+    npc_trade: async function(engine, task) {
+      // Step 1: Find marketplace building slot (GID 17)
+      var mpSlot = null;
+      if (engine.gameState && engine.gameState.buildings) {
+        var mpBld = engine.gameState.buildings.find(function(b) {
+          return b.id === 17 || b.gid === 17;
+        });
+        if (mpBld) mpSlot = mpBld.slot;
+      }
+      if (!mpSlot) {
+        return { success: false, reason: 'building_not_available', message: 'Marketplace not found' };
+      }
+
+      // Step 2: Navigate to marketplace page
+      await engine.sendToContentScript({
+        type: 'EXECUTE', action: 'navigateTo', params: { page: 'marketplace' }
+      });
+      await engine._randomDelay();
+      await engine._waitForContentScript(15000);
+
+      // Step 3: Execute NPC trade with calculated resource distribution
+      return await engine.sendToContentScript({
+        type: 'EXECUTE', action: 'npcTrade', params: {
+          wood: task.params.wood || 0,
+          clay: task.params.clay || 0,
+          iron: task.params.iron || 0,
+          crop: task.params.crop || 0
+        }
+      });
+    },
+
+    // -----------------------------------------------------------------------
+    // parse_battle_reports — Navigate to reports, parse raid results, feed to FarmIntelligence
+    // -----------------------------------------------------------------------
+    parse_battle_reports: async function(engine, task) {
+      // Step 1: Navigate to reports page
+      await engine.sendToContentScript({
+        type: 'EXECUTE', action: 'navigateTo', params: { page: 'reports' }
+      });
+      await engine._randomDelay();
+      await engine._waitForContentScript(15000);
+
+      // Step 2: Scan battle reports
+      var scanResult = await engine.sendToContentScript({
+        type: 'EXECUTE', action: 'scanBattleReports', params: {}
+      });
+
+      if (!scanResult || !scanResult.data || !Array.isArray(scanResult.data)) {
+        return { success: false, reason: 'no_items', message: 'No battle reports found' };
+      }
+
+      var reports = scanResult.data;
+      var processed = 0;
+
+      // Step 3: Feed raid results into FarmIntelligence
+      if (engine._farmIntelligence && reports.length > 0) {
+        for (var i = 0; i < reports.length; i++) {
+          var rpt = reports[i];
+          if (rpt.type !== 'raid' || !rpt.defender || !rpt.defender.coords) continue;
+          var coords = rpt.defender.coords;
+          if (coords.x == null || coords.y == null) continue;
+
+          engine._farmIntelligence.recordRaidResult(coords.x, coords.y, {
+            loot: rpt.loot || { wood: 0, clay: 0, iron: 0, crop: 0 },
+            troopsLost: rpt.troopsLost || {},
+            bountyFull: !!rpt.bountyFull
+          });
+          processed++;
+        }
+
+        // Persist intelligence updates
+        try { await engine._farmIntelligence.persist(); } catch (_) {}
+      }
+
+      engine._slog('INFO', 'Parsed ' + reports.length + ' reports, fed ' + processed + ' raid results to intelligence');
+      return { success: true, message: processed + ' raid results recorded' };
+    },
+
+    // -----------------------------------------------------------------------
+    // dodge_troops — Send troops to safe destination when attack incoming
+    // -----------------------------------------------------------------------
+    dodge_troops: async function(engine, task) {
+      // Navigate to rally point and send troops to dodge destination
+      await engine.sendToContentScript({
+        type: 'EXECUTE', action: 'navigateTo', params: { page: 'rallyPoint' }
+      });
+      await engine._randomDelay();
+      await engine._waitForContentScript(15000);
+
+      // Send as reinforcement (eventType 2) to dodge destination
+      var target = task.params.destination || { x: 0, y: 0 };
+      var troops = task.params.troops || {};
+
+      return await engine.sendToContentScript({
+        type: 'EXECUTE', action: 'sendAttack', params: {
+          target: target,
+          troops: troops,
+          opts: { eventType: 2 } // reinforcement, not attack
         }
       });
     }

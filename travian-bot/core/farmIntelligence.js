@@ -566,6 +566,97 @@
     return { loot: loot, raids: raids, losses: losses, periodMs: timeMs || 86400000 };
   };
 
+  // ── Adaptive Farm List Management ────────────────────────────────────
+
+  /**
+   * Prune underperforming targets and integrate new discoveries.
+   *
+   * Pruning rules:
+   * - Remove targets blacklisted for > pruneAfterHours (default 48h)
+   * - Remove targets paused with 0 total loot after > pruneAfterHours
+   *
+   * Integration: accepts new targets from MapScanner and adds them as 'active'
+   * if they aren't already tracked.
+   *
+   * @param {Array} [newTargets] - Array of {x, y, name?, population?, distance?} from MapScanner
+   * @param {Object} [options]
+   * @param {number} [options.pruneAfterHours=48] - Remove blacklisted targets after this many hours
+   * @param {number} [options.maxTargets=100] - Max total targets to maintain
+   * @returns {{ pruned: number, added: number, total: number }}
+   */
+  FarmIntelligence.prototype.adaptFarmList = function(newTargets, options) {
+    var opts = options || {};
+    var pruneAfterMs = (opts.pruneAfterHours || 48) * 60 * 60 * 1000;
+    var maxTargets = opts.maxTargets || 100;
+    var now = Date.now();
+    var pruned = 0;
+    var added = 0;
+
+    // Phase 1: Prune dead targets
+    var keys = Object.keys(this._targets);
+    for (var i = 0; i < keys.length; i++) {
+      var t = this._targets[keys[i]];
+
+      // Prune long-blacklisted targets
+      if (t.status === 'blacklisted') {
+        var lastRaid = t.raidHistory.length > 0
+          ? t.raidHistory[t.raidHistory.length - 1].timestamp
+          : t.discoveredAt || 0;
+        if (now - lastRaid > pruneAfterMs) {
+          delete this._targets[keys[i]];
+          pruned++;
+          continue;
+        }
+      }
+
+      // Prune paused targets with zero lifetime loot after pruneAfterMs
+      if (t.status === 'paused' && t.metrics.totalLoot === 0) {
+        var discTime = t.discoveredAt || 0;
+        if (now - discTime > pruneAfterMs) {
+          delete this._targets[keys[i]];
+          pruned++;
+          continue;
+        }
+      }
+    }
+
+    // Phase 2: Integrate new targets (from MapScanner)
+    if (Array.isArray(newTargets)) {
+      var currentCount = Object.keys(this._targets).length;
+      for (var j = 0; j < newTargets.length; j++) {
+        if (currentCount >= maxTargets) break;
+        var nt = newTargets[j];
+        if (nt.x == null || nt.y == null) continue;
+
+        var key = coordKey(nt.x, nt.y);
+        if (this._targets[key]) continue; // Already tracked
+
+        // Add as new active target
+        var record = emptyTargetRecord(nt.x, nt.y);
+        record.name = nt.name || nt.villageName || '';
+        record.population = nt.population || 0;
+        record.distance = nt.distance || 0;
+        record.discoverySource = 'mapScan';
+        record.discoveredAt = now;
+        this._targets[key] = record;
+        added++;
+        currentCount++;
+      }
+    }
+
+    if (pruned > 0 || added > 0) {
+      this._dirty = true;
+      Logger.log('INFO', LOG_TAG + ' adaptFarmList: pruned=' + pruned + ' added=' + added +
+        ' total=' + Object.keys(this._targets).length);
+    }
+
+    return {
+      pruned: pruned,
+      added: added,
+      total: Object.keys(this._targets).length
+    };
+  };
+
   // ── Export ───────────────────────────────────────────────────────────
 
   var target = (typeof self !== 'undefined') ? self :

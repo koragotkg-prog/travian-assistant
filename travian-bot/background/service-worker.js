@@ -14,6 +14,7 @@
 importScripts(
   '../utils/delay.js',
   '../utils/logger.js',
+  '../utils/configSchema.js',   // TravianConfigSchema — must load before storage.js
   '../utils/storage.js',
   '../core/taskQueue.js',
   '../core/scheduler.js',

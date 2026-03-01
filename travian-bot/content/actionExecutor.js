@@ -2230,6 +2230,93 @@
     },
 
     // -----------------------------------------------------------------------
+    // NPC Marketplace Trading
+    // -----------------------------------------------------------------------
+
+    /**
+     * Execute NPC trade to redistribute resources according to desired amounts.
+     * Must already be on the marketplace page with NPC form visible.
+     *
+     * @param {Object} params
+     * @param {number} params.wood - Desired wood amount after trade
+     * @param {number} params.clay - Desired clay amount after trade
+     * @param {number} params.iron - Desired iron amount after trade
+     * @param {number} params.crop - Desired crop amount after trade
+     * @returns {Promise<{success: boolean, reason?: string, message?: string}>}
+     */
+    npcTrade: async function (params) {
+      try {
+        Logger.log('npcTrade: distributing resources', params);
+        await humanDelay(300, 600);
+
+        // Step 1: Find the NPC form inputs (4 resource inputs)
+        var inputs = document.querySelectorAll('#npc input[type="text"], .npcMerchant input[type="text"], .npc_market input[type="text"]');
+        if (inputs.length === 0) {
+          inputs = document.querySelectorAll('.npcMerchantDialog input[name], .merchantDialog input[name]');
+        }
+        if (inputs.length === 0) {
+          inputs = document.querySelectorAll('#npc input, .npcMerchant input');
+        }
+
+        if (inputs.length < 4) {
+          Logger.warn('npcTrade: NPC form inputs not found (found ' + inputs.length + ')');
+          return { success: false, reason: 'input_not_found', message: 'NPC trade form inputs not found' };
+        }
+
+        // Step 2: Fill the inputs using React-safe setter
+        var resAmounts = [params.wood || 0, params.clay || 0, params.iron || 0, params.crop || 0];
+        var nativeInputValueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+
+        for (var i = 0; i < 4; i++) {
+          nativeInputValueSetter.call(inputs[i], String(resAmounts[i]));
+          inputs[i].dispatchEvent(new Event('input', { bubbles: true }));
+          await humanDelay(100, 250);
+        }
+
+        await humanDelay(400, 800);
+
+        // Step 3: Click the distribute / confirm button
+        var submitBtn = trySelectors([
+          '#npc button.green',
+          '.npcMerchant button.green',
+          '#npc .textButtonV1.green',
+          '.npcMerchant .textButtonV1.green',
+          '#npc button[type="submit"]',
+          '.npcMerchantDialog button.green'
+        ]);
+
+        if (!submitBtn) {
+          Logger.warn('npcTrade: submit button not found');
+          return { success: false, reason: 'button_not_found', message: 'NPC trade submit button not found' };
+        }
+
+        await simulateHumanClick(submitBtn);
+        Logger.log('npcTrade: clicked distribute button');
+        await humanDelay(800, 1500);
+
+        // Step 4: Look for and click confirmation button (NPC trades often have a 2-step confirm)
+        var confirmBtn = trySelectors([
+          '.dialogButtonOk',
+          '.dialog button.green',
+          '#npc_market_confirm button.green',
+          '.npcMerchant .dialogButtonOk',
+          '#ok'
+        ]);
+
+        if (confirmBtn) {
+          await simulateHumanClick(confirmBtn);
+          Logger.log('npcTrade: confirmed trade');
+          await humanDelay(500, 1000);
+        }
+
+        return { success: true, message: 'NPC trade completed' };
+      } catch (e) {
+        Logger.error('npcTrade error:', e);
+        return { success: false, reason: 'button_not_found', message: e.message };
+      }
+    },
+
+    // -----------------------------------------------------------------------
     // Utility (exposed for external use)
     // -----------------------------------------------------------------------
 
@@ -2534,6 +2621,18 @@
 
             case 'fillInput':
               actionResult = await TravianExecutor.fillInput(params.selector, params.value);
+              break;
+
+            case 'npcTrade':
+              actionResult = await TravianExecutor.npcTrade(params);
+              break;
+
+            case 'scanNpcTrade':
+              actionResult = TravianScanner.scanNpcTrade();
+              break;
+
+            case 'scanBattleReports':
+              actionResult = TravianScanner.scanBattleReports();
               break;
 
             default:

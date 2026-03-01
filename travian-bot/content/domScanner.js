@@ -1618,6 +1618,178 @@
       return Date.now() + (seconds * 1000);
     },
 
+    // ── NPC Marketplace Scanner ─────────────────────────────────────────
+    /**
+     * Scan NPC trade form on the marketplace page.
+     * Returns current resource amounts in the NPC form inputs, plus whether NPC is available.
+     *
+     * @returns {{ available: boolean, inputs: {wood:number,clay:number,iron:number,crop:number}|null, totalResources: number|null }}
+     */
+    scanNpcTrade: function () {
+      try {
+        // NPC trade lives inside the marketplace page at a specific tab
+        // The NPC form has 4 inputs for distributing total resources
+        var npcForm = document.querySelector('#npc_market_button') ||
+                      document.querySelector('.npcMerchant') ||
+                      document.querySelector('.npc');
+
+        // Try to find NPC input fields — they appear after clicking the NPC tab
+        var inputs = document.querySelectorAll('#npc input[type="text"], .npcMerchant input[type="text"], .npc_market input[type="text"]');
+
+        // Fallback: look for distribution form by resource input pattern
+        if (inputs.length === 0) {
+          inputs = document.querySelectorAll('.npcMerchantDialog input[name], .merchantDialog input[name]');
+        }
+        // Last resort: inputs inside #npc or the known merchant form
+        if (inputs.length === 0) {
+          inputs = document.querySelectorAll('#npc input, .npcMerchant input');
+        }
+
+        if (inputs.length < 4) {
+          return { available: !!npcForm, inputs: null, totalResources: null };
+        }
+
+        // Parse current values from inputs
+        var values = {};
+        var resNames = ['wood', 'clay', 'iron', 'crop'];
+        var total = 0;
+        for (var i = 0; i < 4 && i < inputs.length; i++) {
+          var val = parseInt(inputs[i].value, 10) || 0;
+          values[resNames[i]] = val;
+          total += val;
+        }
+
+        return { available: true, inputs: values, totalResources: total };
+      } catch (e) {
+        return { available: false, inputs: null, totalResources: null };
+      }
+    },
+
+    // ── Battle Report Parser ──────────────────────────────────────────────
+    /**
+     * Parse battle report(s) from the reports page.
+     * Extracts: attacker/defender info, coordinates, loot, losses, bounty status.
+     *
+     * Call on `/report/` pages. Returns an array of parsed reports.
+     * @returns {Array<{type:string, attacker:{name,coords}, defender:{name,coords}, loot:{wood,clay,iron,crop}, bountyFull:boolean, troopsLost:Object, troopsSurvived:Object}>}
+     */
+    scanBattleReports: function () {
+      try {
+        var reports = [];
+        // Reports page shows a list; detail page shows one report
+        var reportContainers = document.querySelectorAll('#report, .reportContainer, .report_detail');
+        if (reportContainers.length === 0) {
+          // Try the report list — each row is a report link
+          var reportRows = document.querySelectorAll('#reportList tbody tr, .reportTable tbody tr');
+          // From list view, we can only extract summary info (no loot details)
+          for (var r = 0; r < reportRows.length; r++) {
+            try {
+              var row = reportRows[r];
+              var subjectEl = row.querySelector('.subject a, td:nth-child(2) a');
+              var typeIcon = row.querySelector('.iReport, img[class*="report"]');
+              var reportType = 'unknown';
+              if (typeIcon) {
+                var cls = typeIcon.className || '';
+                if (cls.indexOf('raid') !== -1 || cls.indexOf('attack') !== -1) reportType = 'raid';
+                else if (cls.indexOf('defend') !== -1) reportType = 'defense';
+                else if (cls.indexOf('scout') !== -1) reportType = 'scout';
+              }
+              reports.push({
+                type: reportType,
+                subject: subjectEl ? subjectEl.textContent.trim() : '',
+                href: subjectEl ? subjectEl.getAttribute('href') : null,
+                listEntry: true
+              });
+            } catch (_) { /* skip bad row */ }
+          }
+          return reports;
+        }
+
+        // Detail view — parse full report
+        for (var c = 0; c < reportContainers.length; c++) {
+          try {
+            var container = reportContainers[c];
+            var report = { type: 'raid', attacker: {}, defender: {}, loot: {}, troopsLost: {}, troopsSurvived: {} };
+
+            // Extract attacker info
+            var atkHeader = container.querySelector('.att_header, .attacker, .troopHeadlineHeader .attacker');
+            if (atkHeader) {
+              var atkName = atkHeader.querySelector('.playerName, a[href*="profile"]');
+              report.attacker.name = atkName ? atkName.textContent.trim() : 'Unknown';
+              var atkCoords = atkHeader.querySelector('.coordinatesWrapper, .coords');
+              if (atkCoords) {
+                var atkX = atkCoords.querySelector('.coordinateX, .xCoord');
+                var atkY = atkCoords.querySelector('.coordinateY, .yCoord');
+                report.attacker.coords = {
+                  x: atkX ? parseInt(atkX.textContent.replace(/[^-\d]/g, ''), 10) : null,
+                  y: atkY ? parseInt(atkY.textContent.replace(/[^-\d]/g, ''), 10) : null
+                };
+              }
+            }
+
+            // Extract defender info
+            var defHeader = container.querySelector('.def_header, .defender, .troopHeadlineHeader .defender');
+            if (defHeader) {
+              var defName = defHeader.querySelector('.playerName, a[href*="profile"]');
+              report.defender.name = defName ? defName.textContent.trim() : 'Unknown';
+              var defCoords = defHeader.querySelector('.coordinatesWrapper, .coords');
+              if (defCoords) {
+                var defX = defCoords.querySelector('.coordinateX, .xCoord');
+                var defY = defCoords.querySelector('.coordinateY, .yCoord');
+                report.defender.coords = {
+                  x: defX ? parseInt(defX.textContent.replace(/[^-\d]/g, ''), 10) : null,
+                  y: defY ? parseInt(defY.textContent.replace(/[^-\d]/g, ''), 10) : null
+                };
+              }
+            }
+
+            // Extract loot
+            var lootContainer = container.querySelector('.carry, .loot, .spoils');
+            if (lootContainer) {
+              var lootResources = lootContainer.querySelectorAll('.res, .resource');
+              var resTypes = ['wood', 'clay', 'iron', 'crop'];
+              for (var li = 0; li < lootResources.length && li < 4; li++) {
+                var lootVal = lootResources[li].textContent.replace(/[^-\d]/g, '');
+                report.loot[resTypes[li]] = parseInt(lootVal, 10) || 0;
+              }
+
+              // Check bounty — full carry indicator
+              var carryEl = lootContainer.querySelector('.carry .max, .maxCarry');
+              var carryTotalEl = lootContainer.querySelector('.carry .current, .currentCarry');
+              if (carryEl && carryTotalEl) {
+                report.bountyFull = parseInt(carryTotalEl.textContent.replace(/\D/g, ''), 10) >=
+                                    parseInt(carryEl.textContent.replace(/\D/g, ''), 10);
+              } else {
+                // Alternative: check for full bounty icon
+                report.bountyFull = !!lootContainer.querySelector('.full, .bountyFull, img[class*="full"]');
+              }
+            }
+
+            // Extract troop losses from the report tables
+            var troopTables = container.querySelectorAll('.troopTable, table.combatTable');
+            for (var ti = 0; ti < troopTables.length; ti++) {
+              var table = troopTables[ti];
+              var unitCells = table.querySelectorAll('.unitType, thead .unit, thead td img');
+              var countCells = table.querySelectorAll('tbody tr:last-child td, .dead td, .losses td');
+              for (var ui = 0; ui < unitCells.length && ui < countCells.length; ui++) {
+                var unitName = unitCells[ui].getAttribute('title') || unitCells[ui].textContent.trim();
+                var lostCount = parseInt(countCells[ui].textContent.replace(/\D/g, ''), 10) || 0;
+                if (lostCount > 0 && unitName) {
+                  report.troopsLost[unitName] = lostCount;
+                }
+              }
+            }
+
+            reports.push(report);
+          } catch (_) { /* skip bad report */ }
+        }
+
+        return reports;
+      } catch (e) {
+        return [];
+      }
+    },
+
     getFullState: function () {
       var state = {
         timestamp: Date.now(),

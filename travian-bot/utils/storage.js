@@ -310,6 +310,16 @@
     merged.safetyConfig = { ...defaults.safetyConfig, ...(stored.safetyConfig || {}) };
     merged.villages     = { ...defaults.villages,     ...(stored.villages     || {}) };
 
+    // Phase 3: Schema validation — coerce types, clamp ranges, apply defaults
+    var Schema = (typeof TravianConfigSchema !== 'undefined') ? TravianConfigSchema : null;
+    if (Schema && Schema.validate) {
+      var validated = Schema.validate(merged);
+      if (validated.warnings.length > 0) {
+        console.warn('[Storage] Config validation for ' + serverKey + ':', validated.warnings);
+      }
+      return validated.config;
+    }
+
     return merged;
   }
 

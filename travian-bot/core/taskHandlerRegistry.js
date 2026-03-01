@@ -128,7 +128,10 @@
       build_new:        { requiredPage: 'dorf2',          batchable: false },
       send_attack:      { requiredPage: 'rallyPoint',     batchable: false },
       switch_village:   { requiredPage: 'any',            batchable: false },
-      navigate:         { requiredPage: 'any',            batchable: false }
+      navigate:         { requiredPage: 'any',            batchable: false },
+      npc_trade:        { requiredPage: 'marketplace',    batchable: false },
+      dodge_troops:     { requiredPage: 'rallyPoint',     batchable: false },
+      parse_battle_reports: { requiredPage: 'reports',    batchable: false }
     };
 
     for (var type in handlers) {

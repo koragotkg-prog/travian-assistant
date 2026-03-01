@@ -348,6 +348,24 @@ class DecisionEngine {
       }
     }
 
+    // 9. NPC marketplace trade — redistribute resources when imbalanced near overflow
+    if (config.npcConfig && config.npcConfig.enabled && !this.isCoolingDown('npc_trade') && !taskQueue.hasAnyTaskOfType('npc_trade')) {
+      const npcTask = this._evaluateNpcTrade(gameState, config);
+      if (npcTask) newTasks.push(npcTask);
+    }
+
+    // 10. Auto-dodge troops on incoming attack
+    if (config.dodgeConfig && config.dodgeConfig.enabled && !this.isCoolingDown('dodge_troops') && !taskQueue.hasAnyTaskOfType('dodge_troops')) {
+      const dodgeTask = this._evaluateDodge(gameState, config);
+      if (dodgeTask) newTasks.push(dodgeTask);
+    }
+
+    // 11. Settler training — check if expansion is ready and settlers are needed
+    if (!this.isCoolingDown('train_settlers') && !taskQueue.hasAnyTaskOfType('train_troops')) {
+      const settlerTask = this._evaluateSettlerTraining(gameState, config);
+      if (settlerTask) newTasks.push(settlerTask);
+    }
+
     // Run custom rules
     for (const rule of this.rules) {
       try {
@@ -766,6 +784,226 @@ class DecisionEngine {
       type: 'claim_quest',
       params: { count: claimable.length },
       priority: 4, // Medium priority — free rewards but don't interrupt urgent builds
+      villageId: gameState.currentVillageId || null
+    };
+  }
+
+  // ---------------------------------------------------------------------------
+  // NPC Trade evaluation — redistribute when near overflow with imbalance
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Check if NPC trade should be triggered.
+   * Triggers when: any resource is above triggerPercent of capacity AND there's
+   * significant imbalance (highest resource is >3x the lowest).
+   *
+   * The trade redistributes total resources according to user-configured ratios
+   * (default: 25% each), ensuring no resource goes to waste at overflow.
+   */
+  _evaluateNpcTrade(gameState, config) {
+    const res = gameState.resources;
+    const cap = gameState.resourceCapacity;
+    if (!res || !cap) return null;
+
+    const npc = config.npcConfig || {};
+    const triggerPct = (npc.triggerPercent || 90) / 100;
+    const wCap = cap.warehouse || 80000;
+    const gCap = cap.granary || 80000;
+
+    // Check if any resource is above trigger threshold
+    const levels = [
+      (res.wood || 0) / wCap,
+      (res.clay || 0) / wCap,
+      (res.iron || 0) / wCap,
+      (res.crop || 0) / gCap
+    ];
+    const maxLevel = Math.max(...levels);
+    const minLevel = Math.min(...levels);
+
+    if (maxLevel < triggerPct) return null; // nothing near overflow
+
+    // Check for meaningful imbalance — if everything is uniformly high, NPC won't help
+    if (maxLevel - minLevel < 0.15) return null; // less than 15% spread = balanced enough
+
+    // Calculate desired distribution
+    const total = (res.wood || 0) + (res.clay || 0) + (res.iron || 0) + (res.crop || 0);
+    const ratioSum = (npc.ratioWood || 25) + (npc.ratioClay || 25) + (npc.ratioIron || 25) + (npc.ratioCrop || 25);
+    if (ratioSum === 0) return null;
+
+    const desired = {
+      wood: Math.floor(total * (npc.ratioWood || 25) / ratioSum),
+      clay: Math.floor(total * (npc.ratioClay || 25) / ratioSum),
+      iron: Math.floor(total * (npc.ratioIron || 25) / ratioSum),
+      crop: Math.floor(total * (npc.ratioCrop || 25) / ratioSum)
+    };
+
+    // Cap at storage capacity to avoid wasting trade
+    desired.wood = Math.min(desired.wood, wCap);
+    desired.clay = Math.min(desired.clay, wCap);
+    desired.iron = Math.min(desired.iron, wCap);
+    desired.crop = Math.min(desired.crop, gCap);
+
+    _DELogger.log('INFO', `[DecisionEngine] NPC trade triggered: maxFill=${(maxLevel*100).toFixed(0)}%, minFill=${(minLevel*100).toFixed(0)}%`);
+
+    return {
+      type: 'npc_trade',
+      params: desired,
+      priority: 3, // Fairly urgent — prevent overflow waste
+      villageId: gameState.currentVillageId || null
+    };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Dodge evaluation — send troops away when attack incoming
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Check if troops should be dodged (sent away) due to incoming attack.
+   * Triggers when: an incoming attack is detected AND arrival time > minTimeToReact
+   * AND a dodge destination is configured.
+   */
+  _evaluateDodge(gameState, config) {
+    const attacks = gameState.incomingAttacks;
+    if (!Array.isArray(attacks) || attacks.length === 0) return null;
+
+    const dodge = config.dodgeConfig || {};
+    if (!dodge.dodgeDestination) return null;
+
+    const minReactMs = (dodge.minTimeToReact || 120) * 1000;
+
+    // Find the soonest attack
+    const now = Date.now();
+    let soonest = null;
+    for (const atk of attacks) {
+      const arrivalTs = atk.arrivalTimestamp || atk.arrival;
+      if (!arrivalTs) continue;
+      const timeLeft = arrivalTs - now;
+      if (timeLeft > minReactMs && (!soonest || timeLeft < soonest.timeLeft)) {
+        soonest = { attack: atk, timeLeft: timeLeft };
+      }
+    }
+
+    if (!soonest) return null; // No attacks with enough reaction time
+
+    // Gather all available troops to dodge
+    const troops = gameState.troops || {};
+    const troopCounts = {};
+    let hasTroops = false;
+
+    // troops from domScanner is an array of {type, count} or object
+    if (Array.isArray(troops)) {
+      for (const t of troops) {
+        if (t.count > 0 && t.type) {
+          troopCounts[t.type] = t.count;
+          hasTroops = true;
+        }
+      }
+    } else if (typeof troops === 'object') {
+      for (const key in troops) {
+        if (troops[key] > 0) {
+          troopCounts[key] = troops[key];
+          hasTroops = true;
+        }
+      }
+    }
+
+    if (!hasTroops) return null;
+
+    _DELogger.log('WARN', `[DecisionEngine] Dodge triggered: ${attacks.length} incoming attack(s), soonest in ${Math.round(soonest.timeLeft/1000)}s`);
+
+    return {
+      type: 'dodge_troops',
+      params: {
+        destination: dodge.dodgeDestination,
+        troops: troopCounts,
+        reason: 'incoming_attack',
+        attackCount: attacks.length
+      },
+      priority: 1, // HIGHEST — save troops before anything else
+      villageId: gameState.currentVillageId || null
+    };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Settler Training evaluation — auto-train settlers when expansion is strategic
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Check if settlers should be trained for expansion.
+   *
+   * Triggers when:
+   * - Residence/Palace exists at level 10+
+   * - Strategy engine says expansion readiness > 0.5 (or enough resources)
+   * - Less than 3 settlers are available (settlers = t10 for all tribes)
+   * - Build queue is not full (settlers share the training queue)
+   *
+   * The settler training uses the existing train_troops handler with
+   * buildingType = 'residence' and troopType = 't10'.
+   */
+  _evaluateSettlerTraining(gameState, config) {
+    // Only evaluate if strategy engine is available (needs SETTLER_COST data)
+    const GD = (typeof TravianGameData !== 'undefined') ? TravianGameData : null;
+    if (!GD || !GD.SETTLER_COST) return null;
+
+    // Check for Residence (GID 25) or Palace (GID 26) at level 10+
+    const buildings = gameState.buildings || [];
+    let residenceSlot = null;
+    let residenceLevel = 0;
+    for (const b of buildings) {
+      const gid = b.id || b.gid;
+      if ((gid === 25 || gid === 26) && (b.level || 0) >= 10) {
+        residenceSlot = b.slot;
+        residenceLevel = b.level;
+        break;
+      }
+    }
+    if (!residenceSlot) return null; // No eligible building
+
+    // Check if we already have 3 settlers (count from troop data)
+    // Settlers are always the last troop type (t10)
+    const troops = gameState.troops;
+    let settlerCount = 0;
+    if (Array.isArray(troops)) {
+      for (const t of troops) {
+        if (t.type && (t.type.indexOf('settler') !== -1 || t.type === 't10')) {
+          settlerCount = t.count || 0;
+          break;
+        }
+      }
+    }
+    if (settlerCount >= 3) return null; // Already have enough settlers
+
+    // Check resources — can we afford at least one settler?
+    const res = gameState.resources || {};
+    const cost = GD.SETTLER_COST;
+    if ((res.wood || 0) < cost.wood || (res.clay || 0) < cost.clay ||
+        (res.iron || 0) < cost.iron || (res.crop || 0) < cost.crop) {
+      return null; // Can't afford
+    }
+
+    // Strategy check: only train if expansion readiness is reasonable
+    if (this.strategyEngine && this.strategyEngine.evaluateExpansion) {
+      try {
+        const expansion = this.strategyEngine.evaluateExpansion(
+          gameState,
+          this.currentPhase || 'mid',
+          (gameState.villages || []).length || 1
+        );
+        if (expansion.readinessScore < 0.3) return null; // Not ready enough
+      } catch (_) { /* strategy check failed, proceed anyway */ }
+    }
+
+    const neededSettlers = 3 - settlerCount;
+    _DELogger.log('INFO', `[DecisionEngine] Settler training: have ${settlerCount}/3, training ${neededSettlers} more`);
+
+    return {
+      type: 'train_troops',
+      params: {
+        buildingType: 'residence',
+        troopType: 't10', // Settlers are always t10 for all tribes
+        count: neededSettlers
+      },
+      priority: 5, // Medium-low — expansion is strategic but not urgent
       villageId: gameState.currentVillageId || null
     };
   }
