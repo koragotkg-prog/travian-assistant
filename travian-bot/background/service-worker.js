@@ -38,6 +38,13 @@ importScripts(
   '../core/heroManager.js',        // HeroManager — hero resource claiming, deficit calculation
   '../core/taskHandlers.js',      // Task handler dispatch table
   '../core/taskHandlerRegistry.js', // TaskHandlerRegistry — declarative metadata + groupByPage
+  '../core/safety/rateLimiter.js',         // Safety: sliding window counters
+  '../core/safety/activityMonitor.js',     // Safety: behavior pattern detection
+  '../core/safety/accountHealthMonitor.js', // Safety: session/DOM health tracking
+  '../core/safety/riskEvaluator.js',       // Safety: weighted risk scoring
+  '../core/safety/executionPolicy.js',     // Safety: rule-based action control
+  '../core/safety/safeModeController.js',  // Safety: restricted operation mode
+  '../core/safety/safetyEngine.js',        // Safety: central orchestrator
   '../core/botEngine.js',
   '../core/instanceManager.js'
 );
@@ -967,6 +974,29 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
           } catch (farmScanErr) {
             logger.error('[MapScanner] Scan error: ' + farmScanErr.message);
             sendResponse({ success: false, error: farmScanErr.message });
+          }
+          break;
+        }
+
+        // ---- Safety Status (per-server) ----
+        case 'GET_SAFETY_STATUS': {
+          var safetyInst = resolveInstance(message, sender);
+          if (safetyInst && safetyInst.engine._safety) {
+            sendResponse({ success: true, data: safetyInst.engine._safety.getStatus() });
+          } else {
+            sendResponse({ success: false, error: 'No safety engine available' });
+          }
+          break;
+        }
+
+        // ---- Exit Safe Mode (per-server) ----
+        case 'EXIT_SAFE_MODE': {
+          var safeModeInst = resolveInstance(message, sender);
+          if (safeModeInst && safeModeInst.engine._safety) {
+            safeModeInst.engine._safety.exitSafeMode();
+            sendResponse({ success: true, data: safeModeInst.engine._safety.getStatus() });
+          } else {
+            sendResponse({ success: false, error: 'No safety engine available' });
           }
           break;
         }

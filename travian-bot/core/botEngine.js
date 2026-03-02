@@ -153,6 +153,9 @@ class BotEngine {
       this._bridge,
       (...args) => this._slog(...args)
     );
+
+    // Safety Guardrail System (initialized in start())
+    this._safety = null;
   }
 
   // ---------------------------------------------------------------------------
@@ -330,6 +333,9 @@ class BotEngine {
               console.log('[BotEngine] Restored rate limit: ' + this.actionsThisHour + ' actions this hour');
             }
           }
+
+          // Safety state is restored via _safety.load() from its own storage key
+          // (bot_safety__<serverKey>), not from the inline bot_state snapshot.
         }
       }
     } catch (err) {
@@ -366,6 +372,22 @@ class BotEngine {
         if (this.decisionEngine) this.decisionEngine._farmIntelligence = farmIntel;
       } catch (err) {
         console.warn('[BotEngine] Farm stack init failed (will retry on first farm task):', err);
+      }
+    }
+
+    // Initialize Safety Guardrail System
+    if (self.TravianSafetyEngine) {
+      try {
+        this._safety = new self.TravianSafetyEngine(this.serverKey, this._eventBus);
+        await this._safety.load();
+        if (this.config && this.config.safetyConfig) {
+          this._safety.updateLimits(this.config.safetyConfig);
+        }
+        this._safety.onBotStart();
+        console.log('[BotEngine] Safety Guardrail System initialized');
+      } catch (err) {
+        console.warn('[BotEngine] Safety engine init failed (running without safety):', err);
+        this._safety = null;
       }
     }
 
@@ -429,6 +451,12 @@ class BotEngine {
       }
     } catch (err) {
       // Ignore
+    }
+
+    // Notify safety engine of bot stop
+    if (this._safety) {
+      this._safety.onBotStop();
+      await this._safety.save();
     }
 
     // Save state before fully stopping
@@ -703,6 +731,22 @@ class BotEngine {
         }
       }
 
+      // 3c. Safety Guardrail — post-scan risk evaluation
+      if (this._safety) {
+        var safetyVerdict = this._safety.onPostScan(
+          this.gameState, this.config, this.taskQueue.size()
+        );
+        if (safetyVerdict.block) {
+          this._slog('WARN', 'Safety blocked cycle: ' + safetyVerdict.reason);
+          if (safetyVerdict.action === 'emergency') {
+            await this.emergencyStop(safetyVerdict.reason);
+          } else if (safetyVerdict.action === 'pause') {
+            this.pause();
+          }
+          return;
+        }
+      }
+
       // 4. Safety checks - captcha / errors
       if (this.gameState.captcha) {
         await this.emergencyStop('Captcha detected on page');
@@ -749,8 +793,14 @@ class BotEngine {
         }
       }
 
+      // 5b. Safety Guardrail — filter tasks through policy engine
+      var filteredTasks = newTasks;
+      if (this._safety) {
+        filteredTasks = this._safety.onPostDecide(newTasks, this.gameState, this.config);
+      }
+
       // Add new tasks to the queue
-      for (const task of newTasks) {
+      for (const task of filteredTasks) {
         this.taskQueue.add(
           task.type,
           task.params,
@@ -948,6 +998,16 @@ class BotEngine {
         await this._waitForContentScript(15000);
       }
 
+      // Safety Guardrail — pre-execute gate
+      if (this._safety) {
+        var execVerdict = this._safety.onPreExecute(task, this.gameState);
+        if (execVerdict.block) {
+          this._slog('WARN', 'Safety blocked task: ' + task.type + ' — ' + execVerdict.reason, { taskId: task.id });
+          this.taskQueue.markFailed(task.id, 'safety:' + execVerdict.reason);
+          return;
+        }
+      }
+
       let response;
 
       // Dispatch to TaskHandlerRegistry (extracted from former switch statement)
@@ -1049,6 +1109,13 @@ class BotEngine {
       // Transition from EXECUTING state (but keep tab lock held — _returnHome needs it)
       if (this._botState === BOT_STATES.EXECUTING) {
         this._transition(BOT_STATES.COOLDOWN, 'task done');
+      }
+
+      // Safety Guardrail — post-execute outcome tracking.
+      // Placed in finally so it runs on both success and exception paths.
+      // `response` may be undefined on exception — treat as failure.
+      if (this._safety) {
+        this._safety.onPostExecute(task, response || { success: false }, this.gameState);
       }
     }
 
@@ -1283,7 +1350,8 @@ class BotEngine {
       executionLocked: this._executionLocked,
       cycleLock: this._cycleLock,
       consecutiveFailures: this._consecutiveFailures,
-      farmCycle: this._farmManager ? this._farmManager.getCycleStatus() : null
+      farmCycle: this._farmManager ? this._farmManager.getCycleStatus() : null,
+      safety: this._safety ? this._safety.getStatus() : null
     };
   }
 
@@ -1347,6 +1415,11 @@ class BotEngine {
         wasRunning: this.running,
         savedAt: Date.now()
       };
+
+      // Persist safety state to its own dedicated storage key
+      if (this._safety && this._safety.isDirty()) {
+        await this._safety.save();
+      }
 
       // Per-server state when serverKey is set
       if (this.serverKey && typeof self.TravianStorage !== 'undefined' && self.TravianStorage.saveServerState) {
