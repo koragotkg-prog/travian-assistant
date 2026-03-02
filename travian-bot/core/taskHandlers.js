@@ -85,10 +85,17 @@
       });
       await engine._randomDelay();
       await engine._waitForContentScript(15000);
-      // FIX: Verify navigation landed on a building page before training.
-      // Without this, a failed nav wastes a retry sending trainTroops to the wrong page.
-      if (!await engine._verifyNavigation('building')) {
-        return { success: false, reason: 'page_mismatch', message: 'Not on building page after navigating to ' + buildingPage };
+      // Verify navigation landed on a training-capable page.
+      // detectPage() returns specific names ('barracks', 'stable', 'workshop'),
+      // not the generic 'building', so accept any of them.
+      var trainPages = ['barracks', 'stable', 'workshop', 'building'];
+      var scanResp = await engine.sendToContentScript({ type: 'SCAN' });
+      var actualPage = (scanResp && scanResp.success && scanResp.data) ? scanResp.data.page : 'unknown';
+      if (trainPages.indexOf(actualPage) === -1) {
+        engine._slog('WARN', 'Page assertion failed: expected training building, got ' + actualPage, {
+          expectedPage: buildingPage, actualPage: actualPage
+        });
+        return { success: false, reason: 'page_mismatch', message: 'Not on training building page after navigating to ' + buildingPage };
       }
       return await engine.sendToContentScript({
         type: 'EXECUTE', action: 'trainTroops', params: {

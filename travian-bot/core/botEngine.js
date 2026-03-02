@@ -1527,7 +1527,7 @@ class BotEngine {
 
       // Troop training settings
       troopConfig: {
-        defaultTroopType: 'infantry',
+        defaultTroopType: 't1',  // first unit of any tribe (legionnaire/clubswinger/phalanx)
         trainCount: 5,
         trainingBuilding: 'barracks',
         minResourceThreshold: {

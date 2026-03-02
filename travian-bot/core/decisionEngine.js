@@ -603,9 +603,25 @@ class DecisionEngine {
     if (Array.isArray(rawSlots) && rawSlots.length > 0) {
       effectiveSlots = rawSlots.filter(s => s && s.troopType); // skip empty slots
     } else {
-      // v1 legacy: synthesize a single slot
-      const legacyType = config.troopConfig.defaultTroopType || null;
+      // v1 legacy: synthesize a single slot.
+      // defaultTroopType may be a human name ('infantry') or a tN input name ('t1').
+      // If it doesn't match /^t\d+$/, try to resolve it via TravianGameData.
+      var legacyType = config.troopConfig.defaultTroopType || null;
       if (!legacyType) return null;
+
+      // Convert human-readable names to tN input names
+      if (!/^t\d+$/.test(legacyType)) {
+        var GD = (typeof self !== 'undefined' && self.TravianGameData) ? self.TravianGameData : null;
+        if (GD && GD.getInputName && config.tribe) {
+          var resolved = GD.getInputName(config.tribe, legacyType);
+          if (resolved) legacyType = resolved;
+        }
+        // If still not a tN name, default to t1 (first unit of the tribe)
+        if (!/^t\d+$/.test(legacyType)) {
+          legacyType = 't1';
+        }
+      }
+
       effectiveSlots = [{
         troopType: legacyType,
         batchSize: config.troopConfig.trainCount || 5,
