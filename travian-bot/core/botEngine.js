@@ -998,12 +998,14 @@ class BotEngine {
         await this._waitForContentScript(15000);
       }
 
-      // Safety Guardrail — pre-execute gate
+      // Safety Guardrail — pre-execute gate.
+      // Blocked tasks are removed (not retried) since safety conditions are temporary.
+      // DecisionEngine will re-create the task once conditions clear.
       if (this._safety) {
         var execVerdict = this._safety.onPreExecute(task, this.gameState);
         if (execVerdict.block) {
-          this._slog('WARN', 'Safety blocked task: ' + task.type + ' — ' + execVerdict.reason, { taskId: task.id });
-          this.taskQueue.markFailed(task.id, 'safety:' + execVerdict.reason);
+          this._slog('WARN', 'Safety blocked: ' + task.type + ' — ' + execVerdict.reason, { taskId: task.id });
+          this.taskQueue.remove(task.id);
           return;
         }
       }
@@ -1609,6 +1611,15 @@ class BotEngine {
     // Resource config
     if (!cfg.resourceConfig || typeof cfg.resourceConfig !== 'object') cfg.resourceConfig = {};
     cfg.resourceConfig.maxLevel = ensureNum(cfg.resourceConfig.maxLevel, defaults.resourceConfig.maxLevel);
+
+    // Troop config — ensure structure exists for DecisionEngine.evaluateTroopTraining()
+    if (!cfg.troopConfig || typeof cfg.troopConfig !== 'object') {
+      cfg.troopConfig = defaults.troopConfig;
+    } else {
+      if (!cfg.troopConfig.minResourceThreshold || typeof cfg.troopConfig.minResourceThreshold !== 'object') {
+        cfg.troopConfig.minResourceThreshold = defaults.troopConfig.minResourceThreshold;
+      }
+    }
 
     return cfg;
   }

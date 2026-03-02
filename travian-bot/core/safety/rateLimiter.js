@@ -81,7 +81,7 @@
       navigationsPerFiveMin: 20,
       retriesPerHour: 30,
       farmRaidsPerHour: 30,
-      trainCommandsPerHour: 10,
+      trainCommandsPerHour: 30,
       maxQueueSize: 50,
       maxSessionDurationMs: 8 * 3600000  // 8 hours
     };
