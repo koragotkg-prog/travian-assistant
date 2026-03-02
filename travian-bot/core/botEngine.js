@@ -1737,6 +1737,10 @@ class BotEngine {
       }
 
       await this._randomDelay();
+      // Wait for content script to be ready before navigating.
+      // Form submissions (train_troops, train_traps) cause page reloads
+      // that destroy the content script — must wait for re-injection.
+      await this._bridge.waitForReady(10000);
       await this.sendToContentScript({
         type: 'EXECUTE', action: 'navigateTo', params: { page: 'dorf1' }
       });
