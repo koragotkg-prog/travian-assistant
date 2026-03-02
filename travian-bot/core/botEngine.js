@@ -1728,28 +1728,71 @@ class BotEngine {
       return;
     }
 
-    try {
-      // For building tasks, detour through dorf2 to refresh cached buildings
-      if (taskType === 'upgrade_building' || taskType === 'build_new') {
+    // For building tasks, detour through dorf2 to refresh cached buildings
+    if (taskType === 'upgrade_building' || taskType === 'build_new') {
+      try {
         await this._navigationManager.refreshBuildingsDetour(
           this._cycleCounter, () => this._randomDelay()
         );
+      } catch (detourErr) {
+        console.warn('[BotEngine] _returnHome: dorf2 detour failed:', detourErr.message);
       }
-
-      await this._randomDelay();
-      // Wait for content script to be ready before navigating.
-      // Form submissions (train_troops, train_traps) cause page reloads
-      // that destroy the content script — must wait for re-injection.
-      await this._bridge.waitForReady(10000);
-      await this.sendToContentScript({
-        type: 'EXECUTE', action: 'navigateTo', params: { page: 'dorf1' }
-      });
-      await this._bridge.waitForReady(10000);
-      console.log('[BotEngine] Returned to dorf1');
-    } catch (err) {
-      // Non-critical — just log and continue
-      console.warn('[BotEngine] Failed to return to dorf1:', err.message);
     }
+
+    // Navigate to dorf1 with verification and retry.
+    // Previous version silently swallowed all errors, leaving the bot on the wrong
+    // page (e.g. barracks after train_troops). Now we verify we actually reached dorf1.
+    for (var attempt = 0; attempt < 2; attempt++) {
+      try {
+        await this._randomDelay();
+
+        // Ensure content script is alive (form submissions may have reloaded the page)
+        var ready = await this._bridge.waitForReady(15000);
+        if (!ready) {
+          this._slog('WARN', '_returnHome: content script not ready (attempt ' + (attempt + 1) + ')');
+          continue;
+        }
+
+        // Send navigation command — this causes a page reload.
+        // The navigateTo response may arrive before the page unloads (typical),
+        // or the message may fail if the page starts navigating immediately.
+        try {
+          await this.sendToContentScript({
+            type: 'EXECUTE', action: 'navigateTo', params: { page: 'dorf1' }
+          });
+        } catch (navErr) {
+          // Expected: navigateTo click triggers page unload before response arrives.
+          // The navigation itself likely succeeded — continue to verification.
+          console.log('[BotEngine] _returnHome: navigateTo threw (expected during navigation):', navErr.message);
+        }
+
+        // Wait for dorf1 to finish loading
+        var homeReady = await this._bridge.waitForReady(15000);
+        if (!homeReady) {
+          this._slog('WARN', '_returnHome: dorf1 did not load in time (attempt ' + (attempt + 1) + ')');
+          continue;
+        }
+
+        // Verify we actually reached dorf1 (not still on barracks/stable)
+        var verifyResp = await this.sendToContentScript({ type: 'SCAN' });
+        var currentPage = (verifyResp && verifyResp.success && verifyResp.data)
+          ? verifyResp.data.page : 'unknown';
+
+        if (currentPage === 'resources') {
+          console.log('[BotEngine] Returned to dorf1 ✓');
+          return; // Success
+        }
+
+        // Wrong page — log and retry
+        this._slog('WARN', '_returnHome: expected dorf1, got ' + currentPage + ' (attempt ' + (attempt + 1) + ')');
+
+      } catch (err) {
+        this._slog('WARN', '_returnHome: attempt ' + (attempt + 1) + ' failed: ' + err.message);
+      }
+    }
+
+    // All attempts exhausted — log clear error for debugging
+    this._slog('ERROR', '_returnHome: failed to reach dorf1 after 2 attempts for ' + taskType);
   }
 
   /**

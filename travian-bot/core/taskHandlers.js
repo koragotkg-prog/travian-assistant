@@ -115,12 +115,23 @@
         });
         return { success: false, reason: 'page_mismatch', message: 'Not on training building page after navigating to ' + buildingPage };
       }
-      return await engine.sendToContentScript({
+      var trainResp = await engine.sendToContentScript({
         type: 'EXECUTE', action: 'trainTroops', params: {
           troopType: task.params.troopType,
           count: task.params.count
         }
       });
+
+      // FIX: Form submission causes full page reload (POST → redirect → GET).
+      // trainTroops returns {success:true} BEFORE the reload starts, so _returnHome
+      // can race with the reload — catching the OLD content script that's about to die.
+      // Hard delay + waitForContentScript ensures the reload has completed.
+      if (trainResp && trainResp.success) {
+        await new Promise(function(r) { setTimeout(r, 2000); });
+        await engine._waitForContentScript(15000);
+      }
+
+      return trainResp;
     },
 
     // -----------------------------------------------------------------------
@@ -215,9 +226,18 @@
       // Step 4: Wait for content script re-injection after page navigation
       await engine._waitForContentScript(15000);
       // Step 5: Train traps
-      return await engine.sendToContentScript({
+      var trapResp = await engine.sendToContentScript({
         type: 'EXECUTE', action: 'trainTraps', params: { count: task.params.count || 10 }
       });
+
+      // FIX: Same as train_troops — form submission causes page reload.
+      // Wait for reload before _returnHome tries to navigate away.
+      if (trapResp && trapResp.success) {
+        await new Promise(function(r) { setTimeout(r, 2000); });
+        await engine._waitForContentScript(15000);
+      }
+
+      return trapResp;
     },
 
     // -----------------------------------------------------------------------
