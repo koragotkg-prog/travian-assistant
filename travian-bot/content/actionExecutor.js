@@ -709,6 +709,59 @@
     },
 
     /**
+     * Check if the upgrade button container is visible on the current page.
+     * Military buildings (barracks, stable, workshop) open on the training tab;
+     * the upgrade tab must be selected first.
+     * @returns {{ success: true, needsTabSwitch: boolean }}
+     */
+    checkUpgradeAvailable: function () {
+      var container = qs('.upgradeButtonsContainer');
+      return { success: true, needsTabSwitch: !container };
+    },
+
+    /**
+     * Switch to the upgrade tab on a military building page.
+     * Clicks the last .tabItem in .contentNavi (upgrade tab) or navigates
+     * to build.php?id=XX without tt= param.
+     * NOTE: This causes a page reload — content script will be destroyed.
+     * @param {number} slotId - Building slot ID
+     * @returns {Promise<boolean>}
+     */
+    switchToUpgradeTab: async function (slotId) {
+      try {
+        Logger.log('switchToUpgradeTab: slot', slotId);
+
+        // Strategy 1: Find tab links and click the last one (usually the upgrade tab)
+        var tabs = qsa('.contentNavi a.tabItem') || [];
+        if (tabs.length > 1) {
+          var lastTab = tabs[tabs.length - 1];
+          // Check it's not already the active tab
+          if (!lastTab.classList.contains('active')) {
+            Logger.log('switchToUpgradeTab: clicking last tab (' + tabs.length + ' tabs)');
+            await simulateHumanClick(lastTab);
+            return true;
+          }
+        }
+
+        // Strategy 2: Direct URL navigation to the building page without tt= param
+        var url = window.location.href;
+        var match = url.match(/build\.php\?id=(\d+)/);
+        var id = match ? match[1] : slotId;
+        if (id) {
+          Logger.log('switchToUpgradeTab: direct nav to build.php?id=' + id);
+          window.location.href = '/build.php?id=' + id;
+          return true;
+        }
+
+        Logger.warn('switchToUpgradeTab: could not determine building URL');
+        return false;
+      } catch (e) {
+        Logger.error('switchToUpgradeTab error:', e);
+        return false;
+      }
+    },
+
+    /**
      * Find and click the upgrade / level-up button on a building page.
      *
      * @returns {Promise<boolean>}
@@ -2538,6 +2591,14 @@
 
             case 'clickBuildingSlot':
               actionResult = await TravianExecutor.clickBuildingSlot(params.slotId);
+              break;
+
+            case 'checkUpgradeAvailable':
+              actionResult = TravianExecutor.checkUpgradeAvailable();
+              break;
+
+            case 'switchToUpgradeTab':
+              actionResult = await TravianExecutor.switchToUpgradeTab(params.slotId);
               break;
 
             case 'clickUpgradeButton':

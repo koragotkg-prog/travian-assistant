@@ -68,6 +68,24 @@
       await engine._randomDelay();
       // Step 2b: Wait for content script re-injection after page navigation
       await engine._waitForContentScript(15000);
+
+      // Step 2c: Military buildings (barracks, stable, workshop, etc.) open on
+      // the training tab by default. The upgrade button is on a different tab.
+      // If .upgradeButtonsContainer is missing, try switching to the upgrade tab
+      // by navigating to build.php?id=XX without tt= param (forces default/upgrade view),
+      // or clicking the last tab which is typically the upgrade tab.
+      var preCheck = await engine.sendToContentScript({
+        type: 'EXECUTE', action: 'checkUpgradeAvailable', params: {}
+      });
+      if (preCheck && preCheck.success && preCheck.needsTabSwitch) {
+        // Navigate directly to the building page without tt param (upgrade tab)
+        await engine.sendToContentScript({
+          type: 'EXECUTE', action: 'switchToUpgradeTab', params: { slotId: task.params.slot }
+        });
+        await engine._randomDelay();
+        await engine._waitForContentScript(15000);
+      }
+
       // Step 3: Click upgrade button (green = affordable, no button = can't afford)
       return await engine.sendToContentScript({
         type: 'EXECUTE', action: 'clickUpgradeButton', params: {}
