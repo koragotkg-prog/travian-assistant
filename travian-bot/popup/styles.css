@@ -205,6 +205,26 @@ header h1 {
   box-shadow: 0 0 8px var(--primary-glow);
 }
 
+/* --- Village Config Scope Indicator --- */
+.village-config-scope {
+  padding: 6px 12px;
+  margin: 0 0 8px 0;
+  background: linear-gradient(135deg, rgba(0,229,255,0.08), rgba(0,229,255,0.03));
+  border: 1px solid rgba(0,229,255,0.25);
+  border-radius: var(--radius-sm);
+  color: var(--primary);
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.village-config-scope .vcs-icon {
+  font-size: 14px;
+}
+.village-config-scope strong {
+  color: var(--text);
+}
+
 /* ============================================================
    TAB BAR
    ============================================================ */

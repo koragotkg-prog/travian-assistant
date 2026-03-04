@@ -37,6 +37,12 @@ const dom = {
   // Village selector
   villageSelect: document.getElementById('villageSelect'),
 
+  // Village cycling
+  togVillageCycling: document.getElementById('togVillageCycling'),
+  villageCycleInterval: document.getElementById('villageCycleInterval'),
+  villageConfigScope: document.getElementById('villageConfigScope'),
+  villageConfigName: document.getElementById('villageConfigName'),
+
   // Attack alert
   attackAlert: document.getElementById('attackAlert'),
   attackCount: document.getElementById('attackCount'),
@@ -302,39 +308,168 @@ let scannedResources = [];
 let scannedBuildings = [];
 let upgradeTargets = {};  // { "slot_number": { enabled: true, targetLevel: 10 } }
 
-// Per-village target cache
+// Per-village config cache — stores ALL per-village config fields
 let currentVillageId = null;
-let villageTargetCache = {};
-// Shape: { "villageId": { upgradeTargets: {...}, scannedRes: [...], scannedBld: [...] } }
+let villageTargetCache = {};   // Legacy compat: { "vid": { upgradeTargets, scannedRes, scannedBld } }
+let villageConfigCache = {};   // Full per-village config: { "vid": { all per-village fields } }
+
+// Fields that are per-village (synced on village switch)
+const PER_VILLAGE_TOGGLE_FIELDS = [
+  'autoResourceUpgrade', 'autoBuildingUpgrade', 'autoTroopTraining',
+  'autoFarming', 'autoTrapTraining'
+];
 
 /**
- * Save current village's targets into the cache.
+ * Save current village's FULL config into cache.
  */
-function saveCurrentVillageTargets() {
+function saveCurrentVillageConfig() {
   if (!currentVillageId) return;
+
+  // Save upgrade targets (existing pattern)
   villageTargetCache[currentVillageId] = {
     upgradeTargets: JSON.parse(JSON.stringify(upgradeTargets)),
     scannedRes: JSON.parse(JSON.stringify(scannedResources)),
     scannedBld: JSON.parse(JSON.stringify(scannedBuildings)),
   };
+
+  // Save full per-village config from DOM
+  villageConfigCache[currentVillageId] = {
+    autoResourceUpgrade: dom.togResourceUpgrade.checked,
+    autoBuildingUpgrade: dom.togBuildingUpgrade.checked,
+    autoTroopTraining: dom.togTroopTraining.checked,
+    autoFarming: dom.togFarming.checked,
+    autoTrapTraining: dom.togTrapTraining ? dom.togTrapTraining.checked : false,
+    resourceConfig: {
+      maxLevel: dom.cfgMaxResLevel ? parseInt(dom.cfgMaxResLevel.value, 10) || 10 : 10,
+    },
+    buildingConfig: {
+      maxLevel: dom.cfgMaxBuildLevel ? parseInt(dom.cfgMaxBuildLevel.value, 10) || 10 : 10,
+    },
+    troopConfig: {
+      slots: collectTroopSlots(),
+      minResources: parseInt(dom.troopMinRes.value, 10) || 1000,
+    },
+    trapConfig: {
+      batchSize: parseInt(dom.trapBatchSize ? dom.trapBatchSize.value : '10', 10) || 10,
+    },
+    farmConfig: {
+      enabled: dom.togFarming.checked,
+      intervalMs: (parseInt(dom.farmInterval.value, 10) || 300) * 1000,
+      minTroops: parseInt(dom.farmMinTroops.value, 10) || 10,
+      useRallyPointFarmList: dom.togUseFarmList.checked,
+      smartFarming: dom.togSmartFarming.checked,
+      minLoot: parseInt(dom.farmMinLoot.value, 10) || 30,
+      skipLosses: dom.togSkipLosses.checked,
+      enableReRaid: dom.togReRaid ? dom.togReRaid.checked : false,
+      reRaidMinLoot: dom.reRaidMinLoot ? (parseInt(dom.reRaidMinLoot.value, 10) || 100) : 100,
+      reRaidTroopCount: dom.reRaidTroopCount ? (parseInt(dom.reRaidTroopCount.value, 10) || 5) : 5,
+      reRaidTroopType: dom.reRaidTroopType ? dom.reRaidTroopType.value : 't4',
+      scanMyX: dom.scanMyX && dom.scanMyX.value !== '' ? parseInt(dom.scanMyX.value, 10) : null,
+      scanMyY: dom.scanMyY && dom.scanMyY.value !== '' ? parseInt(dom.scanMyY.value, 10) : null,
+      scanRadius: parseInt(dom.scanRadius ? dom.scanRadius.value : '20', 10) || 20,
+      scanMaxPop: parseInt(dom.scanMaxPop ? dom.scanMaxPop.value : '50', 10) || 50,
+      scanIncludeOases: dom.togScanOases ? dom.togScanOases.checked : true,
+      scanEmptyOasesOnly: dom.togScanEmptyOases ? dom.togScanEmptyOases.checked : true,
+      scanSkipAlliance: dom.togScanSkipAlliance ? dom.togScanSkipAlliance.checked : true,
+      scanTroopSlot: dom.scanTroopSlot ? dom.scanTroopSlot.value : 't1',
+      scanTroopCount: parseInt(dom.scanTroopCount ? dom.scanTroopCount.value : '1', 10) || 1,
+      targets: [...farmTargets],
+    },
+    npcConfig: {
+      enabled: dom.togNpcEnabled ? dom.togNpcEnabled.checked : false,
+      ratioWood: parseInt(dom.npcRatioWood ? dom.npcRatioWood.value : '25', 10) || 25,
+      ratioClay: parseInt(dom.npcRatioClay ? dom.npcRatioClay.value : '25', 10) || 25,
+      ratioIron: parseInt(dom.npcRatioIron ? dom.npcRatioIron.value : '25', 10) || 25,
+      ratioCrop: parseInt(dom.npcRatioCrop ? dom.npcRatioCrop.value : '25', 10) || 25,
+      triggerPercent: parseInt(dom.npcTriggerPercent ? dom.npcTriggerPercent.value : '90', 10) || 90,
+    },
+    dodgeConfig: {
+      enabled: dom.togDodgeEnabled ? dom.togDodgeEnabled.checked : false,
+      dodgeDestination: (dom.dodgeDestX && dom.dodgeDestX.value !== '' && dom.dodgeDestY && dom.dodgeDestY.value !== '')
+        ? { x: parseInt(dom.dodgeDestX.value, 10), y: parseInt(dom.dodgeDestY.value, 10) }
+        : null,
+      minTimeToReact: parseInt(dom.dodgeMinReact ? dom.dodgeMinReact.value : '120', 10) || 120,
+    },
+    upgradeTargets: JSON.parse(JSON.stringify(upgradeTargets)),
+    scannedItems: {
+      resources: JSON.parse(JSON.stringify(scannedResources)),
+      buildings: JSON.parse(JSON.stringify(scannedBuildings)),
+    },
+  };
 }
 
 /**
- * Load a village's targets from cache into working variables.
+ * Load a village's full config from cache into DOM.
  */
-function loadVillageTargets(villageId) {
+function loadVillageConfig(villageId) {
   currentVillageId = villageId;
-  var cached = villageTargetCache[villageId];
-  if (cached) {
-    upgradeTargets = JSON.parse(JSON.stringify(cached.upgradeTargets || {}));
-    scannedResources = cached.scannedRes || [];
-    scannedBuildings = cached.scannedBld || [];
+
+  // Load upgrade targets (existing pattern)
+  var targetCached = villageTargetCache[villageId];
+  if (targetCached) {
+    upgradeTargets = JSON.parse(JSON.stringify(targetCached.upgradeTargets || {}));
+    scannedResources = targetCached.scannedRes || [];
+    scannedBuildings = targetCached.scannedBld || [];
   } else {
     upgradeTargets = {};
     scannedResources = [];
     scannedBuildings = [];
   }
+
+  // Load full per-village config into DOM
+  var vc = villageConfigCache[villageId];
+  if (vc) {
+    // Feature toggles
+    if (vc.autoResourceUpgrade !== undefined) dom.togResourceUpgrade.checked = vc.autoResourceUpgrade;
+    if (vc.autoBuildingUpgrade !== undefined) dom.togBuildingUpgrade.checked = vc.autoBuildingUpgrade;
+    if (vc.autoTroopTraining !== undefined) dom.togTroopTraining.checked = vc.autoTroopTraining;
+    if (vc.autoFarming !== undefined) dom.togFarming.checked = vc.autoFarming;
+    if (dom.togTrapTraining && vc.autoTrapTraining !== undefined) dom.togTrapTraining.checked = vc.autoTrapTraining;
+
+    // Max levels
+    if (vc.resourceConfig && dom.cfgMaxResLevel) dom.cfgMaxResLevel.value = vc.resourceConfig.maxLevel || 10;
+    if (vc.buildingConfig && dom.cfgMaxBuildLevel) dom.cfgMaxBuildLevel.value = vc.buildingConfig.maxLevel || 10;
+
+    // Troop config
+    if (vc.troopConfig) {
+      populateTroopSlots(vc.troopConfig);
+    }
+
+    // Farm config
+    if (vc.farmConfig) {
+      populateFarmConfig(vc.farmConfig);
+    }
+
+    // NPC config
+    if (vc.npcConfig) {
+      if (dom.togNpcEnabled) dom.togNpcEnabled.checked = vc.npcConfig.enabled || false;
+      if (dom.npcRatioWood) dom.npcRatioWood.value = vc.npcConfig.ratioWood || 25;
+      if (dom.npcRatioClay) dom.npcRatioClay.value = vc.npcConfig.ratioClay || 25;
+      if (dom.npcRatioIron) dom.npcRatioIron.value = vc.npcConfig.ratioIron || 25;
+      if (dom.npcRatioCrop) dom.npcRatioCrop.value = vc.npcConfig.ratioCrop || 25;
+      if (dom.npcTriggerPercent) dom.npcTriggerPercent.value = vc.npcConfig.triggerPercent || 90;
+    }
+
+    // Dodge config
+    if (vc.dodgeConfig) {
+      if (dom.togDodgeEnabled) dom.togDodgeEnabled.checked = vc.dodgeConfig.enabled || false;
+      if (vc.dodgeConfig.dodgeDestination) {
+        if (dom.dodgeDestX) dom.dodgeDestX.value = vc.dodgeConfig.dodgeDestination.x;
+        if (dom.dodgeDestY) dom.dodgeDestY.value = vc.dodgeConfig.dodgeDestination.y;
+      }
+      if (dom.dodgeMinReact) dom.dodgeMinReact.value = vc.dodgeConfig.minTimeToReact || 120;
+    }
+
+    // Trap config
+    if (vc.trapConfig && dom.trapBatchSize) {
+      dom.trapBatchSize.value = vc.trapConfig.batchSize || 10;
+    }
+  }
 }
+
+// Legacy compat wrappers
+function saveCurrentVillageTargets() { saveCurrentVillageConfig(); }
+function loadVillageTargets(villageId) { loadVillageConfig(villageId); }
 
 /**
  * One-time migration: move global upgradeTargets into per-village cache.
@@ -351,17 +486,86 @@ function migrateGlobalTargets(config) {
 }
 
 /**
- * Update village scope label in the UI.
+ * Update village scope labels in the UI.
  */
 function updateVillageScope() {
-  if (!dom.villageScopeName || !dom.villageScope) return;
-  if (!currentVillageId) {
-    dom.villageScope.style.display = 'none';
-    return;
+  // Legacy scope label (upgrade targets section)
+  if (dom.villageScopeName && dom.villageScope) {
+    if (!currentVillageId) {
+      dom.villageScope.style.display = 'none';
+    } else {
+      dom.villageScope.style.display = '';
+      var opt = dom.villageSelect.querySelector('option[value="' + currentVillageId + '"]');
+      dom.villageScopeName.textContent = opt ? opt.textContent : currentVillageId;
+    }
   }
-  dom.villageScope.style.display = '';
-  var opt = dom.villageSelect.querySelector('option[value="' + currentVillageId + '"]');
-  dom.villageScopeName.textContent = opt ? opt.textContent : currentVillageId;
+  // New config scope indicator
+  if (dom.villageConfigScope && dom.villageConfigName) {
+    if (!currentVillageId) {
+      dom.villageConfigScope.style.display = 'none';
+    } else {
+      dom.villageConfigScope.style.display = '';
+      var opt2 = dom.villageSelect.querySelector('option[value="' + currentVillageId + '"]');
+      dom.villageConfigName.textContent = opt2 ? opt2.textContent : currentVillageId;
+    }
+  }
+}
+
+/**
+ * Load troop config into DOM (used when switching villages).
+ */
+function populateTroopSlots(troopConfig) {
+  if (!troopConfig) return;
+  if (troopConfig.slots) renderTroopSlots(troopConfig.slots);
+  if (dom.troopMinRes && troopConfig.minResources !== undefined) {
+    dom.troopMinRes.value = troopConfig.minResources;
+  }
+}
+
+/**
+ * Load farm config into DOM (used when switching villages).
+ */
+function populateFarmConfig(fc) {
+  if (!fc) return;
+  if (dom.farmInterval) dom.farmInterval.value = Math.round((fc.intervalMs || 300000) / 1000);
+  if (dom.farmMinTroops) dom.farmMinTroops.value = fc.minTroops || 10;
+  if (dom.togUseFarmList) dom.togUseFarmList.checked = fc.useRallyPointFarmList !== false;
+  if (dom.togSmartFarming) dom.togSmartFarming.checked = fc.smartFarming !== false;
+  if (dom.farmMinLoot) dom.farmMinLoot.value = fc.minLoot || 30;
+  if (dom.togSkipLosses) dom.togSkipLosses.checked = fc.skipLosses !== false;
+  if (dom.togReRaid) dom.togReRaid.checked = fc.enableReRaid || false;
+  if (dom.reRaidMinLoot) dom.reRaidMinLoot.value = fc.reRaidMinLoot || 100;
+  if (dom.reRaidTroopCount) dom.reRaidTroopCount.value = fc.reRaidTroopCount || 5;
+  if (dom.reRaidTroopType) dom.reRaidTroopType.value = fc.reRaidTroopType || 't4';
+  if (dom.scanMyX && fc.scanMyX !== null && fc.scanMyX !== undefined) dom.scanMyX.value = fc.scanMyX;
+  if (dom.scanMyY && fc.scanMyY !== null && fc.scanMyY !== undefined) dom.scanMyY.value = fc.scanMyY;
+  if (dom.scanRadius) dom.scanRadius.value = fc.scanRadius || 20;
+  if (dom.scanMaxPop) dom.scanMaxPop.value = fc.scanMaxPop || 50;
+  if (dom.togScanOases) dom.togScanOases.checked = fc.scanIncludeOases !== false;
+  if (dom.togScanEmptyOases) dom.togScanEmptyOases.checked = fc.scanEmptyOasesOnly !== false;
+  if (dom.togScanSkipAlliance) dom.togScanSkipAlliance.checked = fc.scanSkipAlliance !== false;
+  if (dom.scanTroopSlot) dom.scanTroopSlot.value = fc.scanTroopSlot || 't1';
+  if (dom.scanTroopCount) dom.scanTroopCount.value = fc.scanTroopCount || 1;
+  if (fc.targets) farmTargets = [...fc.targets];
+}
+
+/**
+ * Migrate villageConfigs → villageConfigCache on config load.
+ */
+function migrateVillageConfigs(config) {
+  if (!config.villageConfigs) return;
+  for (var vid in config.villageConfigs) {
+    villageConfigCache[vid] = config.villageConfigs[vid];
+    // Also populate villageTargetCache for backward compat
+    var vc = config.villageConfigs[vid];
+    if (vc.upgradeTargets || vc.scannedItems) {
+      villageTargetCache[vid] = {
+        upgradeTargets: vc.upgradeTargets || {},
+        scannedRes: vc.scannedItems ? (vc.scannedItems.resources || []) : [],
+        scannedBld: vc.scannedItems ? (vc.scannedItems.buildings || []) : [],
+      };
+    }
+  }
 }
 
 // ============================================================
@@ -1743,23 +1947,62 @@ function collectTroopSlots() {
  * Collect all form values into a single config object.
  */
 function collectConfig() {
-  // Save current village targets before collecting
-  saveCurrentVillageTargets();
+  // Save current village's full config before collecting
+  saveCurrentVillageConfig();
+
+  // Build villageConfigs from cache
+  var villageConfigs = {};
+  for (var vid in villageConfigCache) {
+    villageConfigs[vid] = villageConfigCache[vid];
+  }
+
   return {
     enabled: true,
-    autoResourceUpgrade: dom.togResourceUpgrade.checked,
-    autoBuildingUpgrade: dom.togBuildingUpgrade.checked,
-    autoTroopTraining: dom.togTroopTraining.checked,
-    autoFarming: dom.togFarming.checked,
+    // Global settings
     autoHeroAdventure: dom.togHeroAdventure.checked,
     useAIScoring: dom.togAIScoring ? dom.togAIScoring.checked : true,
-    autoTrapTraining: dom.togTrapTraining ? dom.togTrapTraining.checked : false,
     autoQuestClaim: dom.togQuestClaim ? dom.togQuestClaim.checked : true,
     activeVillage: dom.villageSelect.value,
     tribe: dom.cfgTribe ? dom.cfgTribe.value : 'gaul',
     serverSpeed: dom.cfgServerSpeed ? parseInt(dom.cfgServerSpeed.value, 10) || 1 : 1,
     gameDay: dom.cfgGameDay && dom.cfgGameDay.value !== '' ? parseInt(dom.cfgGameDay.value, 10) : null,
     threatLevel: dom.cfgThreatLevel ? parseInt(dom.cfgThreatLevel.value, 10) || 0 : 0,
+    heroConfig: {
+      minHealth: parseInt(dom.heroMinHealth.value, 10) || 30,
+      claimThreshold: parseInt(dom.heroClaimThreshold.value, 10) || 20,
+      claimFillTarget: parseInt(dom.heroClaimFillTarget.value, 10) || 50,
+      claimCooldownSuccess: parseInt(dom.heroClaimCdSuccess.value, 10) || 5,
+      claimCooldownFail: parseInt(dom.heroClaimCdFail.value, 10) || 2,
+    },
+    delays: {
+      minActionDelay: parseInt(dom.delayMin.value, 10) || 2000,
+      maxActionDelay: parseInt(dom.delayMax.value, 10) || 8000,
+      loopActiveMs: dom.cfgLoopActive ? (parseInt(dom.cfgLoopActive.value, 10) || 45) * 1000 : 45000,
+      loopIdleMs: dom.cfgLoopIdle ? (parseInt(dom.cfgLoopIdle.value, 10) || 180) * 1000 : 180000,
+    },
+    safetyConfig: {
+      maxActionsPerHour: parseInt(dom.maxActions.value, 10) || 60,
+    },
+    enemies: parseEnemiesList(),
+    origin: (dom.scanMyX && dom.scanMyX.value !== '' && dom.scanMyY && dom.scanMyY.value !== '')
+      ? { x: parseInt(dom.scanMyX.value, 10), y: parseInt(dom.scanMyY.value, 10) }
+      : null,
+
+    // Village cycling (global)
+    villageCycling: {
+      enabled: dom.togVillageCycling ? dom.togVillageCycling.checked : false,
+      intervalMs: (parseInt(dom.villageCycleInterval ? dom.villageCycleInterval.value : '5', 10) || 5) * 60000,
+    },
+
+    // Per-village configs (new)
+    villageConfigs: villageConfigs,
+
+    // Legacy compat: per-village fields for current village (for single-village fallback)
+    autoResourceUpgrade: dom.togResourceUpgrade.checked,
+    autoBuildingUpgrade: dom.togBuildingUpgrade.checked,
+    autoTroopTraining: dom.togTroopTraining.checked,
+    autoFarming: dom.togFarming.checked,
+    autoTrapTraining: dom.togTrapTraining ? dom.togTrapTraining.checked : false,
     resourceConfig: {
       maxLevel: dom.cfgMaxResLevel ? parseInt(dom.cfgMaxResLevel.value, 10) || 10 : 10,
     },
@@ -1784,7 +2027,7 @@ function collectConfig() {
     },
     farmConfig: {
       enabled: dom.togFarming.checked,
-      intervalMs: (parseInt(dom.farmInterval.value, 10) || 300) * 1000, // convert seconds to ms
+      intervalMs: (parseInt(dom.farmInterval.value, 10) || 300) * 1000,
       minTroops: parseInt(dom.farmMinTroops.value, 10) || 10,
       useRallyPointFarmList: dom.togUseFarmList.checked,
       smartFarming: dom.togSmartFarming.checked,
@@ -1803,14 +2046,7 @@ function collectConfig() {
       scanSkipAlliance: dom.togScanSkipAlliance ? dom.togScanSkipAlliance.checked : true,
       scanTroopSlot: dom.scanTroopSlot ? dom.scanTroopSlot.value : 't1',
       scanTroopCount: parseInt(dom.scanTroopCount ? dom.scanTroopCount.value : '1', 10) || 1,
-      targets: [...farmTargets],       // [{x, y, name?}] for send_attack (legacy mode)
-    },
-    heroConfig: {
-      minHealth: parseInt(dom.heroMinHealth.value, 10) || 30,
-      claimThreshold: parseInt(dom.heroClaimThreshold.value, 10) || 20,
-      claimFillTarget: parseInt(dom.heroClaimFillTarget.value, 10) || 50,
-      claimCooldownSuccess: parseInt(dom.heroClaimCdSuccess.value, 10) || 5,
-      claimCooldownFail: parseInt(dom.heroClaimCdFail.value, 10) || 2,
+      targets: [...farmTargets],
     },
     trapConfig: {
       batchSize: parseInt(dom.trapBatchSize ? dom.trapBatchSize.value : '10', 10) || 10,
@@ -1830,21 +2066,6 @@ function collectConfig() {
         : null,
       minTimeToReact: parseInt(dom.dodgeMinReact ? dom.dodgeMinReact.value : '120', 10) || 120,
     },
-    delays: {
-      minActionDelay: parseInt(dom.delayMin.value, 10) || 2000,
-      maxActionDelay: parseInt(dom.delayMax.value, 10) || 8000,
-      loopActiveMs: dom.cfgLoopActive ? (parseInt(dom.cfgLoopActive.value, 10) || 45) * 1000 : 45000,
-      loopIdleMs: dom.cfgLoopIdle ? (parseInt(dom.cfgLoopIdle.value, 10) || 180) * 1000 : 180000,
-    },
-    safetyConfig: {
-      maxActionsPerHour: parseInt(dom.maxActions.value, 10) || 60,
-    },
-    // Derive origin from farm scanner's village coordinates (used for risk distance calc)
-    origin: (dom.scanMyX && dom.scanMyX.value !== '' && dom.scanMyY && dom.scanMyY.value !== '')
-      ? { x: parseInt(dom.scanMyX.value, 10), y: parseInt(dom.scanMyY.value, 10) }
-      : null,
-    // Parse enemies from textarea: one "x,y" per line
-    enemies: parseEnemiesList(),
   };
 }
 
@@ -1920,7 +2141,7 @@ function updateNpcRatioSum() {
 /**
  * Helper: format milliseconds as compact countdown string (e.g. "2m 15s").
  */
-function formatCountdown(ms) {
+function formatCountdownShort(ms) {
   if (ms <= 0) return 'NOW';
   var sec = Math.floor(ms / 1000);
   var min = Math.floor(sec / 60);
@@ -1998,7 +2219,7 @@ function renderDiagnostics(s) {
         nameSpan.textContent = item.name || item.id || 'Timer';
         var timeSpan = document.createElement('span');
         timeSpan.className = 'diag-sched-time';
-        timeSpan.textContent = item.remainingMs > 0 ? formatCountdown(item.remainingMs) : 'NOW';
+        timeSpan.textContent = item.remainingMs > 0 ? formatCountdownShort(item.remainingMs) : 'NOW';
         row.appendChild(nameSpan);
         row.appendChild(timeSpan);
         dom.diagScheduler.appendChild(row);
@@ -2034,7 +2255,7 @@ function renderCooldowns(cooldowns) {
         typeSpan.textContent = e[0];
         var timeSpan = document.createElement('span');
         timeSpan.className = 'diag-cd-time';
-        timeSpan.textContent = formatCountdown(e[1] - now);
+        timeSpan.textContent = formatCountdownShort(e[1] - now);
         row.appendChild(typeSpan);
         row.appendChild(timeSpan);
         dom.diagCooldowns.appendChild(row);
@@ -2189,7 +2410,18 @@ function populateForm(config) {
     dom.cfgMaxBuildLevel.value = config.buildingConfig.maxLevel;
   }
 
-  // Per-village target cache
+  // Village cycling config
+  if (config.villageCycling) {
+    if (dom.togVillageCycling) dom.togVillageCycling.checked = config.villageCycling.enabled || false;
+    if (dom.villageCycleInterval) dom.villageCycleInterval.value = Math.round((config.villageCycling.intervalMs || 300000) / 60000);
+  }
+
+  // Per-village config cache (new format)
+  if (config.villageConfigs) {
+    migrateVillageConfigs(config);
+  }
+
+  // Per-village target cache (legacy format)
   if (config.villageTargets) {
     villageTargetCache = config.villageTargets;
   }
@@ -2198,7 +2430,7 @@ function populateForm(config) {
   // Upgrade targets + scanned items
   currentVillageId = config.activeVillage || null;
   if (currentVillageId) {
-    loadVillageTargets(currentVillageId);
+    loadVillageConfig(currentVillageId);
   } else {
     if (config.scannedItems) {
       scannedResources = config.scannedItems.resources || [];
@@ -3251,8 +3483,8 @@ function bindEvents() {
   dom.villageSelect.addEventListener('change', () => {
     const villageId = dom.villageSelect.value;
     if (villageId) {
-      saveCurrentVillageTargets();      // save old village
-      loadVillageTargets(villageId);    // load new village
+      saveCurrentVillageConfig();       // save old village's full config
+      loadVillageConfig(villageId);     // load new village's full config
       renderUpgradeList();              // re-render targets
       updateVillageScope();             // update scope label
       sendMessage({ type: 'SWITCH_VILLAGE', villageId }).catch(console.warn);

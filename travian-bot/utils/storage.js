@@ -121,6 +121,12 @@
         emergencyStopOnError: true,
         maxRetries: 3,
       },
+
+      // Village cycling (multi-village support)
+      villageCycling: { enabled: false, intervalMs: 300000 },
+
+      // Per-village config overrides (keyed by village ID)
+      villageConfigs: {},
     };
   }
 
@@ -304,11 +310,30 @@
     const stored = await get(KEYS.CONFIG_PREFIX + serverKey, {});
 
     const merged = { ...defaults, ...stored };
-    merged.troopConfig  = { ...defaults.troopConfig,  ...(stored.troopConfig  || {}) };
-    merged.farmConfig   = { ...defaults.farmConfig,   ...(stored.farmConfig   || {}) };
-    merged.delays       = { ...defaults.delays,       ...(stored.delays       || {}) };
-    merged.safetyConfig = { ...defaults.safetyConfig, ...(stored.safetyConfig || {}) };
-    merged.villages     = { ...defaults.villages,     ...(stored.villages     || {}) };
+    merged.troopConfig    = { ...defaults.troopConfig,    ...(stored.troopConfig    || {}) };
+    merged.farmConfig     = { ...defaults.farmConfig,     ...(stored.farmConfig     || {}) };
+    merged.delays         = { ...defaults.delays,         ...(stored.delays         || {}) };
+    merged.safetyConfig   = { ...defaults.safetyConfig,   ...(stored.safetyConfig   || {}) };
+    merged.villages       = { ...defaults.villages,       ...(stored.villages       || {}) };
+    merged.villageCycling = { ...defaults.villageCycling,  ...(stored.villageCycling || {}) };
+    // Phase 8: Migrate old villageTargets → villageConfigs
+    // Must check BEFORE assigning defaults, otherwise {} is always truthy
+    if (merged.villageTargets && !stored.villageConfigs) {
+      merged.villageConfigs = {};
+      for (var vid in merged.villageTargets) {
+        var vt = merged.villageTargets[vid];
+        merged.villageConfigs[vid] = {
+          upgradeTargets: vt.upgradeTargets || {},
+          scannedItems: {
+            resources: vt.scannedRes || [],
+            buildings: vt.scannedBld || []
+          }
+        };
+      }
+      console.log('[Storage] Migrated villageTargets → villageConfigs for ' + serverKey);
+    } else {
+      merged.villageConfigs = stored.villageConfigs || defaults.villageConfigs;
+    }
 
     // Phase 3: Schema validation — coerce types, clamp ranges, apply defaults
     var Schema = (typeof TravianConfigSchema !== 'undefined') ? TravianConfigSchema : null;
@@ -336,18 +361,22 @@
     await atomicMerge(configKey, (stored) => {
       const defaults = getDefaultConfig();
       const current = { ...defaults, ...stored };
-      current.troopConfig  = { ...defaults.troopConfig,  ...(stored.troopConfig  || {}) };
-      current.farmConfig   = { ...defaults.farmConfig,   ...(stored.farmConfig   || {}) };
-      current.delays       = { ...defaults.delays,       ...(stored.delays       || {}) };
-      current.safetyConfig = { ...defaults.safetyConfig, ...(stored.safetyConfig || {}) };
-      current.villages     = { ...defaults.villages,     ...(stored.villages     || {}) };
+      current.troopConfig    = { ...defaults.troopConfig,    ...(stored.troopConfig    || {}) };
+      current.farmConfig     = { ...defaults.farmConfig,     ...(stored.farmConfig     || {}) };
+      current.delays         = { ...defaults.delays,         ...(stored.delays         || {}) };
+      current.safetyConfig   = { ...defaults.safetyConfig,   ...(stored.safetyConfig   || {}) };
+      current.villages       = { ...defaults.villages,       ...(stored.villages       || {}) };
+      current.villageCycling = { ...defaults.villageCycling,  ...(stored.villageCycling || {}) };
+      current.villageConfigs = stored.villageConfigs || defaults.villageConfigs;
 
       const updated = { ...current, ...config };
-      if (config.troopConfig)  updated.troopConfig  = { ...current.troopConfig,  ...config.troopConfig };
-      if (config.farmConfig)   updated.farmConfig   = { ...current.farmConfig,   ...config.farmConfig };
-      if (config.delays)       updated.delays       = { ...current.delays,       ...config.delays };
-      if (config.safetyConfig) updated.safetyConfig = { ...current.safetyConfig, ...config.safetyConfig };
-      if (config.villages)     updated.villages     = { ...current.villages,     ...config.villages };
+      if (config.troopConfig)    updated.troopConfig    = { ...current.troopConfig,    ...config.troopConfig };
+      if (config.farmConfig)     updated.farmConfig     = { ...current.farmConfig,     ...config.farmConfig };
+      if (config.delays)         updated.delays         = { ...current.delays,         ...config.delays };
+      if (config.safetyConfig)   updated.safetyConfig   = { ...current.safetyConfig,   ...config.safetyConfig };
+      if (config.villages)       updated.villages       = { ...current.villages,       ...config.villages };
+      if (config.villageCycling) updated.villageCycling  = { ...current.villageCycling, ...config.villageCycling };
+      if (config.villageConfigs) updated.villageConfigs  = config.villageConfigs; // full replace — popup sends complete cache
       return updated;
     });
 

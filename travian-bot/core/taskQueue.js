@@ -269,6 +269,50 @@ class TaskQueue {
   }
 
   /**
+   * Get the highest priority ready task for a specific village.
+   * Prefers tasks for the current village to avoid unnecessary village switches.
+   * @param {string} villageId
+   * @returns {object|null} The next task for this village, or null
+   */
+  getNextForVillage(villageId) {
+    this.recoverStuckTasks();
+    var now = Date.now();
+    var readyTasks = this.queue.filter(function(t) {
+      return t.status === 'pending' &&
+        t.villageId === villageId &&
+        (t.scheduledFor === null || t.scheduledFor <= now);
+    });
+    if (readyTasks.length === 0) return null;
+    readyTasks.sort(function(a, b) {
+      if (a.priority !== b.priority) return a.priority - b.priority;
+      return a.createdAt - b.createdAt;
+    });
+    var nextTask = readyTasks[0];
+    nextTask.status = 'running';
+    nextTask._startedAt = Date.now();
+    this._dirtyAt = Date.now();
+    return nextTask;
+  }
+
+  /**
+   * Count pending tasks grouped by villageId.
+   * Used by village cycling to pick the village with most work.
+   * @returns {Object} { villageId: count, ... }
+   */
+  pendingCountByVillage() {
+    var counts = {};
+    var now = Date.now();
+    for (var i = 0; i < this.queue.length; i++) {
+      var t = this.queue[i];
+      if (t.status !== 'pending') continue;
+      if (t.scheduledFor && t.scheduledFor > now) continue;
+      var vid = t.villageId || '__null__';
+      counts[vid] = (counts[vid] || 0) + 1;
+    }
+    return counts;
+  }
+
+  /**
    * Get tasks filtered by type
    * @param {string} type
    * @returns {Array} Tasks matching the type

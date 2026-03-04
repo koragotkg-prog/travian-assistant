@@ -1829,6 +1829,19 @@
       try { state.constructionQueue = this.getConstructionQueue(); } catch (e) { console.warn('[TravianScanner] getFullState - getConstructionQueue error:', e); }
       try { state.troops = this.getTroopCounts(); } catch (e) { console.warn('[TravianScanner] getFullState - getTroopCounts error:', e); }
       try { state.villages = this.getVillageList(); } catch (e) { console.warn('[TravianScanner] getFullState - getVillageList error:', e); }
+
+      // Derive currentVillageId from the active village in sidebar
+      try {
+        if (state.villages && state.villages.length > 0) {
+          for (var vi = 0; vi < state.villages.length; vi++) {
+            if (state.villages[vi].isActive) {
+              state.currentVillageId = state.villages[vi].id;
+              break;
+            }
+          }
+        }
+      } catch (e) { console.warn('[TravianScanner] getFullState - currentVillageId error:', e); }
+
       try { state.hero = this.getHeroStatus(); } catch (e) { console.warn('[TravianScanner] getFullState - getHeroStatus error:', e); }
       try { state.farmLists = this.getFarmLists(); } catch (e) { console.warn('[TravianScanner] getFullState - getFarmLists error:', e); }
 

@@ -156,6 +156,13 @@ class BotEngine {
 
     // Safety Guardrail System (initialized in start())
     this._safety = null;
+
+    // Village cycling state for multi-village support
+    this._villageCycling = {
+      lastSwitchTime: 0,
+      villageOrder: [],   // array of village IDs
+      currentIndex: 0,
+    };
   }
 
   // ---------------------------------------------------------------------------
@@ -236,6 +243,45 @@ class BotEngine {
     if (v) {
       this._transition(BOT_STATES.EMERGENCY, 'legacy .emergencyStopped=true');
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Per-Village Config Resolution
+  // ---------------------------------------------------------------------------
+
+  /** Per-village config fields that override global defaults */
+  static get VILLAGE_CONFIG_FIELDS() {
+    return [
+      'autoResourceUpgrade', 'autoBuildingUpgrade', 'autoUpgradeResources', 'autoUpgradeBuildings',
+      'autoTroopTraining', 'autoFarming', 'autoTrapTraining',
+      'resourceConfig', 'buildingConfig',
+      'upgradeTargets', 'scannedItems',
+      'troopConfig', 'trapConfig', 'farmConfig', 'npcConfig', 'dodgeConfig'
+    ];
+  }
+
+  /**
+   * Merge global config with per-village overrides for the given villageId.
+   * Returns a new config object — does not mutate this.config.
+   * @param {string} villageId
+   * @returns {object} Effective config for this village
+   */
+  _getVillageEffectiveConfig(villageId) {
+    if (!this.config) return this.config;
+    if (!villageId || !this.config.villageConfigs) return this.config;
+    var vc = this.config.villageConfigs[villageId];
+    if (!vc) return this.config;
+
+    var effective = Object.assign({}, this.config);
+    var fields = BotEngine.VILLAGE_CONFIG_FIELDS;
+    for (var i = 0; i < fields.length; i++) {
+      var key = fields[i];
+      if (vc[key] !== undefined) {
+        effective[key] = vc[key];
+      }
+    }
+    effective._villageId = villageId;
+    return effective;
   }
 
   // ---------------------------------------------------------------------------
@@ -583,6 +629,131 @@ class BotEngine {
   }
 
   // ---------------------------------------------------------------------------
+  // Village Cycling
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Check if it's time to switch to the next village.
+   * Switches when:
+   *  - villageCycling is enabled in config
+   *  - More than 1 village exists
+   *  - Enough time has elapsed since last switch
+   *  - OR current village has no pending tasks and another village does
+   * @returns {boolean}
+   */
+  _shouldSwitchVillage() {
+    var cfg = this.config && this.config.villageCycling;
+    if (!cfg || !cfg.enabled) return false;
+
+    var vc = this._villageCycling;
+    if (vc.villageOrder.length < 2) return false;
+
+    var elapsed = Date.now() - vc.lastSwitchTime;
+    var interval = cfg.intervalMs || 300000; // default 5 min
+
+    // Always switch if interval has passed
+    if (elapsed >= interval) return true;
+
+    // Check if current village has no work but another does
+    var currentVid = this.gameState && this.gameState.currentVillageId;
+    if (currentVid) {
+      var pending = this.taskQueue.pendingCountByVillage();
+      // Include untagged (null villageId) tasks — they run on any village
+      var currentCount = (pending[currentVid] || 0) + (pending['__null__'] || 0);
+      if (currentCount === 0) {
+        // Check if any other village has work
+        for (var vid in pending) {
+          if (vid !== currentVid && vid !== '__null__' && pending[vid] > 0) {
+            return true;
+          }
+        }
+      }
+    }
+
+    return false;
+  }
+
+  /**
+   * Switch to the next village in the rotation order.
+   * Sends switchVillage command, waits for page reload, and re-scans.
+   * @returns {boolean} True if switch succeeded
+   */
+  async _switchToNextVillage() {
+    var vc = this._villageCycling;
+
+    // Pick next village: prefer village with pending tasks, else round-robin
+    var pending = this.taskQueue.pendingCountByVillage();
+    var currentVid = this.gameState && this.gameState.currentVillageId;
+    var nextVillageId = null;
+
+    // Try to find a village with pending work (not current)
+    for (var i = 0; i < vc.villageOrder.length; i++) {
+      var candidateIdx = (vc.currentIndex + 1 + i) % vc.villageOrder.length;
+      var candidateVid = vc.villageOrder[candidateIdx];
+      if (candidateVid !== currentVid && (pending[candidateVid] || 0) > 0) {
+        nextVillageId = candidateVid;
+        vc.currentIndex = candidateIdx;
+        break;
+      }
+    }
+
+    // Fallback: simple round-robin
+    if (!nextVillageId) {
+      vc.currentIndex = (vc.currentIndex + 1) % vc.villageOrder.length;
+      nextVillageId = vc.villageOrder[vc.currentIndex];
+    }
+
+    // Don't switch to the same village
+    if (nextVillageId === currentVid) return false;
+
+    this._slog('INFO', 'Village cycling → switching to village ' + nextVillageId);
+
+    try {
+      await this.sendToContentScript({
+        type: 'EXECUTE', action: 'switchVillage',
+        params: { villageId: nextVillageId }
+      });
+
+      // Wait for page reload after village switch
+      await this._randomDelay();
+      await this._waitForContentScript(15000);
+
+      vc.lastSwitchTime = Date.now();
+
+      // Update config.activeVillage
+      if (this.config) this.config.activeVillage = nextVillageId;
+
+      return true;
+    } catch (err) {
+      this._slog('WARN', 'Village switch failed: ' + (err.message || err));
+      return false;
+    }
+  }
+
+  /**
+   * Update the village rotation order from the latest scan data.
+   * Called at the start of each cycle after scan succeeds.
+   */
+  _updateVillageOrder() {
+    if (!this.gameState || !this.gameState.villages || this.gameState.villages.length < 2) return;
+
+    var cfg = this.config && this.config.villageCycling;
+    if (!cfg) return;
+
+    // Build order from scanned villages
+    var newOrder = this.gameState.villages.map(function(v) { return v.id; });
+
+    // Only update if order changed (new village added, etc.)
+    if (JSON.stringify(newOrder) !== JSON.stringify(this._villageCycling.villageOrder)) {
+      this._villageCycling.villageOrder = newOrder;
+      // Reset index to current village
+      var currentVid = this.gameState.currentVillageId;
+      var idx = newOrder.indexOf(currentVid);
+      if (idx !== -1) this._villageCycling.currentIndex = idx;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
   // Main Loop
   // ---------------------------------------------------------------------------
 
@@ -663,6 +834,11 @@ class BotEngine {
 
       this.gameState = scanResponse.data;
 
+      // Store per-village snapshot for multi-village cycling
+      if (this.gameState.currentVillageId) {
+        this.stateCollector.storeVillageSnapshot(this.gameState.currentVillageId, this.gameState);
+      }
+
       // FIX-P4: Detect game version changes that may break DOM selectors
       if (this.gameState.gameVersion) {
         if (!this._knownGameVersion) {
@@ -674,11 +850,31 @@ class BotEngine {
         }
       }
 
+      // ── Village cycling: update order and check if switch is needed ──
+      this._updateVillageOrder();
+      if (this._shouldSwitchVillage()) {
+        var switched = await this._switchToNextVillage();
+        if (switched) {
+          // Re-scan the new village
+          var reScan = await this.sendToContentScript({ type: 'SCAN' });
+          if (reScan && reScan.success) {
+            this.gameState = reScan.data;
+            if (this.gameState.currentVillageId) {
+              this.stateCollector.storeVillageSnapshot(this.gameState.currentVillageId, this.gameState);
+            }
+          } else {
+            this._slog('WARN', 'Re-scan after village switch failed — skipping cycle');
+            return;
+          }
+        }
+      }
+
       // ── Dorf2 buildings scan (event-driven, delegated to NavigationManager) ──
       // getBuildings() only returns data on dorf2 pages. Since the bot rests
       // on dorf1, buildings[] is always empty unless we navigate to dorf2.
       // NavigationManager handles scan heuristics, caching, and navigation.
-      var needBuildingScan = (this.config.autoUpgradeBuildings || this.config.autoBuildingUpgrade) &&
+      var effectiveCfg = this._getVillageEffectiveConfig(this.gameState.currentVillageId);
+      var needBuildingScan = (effectiveCfg.autoUpgradeBuildings || effectiveCfg.autoBuildingUpgrade) &&
         this._navigationManager.shouldRefreshBuildings(this._cycleCounter, this.gameState);
 
       if (needBuildingScan) {
@@ -778,10 +974,11 @@ class BotEngine {
       // Reset counter on successful login
       this._notLoggedInCount = 0;
 
-      // 5. Run decision engine to produce new tasks
+      // 5. Run decision engine with per-village effective config
+      var effectiveConfig = this._getVillageEffectiveConfig(this.gameState.currentVillageId);
       const newTasks = this.decisionEngine.evaluate(
         this.gameState,
-        this.config,
+        effectiveConfig,
         this.taskQueue
       );
 
@@ -963,7 +1160,7 @@ class BotEngine {
         return;
       }
 
-      // TQ-3 FIX: Refresh activeVillageId before village mismatch check.
+      // TQ-3 FIX: Refresh currentVillageId before village mismatch check.
       // User may have manually switched villages in-game since the last scan.
       // A quick GET_STATE villages call is much cheaper than a full SCAN.
       if (task.villageId && this.gameState) {
@@ -974,8 +1171,8 @@ class BotEngine {
           if (villageCheck && villageCheck.success && villageCheck.data) {
             var vList = villageCheck.data;
             for (var vi = 0; vi < vList.length; vi++) {
-              if (vList[vi].active) {
-                this.gameState.activeVillageId = vList[vi].id;
+              if (vList[vi].isActive) {
+                this.gameState.currentVillageId = vList[vi].id;
                 break;
               }
             }
@@ -984,11 +1181,11 @@ class BotEngine {
       }
 
       // FIX 9: Village context assertion — ensure correct village before executing
-      if (task.villageId && this.gameState && this.gameState.activeVillageId &&
-          task.villageId !== this.gameState.activeVillageId) {
+      if (task.villageId && this.gameState && this.gameState.currentVillageId &&
+          task.villageId !== this.gameState.currentVillageId) {
         this._slog('WARN', 'Village mismatch — auto-switching', {
           taskId: task.id, taskVillage: task.villageId,
-          currentVillage: this.gameState.activeVillageId
+          currentVillage: this.gameState.currentVillageId
         });
         await this.sendToContentScript({
           type: 'EXECUTE', action: 'switchVillage',
