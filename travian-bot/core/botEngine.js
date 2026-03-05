@@ -163,6 +163,10 @@ class BotEngine {
       villageOrder: [],   // array of village IDs
       currentIndex: 0,
     };
+
+    // AFK break simulation — random pauses to mimic real player behavior
+    this._afkUntil = 0;      // timestamp when current AFK break ends
+    this._lastAfkTime = 0;   // when the last AFK break started (cooldown tracking)
   }
 
   // ---------------------------------------------------------------------------
@@ -457,11 +461,13 @@ class BotEngine {
       }).catch(() => {});
     }, 60000, 5000); // 60s base, +/-5s jitter
 
-    // Schedule the main decision/execution loop
+    // Schedule the main decision/execution loop with variable jitter (30-70%)
+    // Each cycle picks a random jitter magnitude in the range, making timing
+    // patterns much harder to detect than fixed-percentage jitter.
     const loopInterval = this._getLoopInterval();
     this.scheduler.scheduleCycle('main_loop', () => {
       this.mainLoop();
-    }, loopInterval, Math.floor(loopInterval * 0.2)); // 20% jitter
+    }, loopInterval, Math.floor(loopInterval * 0.3), Math.floor(loopInterval * 0.7));
 
     // Set up a chrome.alarms heartbeat as a fallback
     // Service workers can go to sleep; alarms wake them back up
@@ -779,6 +785,24 @@ class BotEngine {
     // FIX-P3: Unified lock check — replaces separate _mainLoopRunning + _executionLocked guards
     if (this._cycleLock) {
       console.log('[BotEngine] Cycle locked (' + this._cycleLock + '), skipping concurrent call');
+      return;
+    }
+
+    // AFK break: skip cycle if currently in a simulated idle break
+    if (this._afkUntil && Date.now() < this._afkUntil) {
+      var remainMin = Math.ceil((this._afkUntil - Date.now()) / 60000);
+      console.log('[BotEngine] AFK break in progress, ' + remainMin + ' min remaining');
+      return;
+    }
+    if (this._afkUntil) this._afkUntil = 0; // break ended, clear
+
+    // AFK break: roll dice to start a new break
+    if (this._shouldTakeAfkBreak()) {
+      var breakMs = this._getAfkBreakDuration();
+      this._afkUntil = Date.now() + breakMs;
+      this._lastAfkTime = Date.now();
+      var breakMin = Math.round(breakMs / 60000);
+      TravianLogger.log('INFO', 'AFK break: ' + breakMin + ' minutes', { breakMs: breakMs });
       return;
     }
 
@@ -1550,7 +1574,10 @@ class BotEngine {
       cycleLock: this._cycleLock,
       consecutiveFailures: this._consecutiveFailures,
       farmCycle: this._farmManager ? this._farmManager.getCycleStatus() : null,
-      safety: this._safety ? this._safety.getStatus() : null
+      safety: this._safety ? this._safety.getStatus() : null,
+      afkBreak: this._afkUntil && Date.now() < this._afkUntil
+        ? { active: true, remainingMs: this._afkUntil - Date.now() }
+        : { active: false }
     };
   }
 
@@ -1898,6 +1925,46 @@ class BotEngine {
       default:
         return 30000;     // 30 seconds default cooldown
     }
+  }
+
+  /**
+   * Decide whether to start a random AFK break this cycle.
+   * Respects a cooldown between breaks so they don't stack.
+   * @returns {boolean}
+   */
+  _shouldTakeAfkBreak() {
+    var delays = (this.config && this.config.delays) || {};
+    var chance = delays.afkBreakChance || 0.03; // 3% per cycle
+    var cooldownMs = delays.afkBreakCooldownMs || 1800000; // 30 min between breaks
+
+    // Respect cooldown since last break
+    if (this._lastAfkTime && (Date.now() - this._lastAfkTime) < cooldownMs) {
+      return false;
+    }
+
+    return Math.random() < chance;
+  }
+
+  /**
+   * Pick a random AFK break duration using Gaussian distribution.
+   * Most breaks cluster around the midpoint (~15 min) rather than
+   * being uniformly distributed — mimics real player idle patterns.
+   * @returns {number} Duration in milliseconds
+   */
+  _getAfkBreakDuration() {
+    var delays = (this.config && this.config.delays) || {};
+    var minMs = delays.afkBreakMinMs || 300000;   // 5 min
+    var maxMs = delays.afkBreakMaxMs || 1800000;  // 30 min
+
+    // Box-Muller Gaussian: mean = midpoint, stddev = range/6 (99.7% within bounds)
+    var mean = (minMs + maxMs) / 2;
+    var stddev = (maxMs - minMs) / 6;
+    var u1 = Math.random() || 0.0001;
+    var u2 = Math.random();
+    var z = Math.sqrt(-2.0 * Math.log(u1)) * Math.cos(2.0 * Math.PI * u2);
+    var value = Math.round(mean + z * stddev);
+
+    return Math.max(minMs, Math.min(maxMs, value));
   }
 
   /**

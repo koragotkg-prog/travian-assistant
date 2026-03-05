@@ -9,7 +9,7 @@ class Scheduler {
     /** @type {Map<string, {timerId: number, callback: Function, nextRun: number, type: 'once'}>} */
     this.timers = new Map();
 
-    /** @type {Map<string, {timerId: number, callback: Function, intervalMs: number, jitterMs: number, nextRun: number, type: 'cycle'}>} */
+    /** @type {Map<string, {timerId: number, callback: Function, intervalMs: number, jitterMs: number, jitterMaxMs: number, nextRun: number, type: 'cycle'}>} */
     this.cycles = new Map();
 
     this.running = false;
@@ -97,9 +97,12 @@ class Scheduler {
    * @param {string} name - Unique name for this cycle
    * @param {Function} callback - Function to execute each cycle
    * @param {number} intervalMs - Base interval in milliseconds
-   * @param {number} [jitterMs=0] - Maximum jitter in milliseconds (actual interval = intervalMs + random(-jitterMs, +jitterMs))
+   * @param {number} [jitterMs=0] - Minimum jitter magnitude in milliseconds
+   * @param {number} [jitterMaxMs=0] - Maximum jitter magnitude. When set, each cycle picks a random
+   *   effective jitter in [jitterMs, jitterMaxMs], then applies ±that value. This makes the
+   *   variance itself unpredictable — harder for server-side detection than fixed-percentage jitter.
    */
-  scheduleCycle(name, callback, intervalMs, jitterMs = 0) {
+  scheduleCycle(name, callback, intervalMs, jitterMs = 0, jitterMaxMs = 0) {
     if (!this.running) {
       console.warn('[Scheduler] Cannot schedule - scheduler is not running');
       return;
@@ -108,11 +111,18 @@ class Scheduler {
     // Cancel existing cycle with the same name
     this.cancelSchedule(name);
 
+    // If no max provided, use fixed jitter (backward compat)
+    const effectiveJitterMax = jitterMaxMs > jitterMs ? jitterMaxMs : jitterMs;
+
     const scheduleNext = () => {
-      // Recalculate jitter each iteration for natural variance
-      const jitter = this._randomJitter(jitterMs);
+      // Pick a random jitter magnitude within the range, then apply ±
+      var jitterMagnitude = jitterMs;
+      if (effectiveJitterMax > jitterMs) {
+        jitterMagnitude = jitterMs + Math.floor(Math.random() * (effectiveJitterMax - jitterMs + 1));
+      }
+      const jitter = this._randomJitter(jitterMagnitude);
+
       // PERF-1 FIX: Compensate for callback duration drift.
-      // If the last callback took 30s and interval is 45s, next delay should be ~15s.
       const entry = this.cycles.get(name);
       const drift = (entry && entry._lastCbDuration) ? entry._lastCbDuration : 0;
       const actualInterval = Math.max(1000, intervalMs + jitter - drift); // Minimum 1 second
@@ -121,17 +131,13 @@ class Scheduler {
       const timerId = setTimeout(async () => {
         if (!this.running) return;
 
-        // Update next run time before executing (in case callback is slow)
         const entry = this.cycles.get(name);
         if (!entry) return;
 
         // PERF-1 FIX: Track callback duration to compensate for drift.
-        // Without this, effective interval = configuredInterval + callbackDuration.
-        // A mainLoop cycle taking 30s means the bot acts every 75s instead of 45s.
         const cbStart = Date.now();
         try {
           const result = callback();
-          // If callback returns a Promise (async), await it before scheduling next
           if (result && typeof result.then === 'function') {
             await result;
           }
@@ -140,10 +146,7 @@ class Scheduler {
         }
         const cbDuration = Date.now() - cbStart;
 
-        // Schedule next iteration if still running and cycle still exists
-        // Subtract callback duration from next interval to maintain target pace
         if (this.running && this.cycles.has(name)) {
-          // Store drift info so scheduleNext can compensate
           const updatedEntry = this.cycles.get(name);
           if (updatedEntry) updatedEntry._lastCbDuration = cbDuration;
           scheduleNext();
@@ -157,6 +160,7 @@ class Scheduler {
         callback: callback,
         intervalMs: intervalMs,
         jitterMs: jitterMs,
+        jitterMaxMs: effectiveJitterMax,
         nextRun: nextRun,
         type: 'cycle',
         _lastCbDuration: (prevEntry && prevEntry._lastCbDuration) || 0
@@ -164,7 +168,10 @@ class Scheduler {
     };
 
     scheduleNext();
-    console.log(`[Scheduler] Started cycle "${name}" every ${intervalMs}ms (jitter: +/-${jitterMs}ms)`);
+    var jitterDesc = effectiveJitterMax > jitterMs
+      ? `variable ${jitterMs}-${effectiveJitterMax}ms`
+      : `+/-${jitterMs}ms`;
+    console.log(`[Scheduler] Started cycle "${name}" every ${intervalMs}ms (jitter: ${jitterDesc})`);
   }
 
   /**
@@ -229,11 +236,11 @@ class Scheduler {
     const entry = this.cycles.get(name);
     if (!entry) return false;
 
-    const { callback, jitterMs } = entry;
+    const { callback, jitterMs, jitterMaxMs } = entry;
 
     // Cancel the old cycle and start a new one with the updated interval
     this.cancelSchedule(name);
-    this.scheduleCycle(name, callback, newIntervalMs, jitterMs);
+    this.scheduleCycle(name, callback, newIntervalMs, jitterMs, jitterMaxMs || 0);
 
     console.log(`[Scheduler] Rescheduled "${name}" to new interval ${newIntervalMs}ms`);
     return true;
@@ -260,7 +267,8 @@ class Scheduler {
         nextRun: entry.nextRun,
         remainingMs: Math.max(0, entry.nextRun - Date.now()),
         intervalMs: entry.intervalMs,
-        jitterMs: entry.jitterMs
+        jitterMs: entry.jitterMs,
+        jitterMaxMs: entry.jitterMaxMs || entry.jitterMs
       };
     }
 
