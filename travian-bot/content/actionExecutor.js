@@ -584,7 +584,9 @@
         await humanDelay(150, 400);
 
         // Try to find the village link by ID in the sidebar
+        // Modern Travian uses data-did on .listEntry, link href is just "#"
         var linkSelectors = [
+          '#sidebarBoxVillageList .listEntry[data-did="' + villageId + '"] a',
           'a[href*="newdid=' + villageId + '"]',
           'a[href*="did=' + villageId + '"]',
           'a[href*="village=' + villageId + '"]',

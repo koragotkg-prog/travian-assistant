@@ -652,7 +652,10 @@ class BotEngine {
     if (!cfg || !cfg.enabled) return false;
 
     var vc = this._villageCycling;
-    if (vc.villageOrder.length < 2) return false;
+    if (vc.villageOrder.length < 2) {
+      console.log('[BotEngine] Village cycling enabled but only ' + vc.villageOrder.length + ' village(s) in order');
+      return false;
+    }
 
     var elapsed = Date.now() - vc.lastSwitchTime;
     var interval = cfg.intervalMs || 300000; // default 5 min

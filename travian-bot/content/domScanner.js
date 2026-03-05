@@ -854,9 +854,9 @@
               }
             }
 
-            // Extract village ID from link href or entry data attributes
-            var id = '';
-            if (linkEl) {
+            // Extract village ID: prefer data-did on entry, fallback to href patterns
+            var id = entry.getAttribute('data-did') || '';
+            if (!id && linkEl) {
               var href = linkEl.getAttribute('href') || '';
               var idMatch = href.match(/newdid=(\d+)/) || href.match(/did=(\d+)/);
               if (idMatch) id = idMatch[1];
